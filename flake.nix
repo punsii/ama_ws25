@@ -31,13 +31,19 @@
       pythonEnv = pkgs.python3.withPackages (
         ps: with ps; [
           ipython
+          jupyterlab
+          jupyterlab-widgets
+          # jupyterlab-vim
+          # jupyter-collaboration
           matplotlib
           numpy
           pandas
           scikit-learn
           scipy
+          seaborn
           statsmodels
           streamlit
+          sympy
         ]
       );
 
