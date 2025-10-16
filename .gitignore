@@ -3,3 +3,4 @@ result
 .streamlit
 __pychache__
 *.pyc
+.ipynb_checkpoints
