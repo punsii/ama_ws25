@@ -53,6 +53,14 @@ check_untyped_defs = true
 no_implicit_optional = true
 pretty = true
 
+# Ignore missing imports for libraries without type stubs
+[[tool.mypy.overrides]]
+module = [
+    "sklearn.*",
+    "seaborn.*",
+]
+ignore_missing_imports = true
+
 # Ruff configuration
 [tool.ruff]
 line-length = 120
@@ -138,6 +146,7 @@ ignore = [
     "EM101", # Flake8-errmsg - Checks for the use of string literals in exception constructors.
     "SLF001", # Private member accessed
     "PD901", # Pandas-vet - Allow usage of generic name 'df' for DataFrame variables
+    "TC003", # Flake8-type-checking - Allow importing typing modules outside of TYPE_CHECKING blocks
 ]
 
 # Allow autofix for all enabled rules
