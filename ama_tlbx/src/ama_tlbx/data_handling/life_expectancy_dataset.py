@@ -37,8 +37,10 @@ class LifeExpectancyDataset(BaseDataset):
     - schooling: float - Average years of schooling
     """
 
+    target_col: Col = Col.LIFE_EXPECTANCY
+
     @classmethod
-    def from_csv(  # type: ignore[override]
+    def from_csv(
         cls,
         filepath: str | Path,
         *,
@@ -118,14 +120,26 @@ class LifeExpectancyDataset(BaseDataset):
         """
         agg_fn = agg_fn or "mean"
 
-        # Aggregate numeric columns
-        aggregated = df.groupby(Col.COUNTRY.value, as_index=False).agg(agg_fn)
+        # Separate numeric and non-numeric columns
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        non_numeric_cols = df.select_dtypes(exclude=["number"]).columns.tolist()
+
+        # Remove country from lists if present
+        if Col.COUNTRY.value in numeric_cols:
+            numeric_cols.remove(Col.COUNTRY.value)
+        if Col.COUNTRY.value in non_numeric_cols:
+            non_numeric_cols.remove(Col.COUNTRY.value)
+
+        # Build aggregation dict: numeric columns get agg_fn, non-numeric get first value
+        agg_dict = dict.fromkeys(numeric_cols, agg_fn)
+        agg_dict.update(dict.fromkeys(non_numeric_cols, "first"))
+
+        # Aggregate
+        aggregated = df.groupby(Col.COUNTRY.value, as_index=False).agg(agg_dict)
 
         # Impute missing values with mean for numeric columns
-        numeric_cols = aggregated.select_dtypes(include=["number"]).columns
         for col in numeric_cols:
-            if col != Col.COUNTRY.value:
-                aggregated[col] = aggregated[col].fillna(aggregated[col].mean())
+            aggregated[col] = aggregated[col].fillna(aggregated[col].mean())
 
         return aggregated
 

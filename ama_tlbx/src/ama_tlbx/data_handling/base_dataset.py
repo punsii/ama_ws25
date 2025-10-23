@@ -1,7 +1,5 @@
 """Base dataset class for all dataset implementations."""
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -24,7 +22,7 @@ class BaseDataset(ABC):
 
     @classmethod
     @abstractmethod
-    def from_csv(cls, filepath: str | Path, **kwargs: object) -> BaseDataset:
+    def from_csv(cls, filepath: str | Path, **kwargs: object) -> "BaseDataset":
         """Load dataset from CSV file.
 
         Args:
@@ -105,7 +103,7 @@ class BaseDataset(ABC):
         """
         ...
 
-    def get_pretty_names(self, column_names: list[str]) -> list[str]:
+    def get_pretty_names(self, column_names: list[str] | None = None) -> list[str]:
         """Convert multiple column names to pretty names.
 
         Args:
@@ -114,4 +112,4 @@ class BaseDataset(ABC):
         Returns:
             List of pretty names suitable for plot labels
         """
-        return [self.get_pretty_name(name) for name in column_names]
+        return [self.get_pretty_name(name) for name in column_names or self.df.columns.to_list()]
