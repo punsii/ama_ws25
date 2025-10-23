@@ -147,6 +147,9 @@ ignore = [
     "SLF001", # Private member accessed
     "PD901", # Pandas-vet - Allow usage of generic name 'df' for DataFrame variables
     "TC003", # Flake8-type-checking - Allow importing typing modules outside of TYPE_CHECKING blocks
+    "PGH003", # allow non-descriptive type ignore
+    "FBT001",
+    "FBT002",
 ]
 
 # Allow autofix for all enabled rules
