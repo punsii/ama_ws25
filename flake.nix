@@ -22,6 +22,8 @@
         projectRootFile = "flake.nix";
 
         programs = {
+          ruff-check.enable = true;
+          ruff-format.enable = true;
           black.enable = true;
           isort.enable = true;
           prettier.enable = true;
