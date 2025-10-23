@@ -1,0 +1,69 @@
+# This file is generated using treefmt-nix
+# Edit the treefmt-nix config in ./flake.nix instead of editing this file
+[formatter.black]
+command = "black"
+excludes = []
+includes = ["*.py", "*.pyi"]
+options = []
+
+[formatter.isort]
+command = "isort"
+excludes = []
+includes = ["*.py", "*.pyi"]
+options = []
+
+[formatter.nixfmt]
+command = "nixfmt"
+excludes = []
+includes = ["*.nix"]
+options = []
+
+[formatter.prettier]
+command = "prettier"
+excludes = []
+includes = [
+    "*.cjs",
+    "*.css",
+    "*.html",
+    "*.js",
+    "*.json",
+    "*.json5",
+    "*.jsx",
+    "*.md",
+    "*.mdx",
+    "*.mjs",
+    "*.scss",
+    "*.ts",
+    "*.tsx",
+    "*.vue",
+    "*.yaml",
+    "*.yml",
+]
+options = ["--write"]
+
+[formatter.ruff-check]
+command = "ruff"
+excludes = []
+includes = ["*.py", "*.pyi"]
+options = ["check", "--fix"]
+
+[formatter.ruff-format]
+command = "ruff"
+excludes = []
+includes = ["*.py", "*.pyi"]
+options = ["format"]
+
+[global]
+excludes = [
+    "*.lock",
+    "*.patch",
+    "package-lock.json",
+    "go.mod",
+    "go.sum",
+    ".gitignore",
+    ".gitmodules",
+    ".hgignore",
+    ".svnignore",
+]
+on-unmatched = "warn"
+
