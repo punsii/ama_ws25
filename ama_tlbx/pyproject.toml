@@ -137,6 +137,7 @@ ignore = [
     "TRY003", # Tryceratops - Checks for long exception messages that are not defined in the exception class itself.
     "EM101", # Flake8-errmsg - Checks for the use of string literals in exception constructors.
     "SLF001", # Private member accessed
+    "PD901", # Pandas-vet - Allow usage of generic name 'df' for DataFrame variables
 ]
 
 # Allow autofix for all enabled rules

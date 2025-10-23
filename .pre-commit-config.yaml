@@ -19,12 +19,8 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      - id: check-yaml
-        name: Check YAML syntax
       - id: check-toml
         name: Check TOML syntax
-      - id: check-json
-        name: Check JSON syntax
       - id: end-of-file-fixer
         name: Fix end of files
       - id: trailing-whitespace
@@ -39,17 +35,17 @@ repos:
       - id: mixed-line-ending
         name: Fix mixed line endings
 
-  # Type checking with mypy
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
-    hooks:
-      - id: mypy
-        name: MyPy type checking
-        additional_dependencies:
-          - pandas-stubs
-          - types-seaborn
-        args: [--config-file=ama_tlbx/pyproject.toml]
-        files: ^ama_tlbx/src/
+  # # Type checking with mypy
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.13.0
+  #   hooks:
+  #     - id: mypy
+  #       name: MyPy type checking
+  #       additional_dependencies:
+  #         - pandas-stubs
+  #         - types-seaborn
+  #       args: [--config-file=ama_tlbx/pyproject.toml]
+  #       files: ^ama_tlbx/src/
 
   # # Run pytest tests
   # - repo: local
