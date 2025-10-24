@@ -5,149 +5,109 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from ama_tlbx.analysis.correlation_analyzer import CorrelationAnalyzer
-from ama_tlbx.data_handling.base_dataset import BaseDataset
+from ama_tlbx.analysis.correlation_analyzer import CorrelationResult
 
 
-# TODO: No plotting function is allowed to do any computation, they should take precomputed data from the respective analyzer!
 def plot_correlation_heatmap(
-    corr_df: pd.DataFrame,
-    pretty_labels: list[str],
+    result: CorrelationResult,
     figsize: tuple[int, int] = (20, 20),
     **kwargs: object,
 ) -> Figure:
-    """Plot correlation heatmap of all features.
+    """Plot correlation heatmap of all features."""
+    fig, ax = plt.subplots(figsize=figsize)
 
-    Args:
-        corr_df: Correlation df from CorrelationAnalyzer.get_correlation_matrix()
-        pretty_labels: Pretty names for features from dataset
-        figsize: Figure size (width, height)
-        **kwargs: Additional arguments passed to seaborn.heatmap
-
-    Returns:
-        matplotlib Figure object
-    """
-    # TODO: id doens't use the pretty_labels!
-    fig = plt.figure(figsize=figsize)
-
-    # Use pretty names for axis labels
-    corr_renamed = corr_df.copy()
-    corr_renamed.columns = pretty_labels
-    corr_renamed.index = pretty_labels
+    label_map = {col: result.pretty_by_col.get(col, col) for col in result.matrix.columns}
 
     sns.heatmap(
-        corr_df,
+        result.matrix.rename(index=label_map, columns=label_map),
         annot=True,
         fmt=".2f",
         cmap="coolwarm",
         vmin=-1,
         vmax=1,
+        ax=ax,
         **kwargs,  # type: ignore[arg-type]
     )
 
-    plt.tick_params(axis="both", rotation=45)
-    plt.title("Country-Level Feature Correlations")
-    plt.tight_layout()
+    ax.tick_params(axis="x", rotation=45)
+    ax.tick_params(axis="y", rotation=0)
+    ax.set_title("Feature Correlation Heatmap")
+    fig.tight_layout()
 
     return fig
 
 
+def _prettify_pair_columns(
+    pairs: pd.DataFrame,
+    pretty_by_col: dict[str, str],
+) -> pd.DataFrame:
+    """Attach pretty labels for plotting convenience."""
+
+    def _pretty_pair(row: pd.Series) -> str:
+        a = pretty_by_col.get(row["feature_a"], row["feature_a"])
+        b = pretty_by_col.get(row["feature_b"], row["feature_b"])
+        return f"{a} vs {b}"
+
+    return pairs.assign(
+        pretty_pair=lambda d: d.apply(_pretty_pair, axis=1),
+    )
+
+
 def plot_top_correlated_pairs(
-    analyzer: CorrelationAnalyzer,
+    result: CorrelationResult,
     n: int = 20,
     figsize: tuple[int, int] = (12, 10),
 ) -> tuple[Figure, Figure]:
-    """Plot top positively and negatively correlated feature pairs.
+    """Plot top positively and negatively correlated feature pairs."""
+    pairs = _prettify_pair_columns(result.feature_pairs, result.pretty_by_col)
+    positive = pairs.query("correlation > 0").nlargest(n, "correlation").sort_values("correlation", ascending=True)
+    negative = pairs.query("correlation < 0").nsmallest(n, "correlation").sort_values("correlation", ascending=False)
 
-    Args:
-        analyzer: CorrelationAnalyzer instance
-        n: Number of pairs to show
-        figsize: Figure size (width, height)
+    fig_pos, ax_pos = plt.subplots(figsize=figsize)
+    sns.barplot(data=positive, x="correlation", y="pretty_pair", color="#d62728", ax=ax_pos)
+    ax_pos.set_title(f"Top {len(positive)} Positive Correlations")
+    ax_pos.set_xlabel("Pearson Correlation")
+    ax_pos.axvline(0, color="black", linewidth=1, linestyle="--")
+    fig_pos.tight_layout()
 
-    Returns:
-        Tuple of (positive_correlations_fig, negative_correlations_fig)
-    """
-    corr_pairs_high = analyzer.get_top_correlated_pairs(n=n, ascending=False)
-    corr_pairs_low = analyzer.get_top_correlated_pairs(n=n, ascending=True)
+    fig_neg, ax_neg = plt.subplots(figsize=figsize)
+    sns.barplot(data=negative, x="correlation", y="pretty_pair", color="#1f77b4", ax=ax_neg)
+    ax_neg.set_title(f"Top {len(negative)} Negative Correlations")
+    ax_neg.set_xlabel("Pearson Correlation")
+    ax_neg.axvline(0, color="black", linewidth=1, linestyle="--")
+    fig_neg.tight_layout()
 
-    # Top positive correlations
-    fig1 = plt.figure(figsize=figsize)
-    sns.barplot(
-        data=corr_pairs_high,
-        x="correlation",
-        y="pair",
-        hue="correlation",
-        palette="coolwarm",
-        legend=False,
-    )
-    plt.title(f"Top {n} Positively Correlated Feature Pairs")
-    plt.xlabel("Pearson Correlation")
-    plt.axvline(0, color="black", linewidth=1, linestyle="--")
-    plt.tight_layout()
-
-    # Top negative correlations
-    fig2 = plt.figure(figsize=figsize)
-    sns.barplot(
-        data=corr_pairs_low,
-        x="correlation",
-        y="pair",
-        hue="correlation",
-        palette="coolwarm",
-        legend=False,
-    )
-    plt.title(f"Top {n} Negatively Correlated Feature Pairs")
-    plt.xlabel("Pearson Correlation")
-    plt.axvline(0, color="black", linewidth=1, linestyle="--")
-    plt.tight_layout()
-
-    return fig1, fig2
+    return fig_pos, fig_neg
 
 
 def plot_target_correlations(
-    analyzer: CorrelationAnalyzer,
-    dataset: BaseDataset,
-    target_col: str,
+    result: CorrelationResult,
     n: int = 10,
     figsize: tuple[int, int] = (10, 6),
 ) -> tuple[Figure, Figure]:
-    """Plot top positive and negative correlations with target variable.
+    """Plot top positive and negative correlations with target variable."""
+    if result.target_correlations is None:
+        msg = "CorrelationResult does not include target correlations."
+        raise ValueError(msg)
 
-    Args:
-        analyzer: CorrelationAnalyzer instance
-        dataset: Dataset instance for getting pretty names
-        target_col: Name of target variable column
-        n: Number of features to show
-        figsize: Figure size (width, height)
+    target_corr = result.target_correlations.copy()
+    target_corr["pretty_feature"] = target_corr["feature"].map(lambda c: result.pretty_by_col.get(c, c))
 
-    Returns:
-        Tuple of (positive_correlations_fig, negative_correlations_fig)
-    """
-    target_corr = analyzer.get_target_correlations(target_col)
+    positive = target_corr.nlargest(n, "correlation")
+    negative = target_corr.nsmallest(n, "correlation").sort_values("correlation", ascending=True)
 
-    # Top positive correlations
-    fig1 = plt.figure(figsize=figsize)
-    sns.barplot(
-        data=target_corr.head(n),
-        x="correlation",
-        y="feature",
-        palette="coolwarm",
-    )
-    plt.title(f"Top Positive Correlations with {dataset.get_pretty_name(target_col)}")
-    plt.xlabel("Pearson Correlation")
-    plt.axvline(0, color="black", linewidth=1, linestyle="--")
-    plt.tight_layout()
+    fig_pos, ax_pos = plt.subplots(figsize=figsize)
+    sns.barplot(data=positive, x="correlation", y="pretty_feature", color="#d62728", ax=ax_pos)
+    ax_pos.set_title("Top Positive Correlations with Target")
+    ax_pos.set_xlabel("Pearson Correlation")
+    ax_pos.axvline(0, color="black", linewidth=1, linestyle="--")
+    fig_pos.tight_layout()
 
-    # Top negative correlations
-    fig2 = plt.figure(figsize=figsize)
-    sns.barplot(
-        data=target_corr.tail(n).sort_values("correlation"),
-        x="correlation",
-        y="feature",
-        palette="coolwarm",
-    )
-    plt.title(f"Top Negative Correlations with {dataset.get_pretty_name(target_col)}")
-    plt.xlabel("Pearson Correlation")
-    plt.axvline(0, color="black", linewidth=1, linestyle="--")
-    plt.tight_layout()
+    fig_neg, ax_neg = plt.subplots(figsize=figsize)
+    sns.barplot(data=negative, x="correlation", y="pretty_feature", color="#1f77b4", ax=ax_neg)
+    ax_neg.set_title("Top Negative Correlations with Target")
+    ax_neg.set_xlabel("Pearson Correlation")
+    ax_neg.axvline(0, color="black", linewidth=1, linestyle="--")
+    fig_neg.tight_layout()
 
-    return fig1, fig2
+    return fig_pos, fig_neg

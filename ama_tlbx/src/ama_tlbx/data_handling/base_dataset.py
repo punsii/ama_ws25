@@ -1,14 +1,29 @@
 """Base dataset class for all dataset implementations."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
+from ama_tlbx.analysis.correlation_analyzer import CorrelationAnalyzer
+from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer
+
+
+if TYPE_CHECKING:
+    from ama_tlbx.analysis.outlier_detector import OutlierDetector
+
+from .base_columns import BaseColumn
+from .views import DatasetView
+
 
 class BaseDataset(ABC):
     """Abstract base class for dataset handlers used throughout the AMA module."""
+
+    identifier_columns: Sequence[str] = ()
+    Col: type[BaseColumn]
 
     def __init__(self, df: pd.DataFrame | None = None) -> None:
         """Initialize the base dataset.
@@ -91,18 +106,6 @@ class BaseDataset(ABC):
             index=self.df.index,
         )
 
-    @abstractmethod
-    def get_pretty_name(self, column_name: str) -> str:
-        """Convert column name to pretty name for visualization.
-
-        Args:
-            column_name: The cleaned column name
-
-        Returns:
-            Pretty name suitable for plot labels and titles
-        """
-        ...
-
     def get_pretty_names(self, column_names: list[str] | None = None) -> list[str]:
         """Convert multiple column names to pretty names.
 
@@ -113,3 +116,119 @@ class BaseDataset(ABC):
             List of pretty names suitable for plot labels
         """
         return [self.get_pretty_name(name) for name in column_names or self.df.columns.to_list()]
+
+    def view(
+        self,
+        *,
+        columns: Iterable[str] | None = None,
+        standardized: bool = False,
+        target_col: str | None = None,
+    ) -> DatasetView:
+        """Build an immutable dataset view for analyzers and plotting layers.
+
+        Args:
+            columns: Columns to include in the view (defaults to all)
+            standardized: Use standardized dataframe if available
+            target_col: Optional target column reference
+
+        Returns:
+            DatasetView containing selected data and metadata
+        """
+        frame = self.df_standardized if standardized else self.df
+        selected_cols = list(columns or frame.columns.to_list())
+        data = frame.loc[:, selected_cols].copy()
+        pretty_by_col = {col: self.get_pretty_name(col) for col in selected_cols}
+        numeric_cols = [col for col in selected_cols if col in self.numeric_cols]
+
+        return DatasetView(
+            data=data,
+            pretty_by_col=pretty_by_col,
+            numeric_cols=numeric_cols,
+            target_col=target_col,
+        )
+
+    def feature_columns(
+        self,
+        *,
+        include_target: bool = False,
+        extra_exclude: Iterable[str] | None = None,
+    ) -> list[str]:
+        """Return numeric feature columns, optionally excluding identifiers and target."""
+        exclude = set(self.identifier_columns)
+        if extra_exclude:
+            exclude.update(extra_exclude)
+        if not include_target and self.Col.TARGET:
+            exclude.add(self.Col.TARGET)
+        return [col for col in self.numeric_cols if col not in exclude]
+
+    def analyzer_view(
+        self,
+        *,
+        columns: Iterable[str] | None = None,
+        standardized: bool = True,
+        include_target: bool = True,
+    ) -> DatasetView:
+        """Build a dataset view tailored for downstream analyzers."""
+        if columns is None:
+            columns = self.feature_columns(include_target=include_target)
+        return self.view(
+            columns=columns,
+            standardized=standardized,
+            target_col=self.Col.TARGET if include_target else None,
+        )
+
+    def get_pretty_name(self, column_name: str) -> str:
+        """Convert column name to pretty name for visualization.
+
+        Args:
+            column_name: The cleaned column name
+
+        Returns:
+            Pretty name suitable for plot labels and titles
+        """
+        try:
+            col_enum = self.Col(column_name)
+        except ValueError:
+            # Fallback: capitalize and replace underscores if not in enum
+            return column_name.replace("_", " ").title()
+        else:
+            return str(col_enum.pretty_name)
+
+    def make_correlation_analyzer(
+        self,
+        *,
+        columns: Iterable[str] | None = None,
+        standardized: bool = True,
+        include_target: bool = True,
+    ) -> "CorrelationAnalyzer":
+        """Instantiate a correlation analyzer configured for this dataset."""
+        return CorrelationAnalyzer(
+            self.analyzer_view(columns=columns, standardized=standardized, include_target=include_target),
+        )
+
+    def make_pca_analyzer(
+        self,
+        *,
+        columns: Iterable[str] | None = None,
+        standardized: bool = True,
+        exclude_target: bool = True,
+    ) -> "PCAAnalyzer":
+        """Instantiate a PCA analyzer configured for this dataset."""
+        return PCAAnalyzer(
+            self.analyzer_view(
+                columns=columns,
+                standardized=standardized,
+                include_target=not exclude_target,
+            ),
+        )
+
+    def detect_outliers(
+        self,
+        detector: "OutlierDetector",
+        *,
+        columns: Iterable[str] | None = None,
+        standardized: bool = True,
+    ) -> pd.DataFrame:
+        """Detect outliers with the provided detector for the chosen columns."""
+        columns = list(columns or self.feature_columns(include_target=False))
+        return detector.detect(data=self.view(columns=columns, standardized=standardized).data, columns=columns)

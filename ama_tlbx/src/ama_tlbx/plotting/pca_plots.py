@@ -6,33 +6,22 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer
+from ama_tlbx.analysis.pca_analyzer import PCAResult
 
 
 def plot_explained_variance(
-    analyzer: PCAAnalyzer,
+    result: PCAResult,
     figsize: tuple[int, int] = (10, 6),
 ) -> Figure:
-    """Plot explained variance ratio and cumulative variance for PCA components.
-
-    Args:
-        analyzer: Fitted PCAAnalyzer instance
-        figsize: Figure size (width, height)
-
-    Returns:
-        matplotlib Figure object
-    """
-    if analyzer._pca_model is None:
-        raise ValueError("PCA model not fitted. Call fit() first.")
-
-    n_components = len(analyzer._pca_model.explained_variance_ratio_)
-
+    """Plot explained variance ratio and cumulative variance for PCA components."""
     fig, ax1 = plt.subplots(figsize=figsize)
 
-    # Bar plot for individual variance
-    ax1 = sns.barplot(
-        x=np.arange(1, n_components + 1),
-        y=analyzer._pca_model.explained_variance_ratio_,
+    variance_df = result.explained_variance
+    component_index = np.arange(1, len(variance_df) + 1)
+
+    sns.barplot(
+        x=component_index,
+        y=variance_df["explained_ratio"],
         color="skyblue",
         ax=ax1,
     )
@@ -40,11 +29,10 @@ def plot_explained_variance(
     ax1.set_ylabel("Explained Variance Ratio", color="blue")
     ax1.tick_params(axis="y", labelcolor="blue")
 
-    # Line plot for cumulative variance
     ax2 = ax1.twinx()
-    ax2 = sns.lineplot(
-        x=np.arange(1, n_components + 1),
-        y=analyzer._pca_model.explained_variance_ratio_.cumsum(),
+    sns.lineplot(
+        x=component_index,
+        y=variance_df["cumulative_ratio"],
         marker="o",
         color="red",
         ax=ax2,
@@ -54,53 +42,47 @@ def plot_explained_variance(
     ax2.set_yticks(np.arange(0, 1.1, 0.1))
     ax2.tick_params(axis="y", labelcolor="red")
 
-    plt.title("PCA Explained Variance")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+    ax1.set_xticks(component_index)
+    ax1.set_xticklabels(variance_df["PC"])
+
+    ax1.set_title("PCA Explained Variance")
+    ax1.grid(True, alpha=0.3)
+    fig.tight_layout()
 
     return fig
 
 
 def plot_loadings_heatmap(
-    analyzer: PCAAnalyzer,
+    result: PCAResult,
     n_components: int = 3,
     top_n_features: int | None = None,
     figsize: tuple[int, int] = (12, 6),
 ) -> Figure:
-    """Plot heatmap of PCA loadings for top features.
-
-    Args:
-        analyzer: Fitted PCAAnalyzer instance
-        n_components: Number of principal components to show
-        top_n_features: Number of top features to display (None = all)
-        figsize: Figure size (width, height)
-
-    Returns:
-        matplotlib Figure object
-    """
-    if analyzer._pca_model is None:
-        raise ValueError("PCA model not fitted. Call fit() first.")
-
-    loadings = analyzer.get_loading_vectors()
+    """Plot heatmap of PCA loadings for top features."""
+    loadings = result.loadings
     if isinstance(loadings, pd.Series):
-        raise TypeError("Expected DataFrame from get_loading_vectors()")
+        loadings = loadings.to_frame(name="PC1")
 
-    pc_cols = [f"PC{i + 1}" for i in range(min(n_components, loadings.shape[1]))]
+    pc_cols = list(loadings.columns[:n_components])
 
+    ranked = loadings[pc_cols].abs().sum(axis=1).sort_values(ascending=False)
     if top_n_features is not None:
-        top_features = list(analyzer.get_top_loading_features(n_components=n_components)[:top_n_features])
-        loadings = loadings.loc[top_features]
+        selected_features = ranked.head(top_n_features).index
+        loadings = loadings.loc[selected_features, pc_cols]
+    else:
+        loadings = loadings.loc[:, pc_cols]
 
-    fig = plt.figure(figsize=figsize)
+    fig, ax = plt.subplots(figsize=figsize)
     sns.heatmap(
-        loadings[pc_cols],
+        loadings,
         annot=True,
         fmt=".2f",
         cmap="coolwarm",
         center=0,
+        ax=ax,
     )
-    plt.title(f"PCA Loadings for Top {top_n_features or 'All'} Features")
-    plt.tight_layout()
+    ax.set_title(f"PCA Loadings for Top {top_n_features or 'All'} Features")
+    fig.tight_layout()
 
     return fig
 
