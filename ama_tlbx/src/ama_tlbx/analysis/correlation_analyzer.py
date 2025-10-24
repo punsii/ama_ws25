@@ -9,6 +9,8 @@ class CorrelationAnalyzer:
     This class provides methods for calculating correlation matrices,
     identifying highly correlated feature pairs, and analyzing relationships
     with target variables.
+
+    # TODO: take dataset instead of raw df!
     """
 
     def __init__(self, df: pd.DataFrame):
