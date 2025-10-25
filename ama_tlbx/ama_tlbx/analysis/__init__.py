@@ -8,6 +8,7 @@ from .outlier_detector import (
     ZScoreOutlierDetector,
 )
 from .pca_analyzer import PCAAnalyzer, PCAResult
+from .column_concat import ColumnConcatenator
 
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "PCAAnalyzer",
     "PCAResult",
     "ZScoreOutlierDetector",
+    "ColumnConcatenator",
 ]
