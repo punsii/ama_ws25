@@ -1,0 +1,50 @@
+---
+title: "Outlier Detection"
+format:
+  html:
+    toc: true
+---
+
+## Why multiple detectors?
+
+Outliers manifest differently: univariate glitches (sensor typos) differ from multivariate
+anomalies (rare country profiles). The toolbox therefore ships three complementary strategies that
+share the same interface defined in `OutlierDetector`.
+
+## Interquartile range (IQR) rule
+
+`IQROutlierDetector` implements Tukey's fences:
+
+$$
+\text{IQR} = Q_3 - Q_1,\qquad
+[\text{lower}, \text{upper}] = [Q_1 - k \cdot \text{IQR},\; Q_3 + k \cdot \text{IQR}],
+$$
+
+and any value outside that interval is flagged as an outlier. Because the detector operates on each
+feature independently, it is robust to skewed, heavy-tailed distributions and highlights single
+column issues.
+
+## Z-score screening
+
+`ZScoreOutlierDetector` standardizes each feature and marks rows where
+$|z_{ij}| > \tau$. The default threshold $\tau = 3$ matches the empirical rule for Gaussian data.
+This detector reacts to unusual magnitude relative to the global mean and is particularly helpful
+for normally distributed biomedical indicators.
+
+## Isolation Forest
+
+`IsolationForestOutlierDetector` wraps scikit-learn's ensemble method. Random binary partitions
+are applied to the feature space; anomalies isolate quickly and therefore require fewer splits.
+The average path length $\mathbb{E}[h(x)]$ becomes the anomaly score. Hyperparameters such as
+`contamination` and `n_estimators` are exposed so you can align the detector with domain-specific
+expectations about outlier prevalence.
+
+## Practical workflow
+
+1. Use `dataset.view(standardized=True)` for z-score and Isolation Forest to keep scales comparable.
+2. Run IQR on raw values to catch domain-specific absolute ranges (e.g., years outside 1950–2015).
+3. Compare detector outputs—rows identified by at least two methods are prime candidates for manual
+   inspection or removal before PCA.
+
+Combining outputs in this fashion balances recall (Isolation Forest) and precision (IQR/Z-score),
+delivering interpretable anomaly reports for classroom discussions.

@@ -1,0 +1,46 @@
+project:
+  type: website
+  output-dir: _site
+  pre-render:
+    - chmod +x scripts/generate_pdoc.sh
+    - bash scripts/generate_pdoc.sh
+  resources:
+    - pdoc/**
+
+website:
+  title: "AMA Toolbox Documentation"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Overview
+      - text: Theory
+        menu:
+          - href: theory.qmd
+            text: Theory Overview
+          - href: data-preprocessing.qmd
+            text: Data Preprocessing
+          - href: correlation-analysis.qmd
+            text: Correlation Analysis
+          - href: pca.qmd
+            text: Principal Component Analysis
+          - href: outlier-detection.qmd
+            text: Outlier Detection
+      - href: pdoc/ama_tlbx.html
+        text: API Reference
+
+# Python configuration - use the ama_tlbx virtual environment
+jupyter:
+  kernel: ../ama_tlbx/.venv/bin/python
+
+execute:
+  cache: false
+  freeze: auto
+
+# Use the ama_tlbx virtual environment for Python execution
+engine: jupyter
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    number-sections: true

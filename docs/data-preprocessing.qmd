@@ -1,0 +1,86 @@
+---
+title: "Data Preprocessing"
+format:
+  html:
+    toc: true
+---
+
+## Pipeline goals
+
+The preprocessing stack produces analysis-ready tables that satisfy three constraints:
+
+1. **Consistent naming:** CSV headers are normalized to snake_case and mapped to the
+   `LifeExpectancyColumn` enum so downstream code can reference semantic names instead of strings.
+2. **Typed numeric features:** non-numeric columns become categorical identifiers,
+   while numeric columns are converted to `float64` so that pandas, NumPy, and scikit-learn share
+   the same dtype assumptions.
+3. **Deterministic feature views:** `BaseDataset.view()` and `DatasetView` capture the subset of
+   columns, pretty labels, and target metadata that analyzers require. Views are immutable and
+   can point to either raw or standardized values.
+
+## Column normalization and typing
+
+`LifeExpectancyDataset.from_csv` chains helper methods that mirror the documented dataset schema:
+
+1. `_normalize_col_names` strips whitespace, lowercases names, and collapses punctuation
+   into underscores so that `"Adult mortality "` becomes `adult_mortality`.
+2. `_convert_data_types` enforces string identifiers for `country`, `status`, and `year`,
+   while every other column is coerced to numeric via `pd.to_numeric(errors="coerce")`. Missing
+   values become `NaN`, making the next aggregation/standardization steps explicit.
+
+Because the enum `LifeExpectancyColumn` wraps cleaned names with pretty labels, any feature that
+cannot be matched gracefully falls back to `"Title Case"` labels in `BaseDataset.get_pretty_name`.
+
+## Aggregation and imputation
+
+Multiple yearly observations per country are aggregated with `_aggregate_by_country`. Numeric
+columns receive `mean` by default, categorical columns forward-fill the first entry, and any
+remaining numeric gaps are filled with the column-wise average:
+
+$$
+\hat{x}_{c,j} = \frac{1}{n_c} \sum_{i=1}^{n_c} x_{c_i, j}, \qquad
+\tilde{x}_{c,j} = \begin{cases}
+    \hat{x}_{c,j} & \text{if } x_{c,j} \text{ missing} \\
+    x_{c,j} & \text{otherwise}
+\end{cases}
+$$
+
+This keeps per-country vectors dense without inventing synthetic trends and matches the lecture
+recommendation to aggregate on the analysis unit (country) before fitting multivariate models.
+
+## Standardization and scaling
+
+`BaseDataset._compute_standardized` runs scikit-learn's StandardScaler on every numeric feature.
+The familiar z-score transform
+
+$$
+z_{ij} = \frac{x_{ij} - \mu_j}{\sigma_j}
+$$
+
+ensures each column has zero mean and unit variance, mitigating scale effects for
+correlation, PCA, and distance-based detectors. Standardized frames are cached on first use and
+shared by all analyzers, so repeated access is O(1).
+
+## Feature selection and views
+
+`BaseDataset.feature_columns()` removes identifier columns and (optionally) the target label,
+while `BaseDataset.view()` returns a `DatasetView` with:
+
+- `data`: copy-on-write pandas frame limited to the requested columns.
+- `numeric_cols`: subset of numeric columns for algorithms that cannot handle categoricals.
+- `pretty_by_col`: human-friendly labels for plots and reports.
+- `target_col`: optional reference so analyzers can fetch supervised targets.
+
+Because `DatasetView` is immutable, analyzers cannot accidentally mutate the original dataset.
+
+## Analyzer hooks
+
+Three helper constructors keep preprocessing logic centralized:
+
+- `make_correlation_analyzer()` uses the standardized view (including the target unless disabled).
+- `make_pca_analyzer()` builds a feature-only standardized view, matching PCA assumptions.
+- `detect_outliers(detector=...)` accepts any `OutlierDetector` implementation and feeds it either
+  raw or standardized columns.
+
+These hooks mean every theoretical chapter (correlation, PCA, outliers) starts from the exact same
+cleaned base table, which keeps comparisons reproducible and audit-friendly.

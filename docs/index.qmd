@@ -1,0 +1,50 @@
+---
+title: "AMA Toolbox Overview"
+format:
+  html:
+    toc: true
+---
+
+# Project Scope
+
+`ama_tlbx` provides reusable components for the Applied Multivariate Analysis course:
+dataset handlers, statistical analyzers, plotting helpers, and a workflow façade that
+ties everything together for notebooks or presentations.
+
+- **Data handling:** `BaseDataset` standardises IO, feature selection, pretty-label
+  lookup, and view generation. `LifeExpectancyDataset` demonstrates how a concrete
+  dataset specialises those hooks.
+- **Analysis:** Dedicated classes for correlation analysis, PCA, and several outlier
+  detectors use clear type hints and docstrings for reliable reuse.
+- **Plotting:** Thin wrappers around seaborn/matplotlib visualise precomputed results
+  supplied by analyzers.
+- **Workflow:** `AnalysisWorkflow` orchestrates multi-stage processes with chainable
+  methods (`correlation().pca().outliers()`).
+
+# Getting Started
+
+```bash
+uv sync --extra docs --extra notebook
+export QUARTO_PYTHON="$(pwd)/.venv/bin/python"  # point Quarto at the project venv
+quarto render docs
+```
+
+Alternatively configure once via:
+
+```bash
+quarto use python ".venv/bin/python"
+```
+
+Rendered documentation lives in `docs/_site/`.
+
+# Components at a Glance
+
+| Layer            | Key Symbols                                                                 |
+| ---------------- | --------------------------------------------------------------------------- |
+| Data handling    | `BaseDataset`, `DatasetView`, `LifeExpectancyDataset`, `LifeExpectancyColumn` |
+| Analysis         | `CorrelationAnalyzer`, `PCAAnalyzer`, `IQROutlierDetector`, `ZScoreOutlierDetector`, `IsolationForestOutlierDetector` |
+| Plotting         | `plot_correlation_heatmap`, `plot_top_correlated_pairs`, `plot_target_correlations`, `plot_explained_variance`, `plot_loadings_heatmap` |
+| Workflow         | `AnalysisWorkflow`, `WorkflowFigures`                                       |
+
+Use the navigation bar to explore theoretical background (`Theory Notes`) and the
+auto-generated API reference (`API Reference`).

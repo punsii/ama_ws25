@@ -1,0 +1,58 @@
+---
+title: "Principal Component Analysis"
+format:
+  html:
+    toc: true
+---
+
+## Covariance structure
+
+Given the standardized design matrix $\mathbf{X} \in \mathbb{R}^{n \times p}$, PCA starts with the
+sample covariance matrix
+
+$$
+\boldsymbol{\Sigma} = \frac{1}{n-1} \mathbf{X}^{\top} \mathbf{X}.
+$$
+
+Since each column of $\mathbf{X}$ has zero mean and unit variance, $\Sigma_{jj} = 1$ for all
+features, and off-diagonal entries match the Pearson correlations discussed earlier.
+
+## Eigendecomposition
+
+`PCAAnalyzer` delegates to `sklearn.decomposition.PCA`, which solves
+$\boldsymbol{\Sigma} \mathbf{v}_k = \lambda_k \mathbf{v}_k$ for eigenpairs ordered by
+$\lambda_1 \ge \lambda_2 \ge \dots \ge \lambda_p$. The eigenvectors form an orthonormal basis that
+maximizes captured variance along each successive axis and satisfies:
+
+$$
+\mathbf{v}_k^{\top} \mathbf{v}_\ell =
+\begin{cases}
+1 & k = \ell, \\
+0 & k \ne \ell.
+\end{cases}
+$$
+
+## Explained variance and loadings
+
+The cumulative explained variance ratio after $K$ components is
+
+$$
+\text{cumvar}_K = \frac{\sum_{k=1}^{K} \lambda_k}{\sum_{j=1}^{p} \lambda_j},
+$$
+
+which `PCAResult.explained_variance_ratio` exposes directly for scree plots.
+Loadings—captured in the matrix $\mathbf{L} = [\mathbf{v}_1, \dots, \mathbf{v}_p]$—quantify how
+strongly each original feature contributes to a principal component. Large positive/negative
+entries indicate influential features that move together along that component.
+
+## Implementation notes
+
+- `DatasetView.numeric_cols` ensures PCA sees only continuous features; identifiers and categorical
+  values remain outside the standardized matrix.
+- `PCAAnalyzer` stores both the fitted estimator (`sklearn` object) and a `PCAResult` dataclass
+  containing scores, loadings, and the reconstruction of explained variance.
+- Plot helpers (`plot_explained_variance`, `plot_loadings_heatmap`) take `PCAResult`, so teaching
+  materials can focus on interpretation rather than recomputing transformations.
+
+By chaining `dataset.make_pca_analyzer().fit()` after correlation analysis, the workflow validates
+multicollinearity assumptions before deciding how many components capture the desired variance.

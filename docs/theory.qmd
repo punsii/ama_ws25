@@ -1,0 +1,51 @@
+---
+title: "Theory Overview"
+format:
+  html:
+    toc: false
+---
+
+## How to use these notes
+
+Each chapter below links to a dedicated Quarto page that mixes theory, formulas, and AMA Toolbox
+implementation details. Work through them in the suggested order to mirror the workflow implemented
+in `AnalysisWorkflow`.
+
+::: {.grid}
+::: {.g-col-6}
+### Data Preprocessing
+From CSV ingestion to standardized `DatasetView` objects. Covers column normalization, aggregation,
+imputation, and feature selection hooks.
+
+[Read the chapter →](data-preprocessing.qmd)
+:::
+::: {.g-col-6}
+### Correlation Analysis
+Derives Pearson's coefficient, explains how we rank feature pairs, and shows how
+`CorrelationAnalyzer` packages matrices for plots.
+
+[Read the chapter →](correlation-analysis.qmd)
+:::
+
+::: {.g-col-6}
+### Principal Component Analysis
+Walks through the covariance matrix, eigendecomposition, variance ratios, and loadings exposed by
+`PCAAnalyzer` and `PCAResult`.
+
+[Read the chapter →](pca.qmd)
+:::
+::: {.g-col-6}
+### Outlier Detection
+Compares IQR fences, z-score screening, and Isolation Forest ensembles. Highlights when to combine
+detectors for robust anomaly reports.
+
+[Read the chapter →](outlier-detection.qmd)
+:::
+:::
+
+## References
+
+- Jolliffe, I. T., & Cadima, J. (2016). *Principal component analysis: a review and recent developments.*
+  Philosophical Transactions of the Royal Society A, 374(2065). https://doi.org/10.1098/rsta.2015.0202
+- Benesty, J., Chen, J., Huang, Y., & Cohen, I. (2009). *Pearson correlation coefficient.* In Noise Reduction in Speech Processing (pp. 1–4). Springer. https://doi.org/10.1007/978-3-642-00296-0_5
+- Liu, F. T., Ting, K. M., & Zhou, Z.-H. (2008). *Isolation Forest.* 2008 Eighth IEEE International Conference on Data Mining. https://doi.org/10.1109/ICDM.2008.17

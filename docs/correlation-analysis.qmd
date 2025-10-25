@@ -1,0 +1,47 @@
+---
+title: "Correlation Analysis"
+format:
+  html:
+    toc: true
+---
+
+## Pearson coefficient refresher
+
+For columns $X$ and $Y$ drawn from the standardized dataset view, the Pearson coefficient is
+
+$$
+\rho_{X,Y} = \frac{\operatorname{cov}(X, Y)}{\sigma_X \sigma_Y}
+          = \frac{\sum_{i=1}^n (x_i - \bar{x})(y_i - \bar{y})}
+                 {\sqrt{\sum_{i=1}^n (x_i - \bar{x})^2} \sqrt{\sum_{i=1}^n (y_i - \bar{y})^2}}.
+$$
+
+Values near $\pm 1$ indicate strong linear dependence, while values near $0$ suggest weak or
+nonlinear relationships. Standardization keeps $\sigma_X = \sigma_Y = 1$, so Pearson simply becomes
+the average product of paired deviations.
+
+## Ranking feature interactions
+
+`CorrelationAnalyzer` evaluates every pair of numeric features from the requested `DatasetView`,
+computes $\lvert \rho_{X_i, X_j} \rvert$ and sorts the resulting table in descending order.
+Large magnitudes highlight redundant features (good PCA candidates) or meaningful domain
+relationships that deserve further investigation. Because the matrix is symmetric, the analyzer
+stores only the upper triangle in `CorrelationResult.feature_pairs`.
+
+## Target relationships
+
+When `include_target=True`, the analyzer also computes feature-versus-target correlations.
+The resulting `CorrelationResult.target_correlations` table answers two questions quickly:
+
+1. Which predictors explain most of the variance of the outcome?
+2. Which predictors have negligible linear influence and could be removed before PCA?
+
+## Implementation notes
+
+- The heavy lifting relies on `pandas.DataFrame.corr`, which uses optimized NumPy routines.
+- Pretty column labels are injected from `DatasetView.pretty_by_col`, so tables and heatmaps
+  automatically render human-readable names.
+- Utility functions in `plotting.pca_plots` reuse the stored matrices instead of recomputing them.
+
+Because correlation matrices feed both the PCA initialization (to check for multicollinearity) and
+the outlier detectors (to pick informative projections), this chapter underpins the rest of the
+analysis workflow.
