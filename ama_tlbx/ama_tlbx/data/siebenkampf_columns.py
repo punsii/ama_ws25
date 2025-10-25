@@ -1,7 +1,5 @@
 """Column definitions for the Siebenkampf (Heptathlon) dataset. Created by GitHub Copilot, Claude Sonnet 4.5."""
 
-from typing import Literal
-
 from .base_columns import BaseColumn, ColumnMetadata
 
 
@@ -217,23 +215,3 @@ _COLUMN_METADATA_SIEBENKAMPF: dict[SiebenkampfColumn, ColumnMetadata] = {
         pretty_name="800m Run (s)",
     ),
 }
-
-
-# Type aliases for column name validation
-SiebenkampfColumnName = Literal[
-    "platzierung",
-    "name",
-    "punkte85",
-    "land",
-    "geburtsdatum",
-    "jahr",
-    "wettkampf",
-    "zeit_100m_huerden",
-    "hochsprung",
-    "kugelstossen",
-    "zeit_200m_lauf",
-    "weitsprung",
-    "speerwurf",
-    "zeit_800m_lauf",
-    "quelle",
-]

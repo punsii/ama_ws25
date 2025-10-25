@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer, PCAResult
-from ama_tlbx.data_handling.views import DatasetView
+from ama_tlbx.data.views import DatasetView
 
 
 class TestPCAAnalyzer:

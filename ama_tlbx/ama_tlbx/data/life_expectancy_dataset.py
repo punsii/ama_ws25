@@ -1,16 +1,16 @@
 """Refactored dataset class focused on data loading and preprocessing only."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 
 from .base_dataset import BaseDataset
-from .column_definitions import LifeExpectancyColumn as Col
+from .life_expectancy_columns import LifeExpectancyColumn as Col
 
 
 class LifeExpectancyDataset(BaseDataset):
-    """Loading, preprocessing and normalization for the Life Expectancy dataset."""
+    """Loading, preprocessing and normalization for the [Life Expectancy dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who)."""
 
     Col = Col  # Set the column enum class
     default_target_column = Col.TARGET.value
@@ -39,15 +39,15 @@ class LifeExpectancyDataset(BaseDataset):
         """
         filepath = Path(filepath)
 
-        df = pd.read_csv(filepath).pipe(cls._normalize_col_names).pipe(cls._convert_data_types)
+        le_df = pd.read_csv(filepath).pipe(cls._normalize_col_names).pipe(cls._convert_data_types)
 
         if drop_missing_target:
-            df = df.dropna(subset=[Col.TARGET.value])
+            le_df = le_df.dropna(subset=[Col.TARGET.value])
 
         if aggregate_by_country:
-            df = cls._aggregate_by_country(df)
+            le_df = cls._aggregate_by_country(le_df)
 
-        return cls(df=df)
+        return cls(df=le_df)
 
     @staticmethod
     def _normalize_col_names(df: pd.DataFrame) -> pd.DataFrame:

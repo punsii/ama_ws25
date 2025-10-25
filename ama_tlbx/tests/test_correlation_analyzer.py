@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from ama_tlbx.analysis.correlation_analyzer import CorrelationAnalyzer, CorrelationResult
-from ama_tlbx.data_handling.views import DatasetView
+from ama_tlbx.data.views import DatasetView
 
 
 class TestCorrelationAnalyzer:

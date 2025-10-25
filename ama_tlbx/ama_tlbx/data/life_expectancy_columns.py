@@ -1,23 +1,21 @@
 """Column definitions for the Life Expectancy dataset. Created by GitHub Copilot, Claude Sonnet 4.5."""
 
-from typing import Literal
-
 from .base_columns import BaseColumn, ColumnMetadata
 
 
 class LifeExpectancyColumn(BaseColumn):
-    """Column names for the Life Expectancy dataset.
+    """Column names for the Life Expectancy dataset as per [Life Expectancy (WHO) on Kaggle](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who).
 
     Columns:
     - ``country``: str - Country name
     - ``year``: datetime - Year of observation
     - ``status``: str - Development status (Developing/Developed)
     - ``life_expectancy``: float - Life expectancy in years (target variable)
-    - ``adult_mortality``: float - Adult mortality rate per 1000 population
+    - ``adult_mortality``: float - Adult mortality rate per 1000 population (probability of dying between 15 and 60 years)
     - ``infant_deaths``: int - Number of infant deaths per 1000 population
-    - ``alcohol``: float - Alcohol consumption per capita (liters)
-    - ``percentage_expenditure``: float - Health expenditure as % of GDP per capita
-    - ``hepatitis_b``: float - Hepatitis B immunization coverage (%)
+    - ``alcohol``: float - Alcohol, recorded per capita (15+) consumption (in litres of pure alcohol)
+    - ``percentage_expenditure``: float - Expenditure on health as a percentage of GDP per capita (%)
+    - ``hepatitis_b``: float - Hepatitis B (HepB) immunization coverage among 1-year-olds (%)
     - ``measles``: int - Number of measles cases per 1000 population
     - ``bmi``: float - Average Body Mass Index
     - ``under_five_deaths``: int - Deaths of children under 5 per 1000 population
@@ -35,43 +33,66 @@ class LifeExpectancyColumn(BaseColumn):
 
     # Target variable
     TARGET = "life_expectancy"
+    """Life expectancy in years (target variable)."""
+    LIFE_EXPECTANCY = TARGET
 
     # Identifiers
     COUNTRY = "country"
+    """Country name."""
     YEAR = "year"
+    """Year of observation."""
     STATUS = "status"
+    """Development status (Developing/Developed)."""
 
     # Mortality indicators
     ADULT_MORTALITY = "adult_mortality"
+    """Adult mortality rate per 1000 population (probability of dying between 15 and 60 years)."""
     INFANT_DEATHS = "infant_deaths"
+    """Number of infant deaths per 1000 population."""
     UNDER_FIVE_DEATHS = "under_five_deaths"
+    """Deaths of children under 5 per 1000 population."""
 
     # Disease and health indicators
     HIV_AIDS = "hiv_aids"
+    """Deaths per 1000 live births due to HIV/AIDS (0-4 years)."""
     MEASLES = "measles"
+    """Number of measles cases per 1000 population."""
 
     # Immunization coverage (%)
     HEPATITIS_B = "hepatitis_b"
+    """Hepatitis B (HepB) immunization coverage among 1-year-olds (%)."""
     POLIO = "polio"
+    """Polio immunization coverage (%)."""
     DIPHTHERIA = "diphtheria"
+    """Diphtheria immunization coverage (%)."""
 
     # Nutrition and physical health
     BMI = "bmi"
+    """Average Body Mass Index."""
     THINNESS_1_19_YEARS = "thinness_1_19_years"
+    """Prevalence of thinness among children 10-19 years (%)."""
     THINNESS_5_9_YEARS = "thinness_5_9_years"
+    """Prevalence of thinness among children 5-9 years (%)."""
 
     # Economic indicators
     GDP = "gdp"
+    """Gross Domestic Product per capita (USD)."""
     PERCENTAGE_EXPENDITURE = "percentage_expenditure"
+    """Expenditure on health as a percentage of GDP per capita (%)."""
     TOTAL_EXPENDITURE = "total_expenditure"
+    """Government health expenditure (% of total govt expenditure)."""
 
     # Social indicators
     INCOME_COMPOSITION = "income_composition_of_resources"
+    """Human Development Index (0-1)."""
     SCHOOLING = "schooling"
+    """Average years of schooling."""
     ALCOHOL = "alcohol"
+    """Alcohol, recorded per capita (15+) consumption (in litres of pure alcohol)."""
 
     # Population
     POPULATION = "population"
+    """Population of the country."""
 
     def metadata(self) -> ColumnMetadata:
         """Get metadata for this column.
@@ -118,7 +139,7 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
     ),
     # Target variable
     LifeExpectancyColumn.TARGET: ColumnMetadata(
-        original_name="Life expectancy ",  # Note: trailing space in CSV
+        original_name="Life expectancy ",
         cleaned_name="life_expectancy",
         dtype="float64",
         pretty_name="Life Expectancy (years)",
@@ -137,20 +158,20 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         pretty_name="Infant Deaths (per 1000)",
     ),
     LifeExpectancyColumn.UNDER_FIVE_DEATHS: ColumnMetadata(
-        original_name="under-five deaths ",  # Note: trailing space in CSV
+        original_name="under-five deaths ",
         cleaned_name="under_five_deaths",
         dtype="float64",
         pretty_name="Under-5 Deaths (per 1000)",
     ),
     # Disease and health indicators
     LifeExpectancyColumn.HIV_AIDS: ColumnMetadata(
-        original_name=" HIV/AIDS",  # Note: leading space in CSV
+        original_name=" HIV/AIDS",
         cleaned_name="hiv_aids",
         dtype="float64",
         pretty_name="HIV/AIDS Deaths (per 1000 births)",
     ),
     LifeExpectancyColumn.MEASLES: ColumnMetadata(
-        original_name="Measles ",  # Note: trailing space in CSV
+        original_name="Measles ",
         cleaned_name="measles",
         dtype="float64",
         pretty_name="Measles Cases (per 1000)",
@@ -169,26 +190,26 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         pretty_name="Polio Coverage (%)",
     ),
     LifeExpectancyColumn.DIPHTHERIA: ColumnMetadata(
-        original_name="Diphtheria ",  # Note: trailing space in CSV
+        original_name="Diphtheria ",
         cleaned_name="diphtheria",
         dtype="float64",
         pretty_name="Diphtheria Coverage (%)",
     ),
     # Nutrition and physical health
     LifeExpectancyColumn.BMI: ColumnMetadata(
-        original_name=" BMI ",  # Note: spaces in CSV
+        original_name=" BMI ",
         cleaned_name="bmi",
         dtype="float64",
         pretty_name="BMI (Average)",
     ),
     LifeExpectancyColumn.THINNESS_1_19_YEARS: ColumnMetadata(
-        original_name=" thinness  1-19 years",  # Note: spaces in CSV
+        original_name=" thinness  1-19 years",
         cleaned_name="thinness_1_19_years",
         dtype="float64",
         pretty_name="Thinness 10-19 Years (%)",
     ),
     LifeExpectancyColumn.THINNESS_5_9_YEARS: ColumnMetadata(
-        original_name=" thinness 5-9 years",  # Note: leading space in CSV
+        original_name=" thinness 5-9 years",
         cleaned_name="thinness_5_9_years",
         dtype="float64",
         pretty_name="Thinness 5-9 Years (%)",
@@ -239,32 +260,3 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         pretty_name="Population",
     ),
 }
-
-
-# Type aliases for column name validation
-LifeExpectancyColumnName = Literal[
-    "country",
-    "year",
-    "status",
-    "life_expectancy",
-    "adult_mortality",
-    "infant_deaths",
-    "under_five_deaths",
-    "hiv_aids",
-    "measles",
-    "hepatitis_b",
-    "polio",
-    "diphtheria",
-    "bmi",
-    "thinness_1_19_years",
-    "thinness_5_9_years",
-    "gdp",
-    "percentage_expenditure",
-    "total_expenditure",
-    "income_composition_of_resources",
-    "schooling",
-    "alcohol",
-    "population",
-]
-
-DevelopmentStatus = Literal["Developing", "Developed"]

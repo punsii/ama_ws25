@@ -5,8 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from ama_tlbx.data_handling.column_definitions import LifeExpectancyColumn as Col
-from ama_tlbx.data_handling.life_expectancy_dataset import LifeExpectancyDataset
+from ama_tlbx.data import LECol, LifeExpectancyDataset
 
 
 class TestLifeExpectancyDataset:
@@ -72,10 +71,10 @@ class TestLifeExpectancyDataset:
 
     def test_from_csv_normalizes_columns(self, sample_dataset: LifeExpectancyDataset) -> None:
         """Test that from_csv normalizes column names."""
-        df = sample_dataset.df
-        assert "country" in df.columns
-        assert "life_expectancy" in df.columns
-        assert "gdp" in df.columns
+        df_le = sample_dataset.df
+        assert "country" in df_le.columns
+        assert "life_expectancy" in df_le.columns
+        assert "gdp" in df_le.columns
 
     def test_aggregate_by_country(self, sample_df: pd.DataFrame, tmp_path: Path) -> None:
         """Test aggregation by country."""

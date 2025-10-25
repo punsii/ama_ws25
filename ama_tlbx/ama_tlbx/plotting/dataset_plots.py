@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from ama_tlbx.data_handling.base_dataset import BaseDataset
+from ama_tlbx.data.base_dataset import BaseDataset
 
 
 def plot_standardization_comparison(

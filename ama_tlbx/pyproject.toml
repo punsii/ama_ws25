@@ -37,8 +37,11 @@ dependencies = [
     all = ["ama-tlbx[dev,docs,notebook]"]
 
 [build-system]
-requires      = ["uv_build>=0.9.3,<0.10.0"]
-build-backend = "uv_build"
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ama_tlbx"]
 
 
 [tool.mypy]
@@ -133,6 +136,7 @@ target-version = "py313"
         "D212",    # Pydocstyle - summary line should be immediately after the opening quotes.
         "D401",    # Pydocstyle - Checks for docstring first lines that are not in an imperative mood.
         "S311",    # Flake8-bandit - Standard pseudo-random generators are not suitable for security/cryptographic purposes
+        "S101",    # Allow assert statements
         "PERF401", # Perflint - Checks for for loops that can be replaced by a list comprehension.
         "RET504",  # Flake8-return - Checks for variable assignments that immediately precede a return of the assigned variable.
         "FA102",   # Flake8-future-annotations - Missing ``, but uses PEP 604 union
@@ -153,7 +157,7 @@ target-version = "py313"
         convention = "google"
 
         [tool.ruff.lint.isort]
-        # Help Ruff identify your package and treat src/ as first‑party
+        # Help Ruff identify your package as first‑party
         known-first-party   = ["ama_tlbx"]
         lines-after-imports = 2
 
@@ -170,9 +174,9 @@ target-version = "py313"
             "NPY002",  # Allow legacy np.random calls in tests
             "E721",    # Allow type comparisons in tests
             "ICN001",  # Allow non-conventional imports in tests
-            "PD901",   # Allow generic 'df' variable name in tests
         ]
-        # Data handling files can use 'df' for DataFrames
-        "src/**/data_handling/*.py" = [
-            "PD901",   # Allow generic 'df' variable name for DataFrame operations
+        # Allow lazy imports in base_dataset to break circular dependency
+        "ama_tlbx/data/base_dataset.py" = [
+            "E402",    # Allow imports not at top of file (lazy imports for circular dependency)
+            "PLC0415", # same as above
         ]

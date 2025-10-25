@@ -2,9 +2,9 @@
 
 import pytest
 
-from ama_tlbx.data_handling.base_columns import BaseColumn, ColumnMetadata
-from ama_tlbx.data_handling.life_expectancy_columns import LifeExpectancyColumn
-from ama_tlbx.data_handling.siebenkampf_columns import SiebenkampfColumn
+from ama_tlbx.data.base_columns import BaseColumn, ColumnMetadata
+from ama_tlbx.data.life_expectancy_columns import LifeExpectancyColumn
+from ama_tlbx.data.siebenkampf_columns import SiebenkampfColumn
 
 
 class TestColumnMetadata:

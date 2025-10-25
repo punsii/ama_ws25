@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from ama_tlbx.data_handling.views import DatasetView
+from ama_tlbx.data.views import DatasetView
 
 
 @dataclass(frozen=True)

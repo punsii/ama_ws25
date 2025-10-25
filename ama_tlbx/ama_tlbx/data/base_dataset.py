@@ -8,12 +8,11 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from ama_tlbx.analysis.correlation_analyzer import CorrelationAnalyzer
-from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer
-
 
 if TYPE_CHECKING:
+    from ama_tlbx.analysis.correlation_analyzer import CorrelationAnalyzer
     from ama_tlbx.analysis.outlier_detector import OutlierDetector
+    from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer
 
 from .base_columns import BaseColumn
 from .views import DatasetView
@@ -202,6 +201,8 @@ class BaseDataset(ABC):
         include_target: bool = True,
     ) -> "CorrelationAnalyzer":
         """Instantiate a correlation analyzer configured for this dataset."""
+        from ama_tlbx.analysis.correlation_analyzer import CorrelationAnalyzer
+
         return CorrelationAnalyzer(
             self.analyzer_view(columns=columns, standardized=standardized, include_target=include_target),
         )
@@ -214,6 +215,8 @@ class BaseDataset(ABC):
         exclude_target: bool = True,
     ) -> "PCAAnalyzer":
         """Instantiate a PCA analyzer configured for this dataset."""
+        from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer
+
         return PCAAnalyzer(
             self.analyzer_view(
                 columns=columns,

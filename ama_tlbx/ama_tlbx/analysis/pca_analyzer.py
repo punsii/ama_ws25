@@ -6,7 +6,7 @@ from typing import Literal
 import pandas as pd
 from sklearn.decomposition import PCA
 
-from ama_tlbx.data_handling.views import DatasetView
+from ama_tlbx.data.views import DatasetView
 
 
 @dataclass(frozen=True)
@@ -44,11 +44,9 @@ class PCAAnalyzer:
     ) -> "PCAAnalyzer":
         r"""Fit a PCA model using :class:`sklearn.decomposition.PCA`.
 
-        Principal Component Analysis projects the standardized data matrix
-        :math:`\mathbf{X}` onto orthogonal directions of maximal variance, enabling
-        dimensionality reduction. See
-        https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html
-        for details.
+        Principal Component Analysis projects the _standardized_ data matrix
+        **X** onto orthogonal directions of maximal variance, enabling
+        dimensionality reduction. See [scikit-learn PCA documentation](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html) for details.
         """
         features = self._view.features.copy()
 
@@ -131,7 +129,7 @@ class PCAAnalyzer:
     def get_top_loading_features(
         self,
         n_components: int = 3,
-        method: Literal["sum", "max", "l2", "euclidean"] = "sum",
+        method: Literal["sum", "max", "l2"] = "sum",
     ) -> pd.Index:
         """Rank features by aggregated loading strength across leading components."""
         if self._pca_model is None:
@@ -148,7 +146,7 @@ class PCAAnalyzer:
             importance = loadings[pc_cols].abs().sum(axis=1)
         elif method_key == "max":
             importance = loadings[pc_cols].abs().max(axis=1)
-        elif method_key in {"l2", "euclidean"}:
+        elif method_key == "l2":
             importance = (loadings[pc_cols] ** 2).sum(axis=1).pow(0.5)
         else:
             msg = "method must be one of {'sum', 'max', 'l2'}"
