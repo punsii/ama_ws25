@@ -6,7 +6,7 @@ PACKAGE_ROOT="$(cd "$DOCS_DIR/../ama_tlbx" && pwd)"
 OUTPUT_DIR="$DOCS_DIR/pdoc"
 
 echo "📚 Generating pdoc documentation..."
-echo "   Package: $PACKAGE_ROOT/src"
+echo "   Package: $PACKAGE_ROOT/ama_tlbx"
 echo "   Output:  $OUTPUT_DIR"
 
 # Change to package directory
@@ -16,8 +16,8 @@ cd "$PACKAGE_ROOT"
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# Generate pdoc HTML with PYTHONPATH set
-PYTHONPATH=src uv run pdoc \
+# Generate pdoc HTML (flat layout - no PYTHONPATH needed)
+uv run pdoc \
     -o "$OUTPUT_DIR" \
     --no-search \
     --no-show-source \
