@@ -32,14 +32,23 @@
       };
       pythonEnv = pkgs.python3.withPackages (
         ps: with ps; [
+          ipykernel
+          ipympl
           ipython
+          jupyter
           jupyterlab
           jupyterlab-widgets
-          # jupyterlab-vim
-          # jupyter-collaboration
           matplotlib
+          mypy
+          nbformat
+          notebook
           numpy
           pandas
+          pandas-stubs
+          pdoc
+          pytest
+          pytest-cov
+          ruff
           scikit-learn
           scipy
           seaborn
@@ -78,9 +87,10 @@
       };
 
       devShells.${system}.default = pkgs.mkShell {
-        packages = [
+        packages = with pkgs; [
           treefmtEval.config.build.wrapper
           pythonEnv
+          quarto
         ];
       };
 
