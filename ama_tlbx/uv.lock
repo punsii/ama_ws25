@@ -22,22 +22,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-all = [
-    { name = "ipykernel" },
-    { name = "ipympl" },
-    { name = "jupyter" },
-    { name = "jupyterlab" },
-    { name = "mypy" },
-    { name = "nbformat" },
-    { name = "notebook" },
-    { name = "pandas-stubs" },
-    { name = "pdoc" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "types-seaborn" },
-]
 dev = [
     { name = "mypy" },
     { name = "pandas-stubs" },
@@ -61,7 +45,6 @@ notebook = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ama-tlbx", extras = ["dev", "docs", "notebook"], marker = "extra == 'all'" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=7.0.1" },
     { name = "ipympl", marker = "extra == 'notebook'", specifier = ">=0.9.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0" },

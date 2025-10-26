@@ -1,5 +1,6 @@
 """Analysis modules for dataset processing and statistical methods."""
 
+from .column_concat import ColumnConcatenator
 from .correlation_analyzer import CorrelationAnalyzer, CorrelationResult
 from .outlier_detector import (
     IQROutlierDetector,
@@ -8,10 +9,10 @@ from .outlier_detector import (
     ZScoreOutlierDetector,
 )
 from .pca_analyzer import PCAAnalyzer, PCAResult
-from .column_concat import ColumnConcatenator
 
 
 __all__ = [
+    "ColumnConcatenator",
     "CorrelationAnalyzer",
     "CorrelationResult",
     "IQROutlierDetector",
@@ -20,5 +21,4 @@ __all__ = [
     "PCAAnalyzer",
     "PCAResult",
     "ZScoreOutlierDetector",
-    "ColumnConcatenator",
 ]

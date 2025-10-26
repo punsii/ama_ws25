@@ -8,6 +8,7 @@ from sklearn.decomposition import PCA
 
 from ama_tlbx.data.views import DatasetView
 
+
 @dataclass
 class ColumnConcatenator:
     """Utility for concatenating multiple columns into a single column."""
@@ -26,7 +27,7 @@ class ColumnConcatenator:
         # copy the underlying DataFrame from the provided view and return after
         # concatenation. Use `self.view` (the dataclass field) rather than
         # an underscore-prefixed attribute which doesn't exist.
-        df = self.view.df.copy()
+        df = self.view.data.copy()
 
         # Separate the columns to be concatenated and those to remain
         only_columns = df[columns]
@@ -46,13 +47,12 @@ class ColumnConcatenator:
         )
 
         # raise loadings to the power of 2 to get normalised importance
-        loadings["loading"] = loadings["loading"] ** 2
+        loadings["loading"] **= 2
 
         # Construct a weighted sum using the squared loadings.
         # - `loadings` has columns ['feature', 'loading']
         weights = loadings.set_index("feature")["loading"]
 
-        
         available = [f for f in weights.index if f in only_columns.columns]
         if len(available) == 0:
             raise ValueError("None of the PCA features are present in the DataFrame columns")
