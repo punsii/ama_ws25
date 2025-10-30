@@ -14,9 +14,12 @@ A comprehensive Python toolbox for Applied Multivariate Analysis (AMA), providin
 
 ## Requirements
 
+Only required if using `Option A`:
 - [uv package manager](https://docs.astral.sh/uv/getting-started/installation/)
 
 ## Setup Instructions
+
+### Option A: Using `uv`
 
 Install the package in editable mode with dependencies:
 
@@ -36,8 +39,28 @@ This will also create a virtual environment `.venv` in the project directory, wh
 source .venv/bin/activate
 ```
 
-If you want to work inside Jupyter notebooks, you might want to register the Jupyter kernel:
+### Option B: Using `pip`
+
+**Optional**: Create Conda env:
 
 ```bash
-uv run ipython kernel install --user --env VIRTUAL_ENV "$(pwd)/.venv" --name ama-venv
+conda create -n ama python=3.13 -y
+conda activate ama
+
+which pip
+```
+
+The following will install the `ama-tlbx` to the currently active python env. Extras can be added by listing them within the dependency specifier, following the name of the package.
+
+```bash
+cd ama_tlbx
+
+# Install all dependencies
+pip install -e ".[dev,notebook,docs]"
+
+# Install only the notebook extra
+pip install -e ".[notebook]"
+
+# Verify
+pip list | grep ama-tlbx
 ```
