@@ -55,6 +55,9 @@ class DataAnalyzer:
         # Square loadings to get positive importance weights
         loadings["loading"] **= 2
 
+        print("PCA loadings, weighted")
+        print(loadings)
+
         # Construct weighted sum using the squared loadings
         weights = loadings.set_index("feature")["loading"]
 
