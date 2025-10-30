@@ -1,0 +1,42 @@
+project:
+  type: website
+  output-dir: _site
+  resources:
+    - pdoc/**
+  render:
+    - "index.qmd"
+    - "chapters/*.qmd"
+
+website:
+  title: "Multivariate data analysis - Life expectancy"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Overview
+      - text: Chapters
+        menu:
+          - href: chapters/1_introduction.qmd
+            text: Intro
+          - href: chapters/2_preprocessing.qmd
+            text: Data Preprocessing
+          - href: chapters/3_pca.qmd
+            text: Principal Component Analysis
+          - href: chapters/4_clustering.qmd
+            text: Clustering
+
+# Python configuration - use the ama_tlbx virtual environment
+jupyter:
+  kernel: ../ama_tlbx/.venv/bin/python
+
+execute:
+  cache: false
+  freeze: auto
+
+# Use the ama_tlbx virtual environment for Python execution
+engine: jupyter
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    number-sections: true
