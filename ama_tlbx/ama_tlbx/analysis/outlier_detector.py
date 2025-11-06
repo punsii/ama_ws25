@@ -24,16 +24,12 @@ class OutlierDetectionResult:
         n_outliers_per_row: Series with count of outliers per row
         total_outliers: Total number of outlier flags across all entries
         outlier_percentage: Percentage of values flagged as outliers
-        column_names: List of analyzed column names
         pretty_names: Mapping of column names to pretty display names
     """
 
     outlier_mask: pd.DataFrame
     n_outliers_per_column: pd.Series
     n_outliers_per_row: pd.Series
-    total_outliers: int
-    outlier_percentage: float
-    column_names: list[str]
     pretty_names: dict[str, str] | None = None
 
 
@@ -97,9 +93,6 @@ class IQROutlierDetector(BaseAnalyser):
             outlier_mask=self._outlier_mask,
             n_outliers_per_column=self._outlier_mask.sum(),
             n_outliers_per_row=self._outlier_mask.sum(axis=1),
-            total_outliers=int(self._outlier_mask.sum().sum()),
-            outlier_percentage=float(self._outlier_mask.sum().sum() / self._outlier_mask.size * 100),
-            column_names=list(self._outlier_mask.columns),
             pretty_names=dict(self._view.pretty_by_col),
         )
 
@@ -161,9 +154,6 @@ class ZScoreOutlierDetector(BaseAnalyser):
             outlier_mask=self._outlier_mask,
             n_outliers_per_column=self._outlier_mask.sum(),
             n_outliers_per_row=self._outlier_mask.sum(axis=1),
-            total_outliers=int(self._outlier_mask.sum().sum()),
-            outlier_percentage=float(self._outlier_mask.sum().sum() / self._outlier_mask.size * 100),
-            column_names=list(self._outlier_mask.columns),
             pretty_names=dict(self._view.pretty_by_col),
         )
 
@@ -247,8 +237,5 @@ class IsolationForestOutlierDetector(BaseAnalyser):
             outlier_mask=self._outlier_mask,
             n_outliers_per_column=self._outlier_mask.sum(),
             n_outliers_per_row=self._outlier_mask.sum(axis=1),
-            total_outliers=int(self._outlier_mask.sum().sum()),
-            outlier_percentage=float(self._outlier_mask.sum().sum() / self._outlier_mask.size * 100),
-            column_names=list(self._outlier_mask.columns),
             pretty_names=dict(self._view.pretty_by_col),
         )
