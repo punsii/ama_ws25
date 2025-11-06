@@ -48,7 +48,7 @@ class CorrelationAnalyzer:
         """
         corr_matrix = self.get_correlation_matrix()
         mask = np.triu(np.ones(corr_matrix.shape, dtype=bool), k=1)
-        # Use melt instead of stack for better pandas compatibility
+
         pairs = (
             corr_matrix.where(mask)
             .melt(ignore_index=False, var_name="feature_b", value_name="correlation")
@@ -70,7 +70,7 @@ class CorrelationAnalyzer:
         Return Pearson correlations between each feature and the configured target.
 
         This uses the correlation matrix computed above and therefore shares the same
-        statistical interpretation. See https://en.wikipedia.org/wiki/Pearson_correlation_coefficient
+        statistical interpretation. See [Wikipdia :: Pearson Correlation](https://en.wikipedia.org/wiki/Pearson_correlation_coefficient)
         for the underlying theory.
 
         Returns:
@@ -86,9 +86,12 @@ class CorrelationAnalyzer:
             msg = f"Target column '{self._view.target_col}' not found in data"
             raise ValueError(msg)
 
-        correlations = corr_matrix.loc[self._view.target_col].drop(self._view.target_col)
+        assert self._view.target_col is not None, "get_target_correlations requires a target_col"
+
         return (
-            correlations.sort_values(ascending=False)
+            corr_matrix.loc[self._view.target_col]
+            .drop(self._view.target_col)
+            .sort_values(ascending=False)
             .to_frame(name="correlation")
             .assign(feature=lambda d: d.index)
             .reset_index(drop=True)

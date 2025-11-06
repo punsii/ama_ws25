@@ -11,7 +11,11 @@ from sklearn.preprocessing import StandardScaler
 
 if TYPE_CHECKING:
     from ama_tlbx.analysis.correlation_analyzer import CorrelationAnalyzer
-    from ama_tlbx.analysis.outlier_detector import OutlierDetector
+    from ama_tlbx.analysis.outlier_detector import (
+        IQROutlierDetector,
+        IsolationForestOutlierDetector,
+        ZScoreOutlierDetector,
+    )
     from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer
 
 from .base_columns import BaseColumn
@@ -226,12 +230,80 @@ class BaseDataset(ABC):
             ),
         )
 
-    def detect_outliers(
+    def make_iqr_outlier_detector(
         self,
-        detector: "OutlierDetector",
         columns: Iterable[str] | None = None,
         standardized: bool = True,
-    ) -> pd.DataFrame:
-        """Detect outliers with the provided detector for the chosen columns."""
+        threshold: float = 1.5,
+    ) -> "IQROutlierDetector":
+        """Instantiate an IQR outlier detector configured for this dataset.
+
+        Args:
+            columns: Columns to analyze (defaults to all numeric features)
+            standardized: Use standardized data
+            threshold: IQR multiplier for fence calculation (default: 1.5)
+
+        Returns:
+            IQROutlierDetector instance
+        """
+        from ama_tlbx.analysis.outlier_detector import IQROutlierDetector
+
         columns = list(columns or self.feature_columns(include_target=False))
-        return detector.detect(data=self.view(columns=columns, standardized=standardized).df, columns=columns)
+        return IQROutlierDetector(
+            view=self.view(columns=columns, standardized=standardized),
+            threshold=threshold,
+        )
+
+    def make_zscore_outlier_detector(
+        self,
+        columns: Iterable[str] | None = None,
+        standardized: bool = True,
+        threshold: float = 3.0,
+    ) -> "ZScoreOutlierDetector":
+        """Instantiate a Z-score outlier detector configured for this dataset.
+
+        Args:
+            columns: Columns to analyze (defaults to all numeric features)
+            standardized: Use standardized data
+            threshold: Z-score threshold for outlier detection (default: 3.0)
+
+        Returns:
+            ZScoreOutlierDetector instance
+        """
+        from ama_tlbx.analysis.outlier_detector import ZScoreOutlierDetector
+
+        columns = list(columns or self.feature_columns(include_target=False))
+        return ZScoreOutlierDetector(
+            view=self.view(columns=columns, standardized=standardized),
+            threshold=threshold,
+        )
+
+    def make_isolation_forest_outlier_detector(
+        self,
+        columns: Iterable[str] | None = None,
+        standardized: bool = True,
+        contamination: float | str = "auto",
+        random_state: int | None = None,
+        n_estimators: int = 100,
+    ) -> "IsolationForestOutlierDetector":
+        """Instantiate an Isolation Forest outlier detector configured for this dataset.
+
+        Args:
+            columns: Columns to analyze (defaults to all numeric features)
+            standardized: Use standardized data
+            contamination: Expected proportion of outliers (default: "auto")
+            random_state: Random seed for reproducibility (default: None)
+            n_estimators: Number of trees in the forest (default: 100)
+
+        Returns:
+            IsolationForestOutlierDetector instance
+        """
+        from ama_tlbx.analysis.outlier_detector import IsolationForestOutlierDetector
+
+        columns = list(columns or self.feature_columns(include_target=False))
+        return IsolationForestOutlierDetector(
+            view=self.view(columns=columns, standardized=standardized),
+            contamination=contamination,
+            random_state=random_state,
+            n_estimators=n_estimators,
+        )

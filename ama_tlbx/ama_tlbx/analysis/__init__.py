@@ -5,7 +5,7 @@ from .correlation_analyzer import CorrelationAnalyzer, CorrelationResult
 from .outlier_detector import (
     IQROutlierDetector,
     IsolationForestOutlierDetector,
-    OutlierDetector,
+    OutlierDetectionResult,
     ZScoreOutlierDetector,
 )
 from .pca_analyzer import PCAAnalyzer, PCAResult
@@ -17,7 +17,7 @@ __all__ = [
     "CorrelationResult",
     "IQROutlierDetector",
     "IsolationForestOutlierDetector",
-    "OutlierDetector",
+    "OutlierDetectionResult",
     "PCAAnalyzer",
     "PCAResult",
     "ZScoreOutlierDetector",
