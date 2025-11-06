@@ -27,7 +27,7 @@ class ColumnConcatenator:
         # copy the underlying DataFrame from the provided view and return after
         # concatenation. Use `self.view` (the dataclass field) rather than
         # an underscore-prefixed attribute which doesn't exist.
-        df = self.view.data.copy()
+        df = self.view.df.copy()
 
         # Separate the columns to be concatenated and those to remain
         only_columns = df[columns]

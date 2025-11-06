@@ -31,10 +31,13 @@ class CorrelationAnalyzer:
     def __init__(self, view: DatasetView):
         """Initialize the correlation analyzer with a dataset view."""
         self._view = view
+        self._corr_mat: pd.DataFrame | None = None
 
     def get_correlation_matrix(self) -> pd.DataFrame:
         """Compute the Pearson correlation matrix via :meth:`pandas.DataFrame.corr`."""
-        return self._view.data.corr(numeric_only=True)
+        if self._corr_mat is None:
+            self._corr_mat = self._view.df.corr(numeric_only=True)
+        return self._corr_mat
 
     def get_top_correlated_pairs(self, n: int = 20) -> pd.DataFrame:
         """Return the strongest absolute Pearson correlations between feature pairs.
@@ -91,7 +94,7 @@ class CorrelationAnalyzer:
             .reset_index(drop=True)
         )
 
-    def compute(self, *, top_n_pairs: int = 20) -> CorrelationResult:
+    def fit(self, *, top_n_pairs: int = 20) -> CorrelationResult:
         """Assemble correlation results for downstream plotting and reporting."""
         matrix = self.get_correlation_matrix()
         pairs = self.get_top_correlated_pairs(n=top_n_pairs)

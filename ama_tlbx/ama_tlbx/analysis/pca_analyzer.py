@@ -77,7 +77,7 @@ class PCAAnalyzer:
         return pd.DataFrame(
             transformed,
             columns=[f"PC{i + 1}" for i in range(transformed.shape[1])],
-            index=self._view.data.index,
+            index=self._view.df.index,
         )
 
     def get_explained_variance(self) -> pd.DataFrame:

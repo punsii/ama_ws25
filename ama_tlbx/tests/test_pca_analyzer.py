@@ -34,7 +34,7 @@ class TestPCAAnalyzer:
         )
 
         return DatasetView(
-            data=data,
+            df=data,
             pretty_by_col={
                 "feature1": "Feature 1",
                 "feature2": "Feature 2",
