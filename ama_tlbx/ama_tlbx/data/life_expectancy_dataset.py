@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 
@@ -21,7 +22,7 @@ class LifeExpectancyDataset(BaseDataset):
         cls,
         *,
         csv_path: str | Path | None = None,
-        aggregate_by_country: bool = True,
+        aggregate_by_country: bool | Literal["mean", 2014] = True,
         drop_missing_target: bool = True,
     ) -> "LifeExpectancyDataset":
         """Load and preprocess the Life Expectancy dataset from a CSV file.
@@ -29,11 +30,10 @@ class LifeExpectancyDataset(BaseDataset):
         - Normalize column names
         - Convert data types
 
-        TODO(@jd): Add aggregate_by_year parameter. https://github.com/punsii/ama_ws25/issues/TBD
-
         Args:
             csv_path: Path to the CSV file
-            aggregate_by_country: If True, aggregate data by country (mean across years)
+            aggregate_by_country: aggregate data by country (mean over years, label for other agg fn, or selected year)
+                 defaults to selecting year 2014 based on previous analysis.
             drop_missing_target: If True, drop rows with missing life expectancy values
 
         Returns:
@@ -47,7 +47,10 @@ class LifeExpectancyDataset(BaseDataset):
             le_df = le_df.dropna(subset=[Col.TARGET])
 
         if aggregate_by_country:
-            le_df = cls._aggregate_by_country(le_df)
+            le_df = cls._aggregate_by_country(
+                le_df,
+                agg_by=2007 if aggregate_by_country is True else aggregate_by_country,
+            )
 
         return cls(df=le_df)
 
@@ -80,24 +83,27 @@ class LifeExpectancyDataset(BaseDataset):
         )
 
     @staticmethod
-    def _aggregate_by_country(df: pd.DataFrame, agg_fn: Callable | str | None = None) -> pd.DataFrame:
+    def _aggregate_by_country(df: pd.DataFrame, agg_by: Callable | str | int | None = None) -> pd.DataFrame:
         """Aggregate data by country, taking mean of numeric columns and imputing missing values.
 
         Args:
             df: Input DataFrame with multiple observations per country
-            agg_fn: Aggregation function or string (defaults to mean)
+            agg_by: Aggregation function or string (defaults to mean)
 
         Returns:
             Country-aggregated DataFrame with imputed missing values
         """
-        agg_fn = agg_fn or "mean"
+        if isinstance(agg_by, int):
+            return df.assign(year=lambda d: d[Col.YEAR].dt.year).query("year == @agg_by").set_index(Col.COUNTRY)
+
+        agg_by = agg_by or "mean"
 
         # Separate numeric and non-numeric columns
         numeric_cols = df.select_dtypes(include=["number"]).columns.difference([Col.COUNTRY])
         non_numeric_cols = df.select_dtypes(exclude=["number"]).columns.difference([Col.COUNTRY])
 
         agg_dict = {
-            **dict.fromkeys(numeric_cols, agg_fn),
+            **dict.fromkeys(numeric_cols, agg_by),
             **dict.fromkeys(non_numeric_cols, "first"),
         }
 
@@ -105,101 +111,3 @@ class LifeExpectancyDataset(BaseDataset):
         means = aggregated.loc[:, numeric_cols].mean()
         aggregated.loc[:, numeric_cols] = aggregated.loc[:, numeric_cols].fillna(means)
         return aggregated
-
-    def select_representative_year(
-        self,
-        *,
-        detector: str = "iqr",
-        detector_kwargs: Mapping[str, object] | None = None,
-        agg_fn: Callable[[pd.Series], float] | str = "median",
-        prefer_recent: bool = False,
-    ) -> int:
-        """Select a representative calendar year for downstream analyses.
-
-        The method aggregates numeric features per calendar year, flags year-level profiles that
-        behave like outliers, and returns the year whose aggregated profile is closest to the overall
-        median among the remaining candidates. When all years are flagged as outliers, the year with
-        the fewest outlier flags is considered instead.
-
-        Args:
-            detector: Outlier detection strategy. Supported values are ``iqr``, ``zscore``, and
-                ``isolation_forest``.
-            detector_kwargs: Optional keyword arguments forwarded to the detector constructor.
-            agg_fn: Aggregation function applied to numeric columns before scoring (default: ``median``).
-            prefer_recent: When True, prefer the most recent year if multiple candidates share the same
-                score.
-
-        Returns:
-            Integer calendar year deemed most representative.
-
-        Raises:
-            ValueError: If no numeric data is available to determine a representative year.
-
-        Examples:
-            >>> dataset = LifeExpectancyDataset.from_csv(aggregate_by_country=False)
-            >>> dataset.select_representative_year()
-            2011
-        """
-        if self.Col.YEAR not in self.df.columns:
-            raise ValueError("LifeExpectancyDataset requires a year column to select a representative year.")
-
-        numeric_columns = list(self.numeric_cols)
-        per_year = (
-            self.df.assign(_year=self.df[self.Col.YEAR].dt.year)
-            .groupby("_year")[numeric_columns]
-            .agg(agg_fn)
-            .sort_index()
-            .rename_axis(self.Col.YEAR, axis=0)
-        )
-
-        if per_year.empty:
-            raise ValueError("No numeric data available to evaluate a representative year.")
-
-        per_year = per_year.fillna(per_year.median())
-        from ama_tlbx.analysis.outlier_detector import (
-            IQROutlierDetector,
-            IsolationForestOutlierDetector,
-            ZScoreOutlierDetector,
-        )
-        from ama_tlbx.data.views import DatasetView
-
-        year_view = DatasetView(
-            df=per_year,
-            pretty_by_col={col: self.get_pretty_name(col) for col in per_year.columns},
-            numeric_cols=list(per_year.columns),
-            target_col=None,
-        )
-
-        detector_kwargs = dict(detector_kwargs or {})
-        detector_name = detector.lower()
-        if detector_name == "iqr":
-            model = IQROutlierDetector(view=year_view, **detector_kwargs)
-        elif detector_name == "zscore":
-            model = ZScoreOutlierDetector(view=year_view, **detector_kwargs)
-        elif detector_name == "isolation_forest":
-            model = IsolationForestOutlierDetector(view=year_view, **detector_kwargs)
-        else:
-            raise ValueError(
-                f"Unsupported detector '{detector}'. Use one of: 'iqr', 'zscore', 'isolation_forest'.",
-            )
-
-        result = model.fit().result()
-        outlier_counts = result.n_outliers_per_row
-
-        candidate_index = outlier_counts.loc[outlier_counts == 0].index
-        if candidate_index.empty:
-            min_outliers = int(outlier_counts.min())
-            candidate_index = outlier_counts.loc[outlier_counts == min_outliers].index
-
-        center = per_year.median()
-        distances = per_year.sub(center).pow(2).mean(axis=1)
-        candidate_distances = distances.loc[candidate_index]
-        min_distance = candidate_distances.min()
-        top_candidates = candidate_distances.loc[candidate_distances == min_distance].index
-
-        if prefer_recent:
-            selected_year = int(top_candidates.max())
-        else:
-            selected_year = int(top_candidates.min())
-
-        return selected_year
