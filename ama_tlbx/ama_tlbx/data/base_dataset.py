@@ -63,6 +63,15 @@ class BaseDataset(ABC):
         return self._df
 
     @property
+    def df_pretty(self) -> pd.DataFrame:
+        """Get the DataFrame with pretty column names.
+
+        Returns:
+            DataFrame with pretty column names
+        """
+        return self.df.rename(columns={col: self.get_pretty_name(col) for col in self.df.columns})
+
+    @property
     def numeric_cols(self) -> pd.Index:
         """Get numeric column names.
 
@@ -118,7 +127,6 @@ class BaseDataset(ABC):
 
     def view(
         self,
-        *,
         columns: Iterable[str] | None = None,
         standardized: bool = False,
         target_col: str | None = None,
@@ -135,25 +143,21 @@ class BaseDataset(ABC):
         """
         frame = self.df_standardized if standardized else self.df
         selected_cols = list(columns or frame.columns.to_list())
-        data = frame.loc[:, selected_cols].copy()
-        pretty_by_col = {col: self.get_pretty_name(col) for col in selected_cols}
-        numeric_cols = [col for col in selected_cols if col in self.numeric_cols]
 
         return DatasetView(
-            data=data,
-            pretty_by_col=pretty_by_col,
-            numeric_cols=numeric_cols,
-            target_col=target_col,
+            df=frame.loc[:, selected_cols].copy(),
+            pretty_by_col={col: self.get_pretty_name(col) for col in selected_cols},
+            numeric_cols=[col for col in selected_cols if col in self.numeric_cols],
+            target_col=target_col or self.Col.TARGET,
         )
 
     def feature_columns(
         self,
-        *,
         include_target: bool = False,
         extra_exclude: Iterable[str] | None = None,
     ) -> list[str]:
         """Return numeric feature columns, optionally excluding identifiers and target."""
-        exclude = set(self.identifier_columns)
+        exclude = set(self.Col.identifier_columns())
         if extra_exclude:
             exclude.update(extra_exclude)
         if not include_target and self.Col.TARGET:
@@ -162,7 +166,6 @@ class BaseDataset(ABC):
 
     def analyzer_view(
         self,
-        *,
         columns: Iterable[str] | None = None,
         standardized: bool = True,
         include_target: bool = True,
@@ -195,7 +198,6 @@ class BaseDataset(ABC):
 
     def make_correlation_analyzer(
         self,
-        *,
         columns: Iterable[str] | None = None,
         standardized: bool = True,
         include_target: bool = True,
@@ -209,7 +211,6 @@ class BaseDataset(ABC):
 
     def make_pca_analyzer(
         self,
-        *,
         columns: Iterable[str] | None = None,
         standardized: bool = True,
         exclude_target: bool = True,
@@ -228,10 +229,9 @@ class BaseDataset(ABC):
     def detect_outliers(
         self,
         detector: "OutlierDetector",
-        *,
         columns: Iterable[str] | None = None,
         standardized: bool = True,
     ) -> pd.DataFrame:
         """Detect outliers with the provided detector for the chosen columns."""
         columns = list(columns or self.feature_columns(include_target=False))
-        return detector.detect(data=self.view(columns=columns, standardized=standardized).data, columns=columns)
+        return detector.detect(data=self.view(columns=columns, standardized=standardized).df, columns=columns)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..utils.paths import get_dataset_path
 from .base_dataset import BaseDataset
 from .life_expectancy_columns import LifeExpectancyColumn as Col
 
@@ -13,15 +14,14 @@ class LifeExpectancyDataset(BaseDataset):
     """Loading, preprocessing and normalization for the [Life Expectancy dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who)."""
 
     Col = Col  # Set the column enum class
-    default_target_column = Col.TARGET.value
-    identifier_columns = (Col.COUNTRY.value, Col.STATUS.value, Col.YEAR.value)
 
     @classmethod
     def from_csv(
         cls,
-        filepath: str | Path,
         *,
+        csv_path: str | Path | None = None,
         aggregate_by_country: bool = True,
+        # TODO: aggregate_by_year: bool = True,
         drop_missing_target: bool = True,
     ) -> "LifeExpectancyDataset":
         """Load and preprocess the Life Expectancy dataset from a CSV file.
@@ -30,19 +30,20 @@ class LifeExpectancyDataset(BaseDataset):
         - Convert data types
 
         Args:
-            filepath: Path to the CSV file
+            csv_path: Path to the CSV file
             aggregate_by_country: If True, aggregate data by country (mean across years)
+            aggregate_by_year: If True, aggregate data by year (mean across counties)
             drop_missing_target: If True, drop rows with missing life expectancy values
 
         Returns:
             LifeExpectancyDataset instance with loaded and cleaned data
         """
-        filepath = Path(filepath)
+        csv_path = get_dataset_path("life_expectancy") if csv_path is None else Path(csv_path)
 
-        le_df = pd.read_csv(filepath).pipe(cls._normalize_col_names).pipe(cls._convert_data_types)
+        le_df = pd.read_csv(csv_path).pipe(cls._normalize_col_names).pipe(cls._convert_data_types)
 
         if drop_missing_target:
-            le_df = le_df.dropna(subset=[Col.TARGET.value])
+            le_df = le_df.dropna(subset=[Col.TARGET])
 
         if aggregate_by_country:
             le_df = cls._aggregate_by_country(le_df)
@@ -67,11 +68,11 @@ class LifeExpectancyDataset(BaseDataset):
     @staticmethod
     def _convert_data_types(df: pd.DataFrame) -> pd.DataFrame:
         """Set appropriate data types for each col."""
-        identifier_cols = {Col.COUNTRY.value, Col.STATUS.value, Col.YEAR.value}
+        identifier_cols = {Col.COUNTRY, Col.STATUS, Col.YEAR}
         numeric_cols = df.columns.difference(list(identifier_cols))
 
         converted = df.assign(
-            year=pd.to_datetime(df[Col.YEAR.value].astype(str), format="%Y", errors="coerce"),
+            year=pd.to_datetime(df[Col.YEAR].astype(str), format="%Y", errors="coerce"),
         )
         return converted.assign(
             **{col: pd.to_numeric(converted[col], errors="coerce") for col in numeric_cols},
@@ -91,15 +92,15 @@ class LifeExpectancyDataset(BaseDataset):
         agg_fn = agg_fn or "mean"
 
         # Separate numeric and non-numeric columns
-        numeric_cols = df.select_dtypes(include=["number"]).columns.difference([Col.COUNTRY.value])
-        non_numeric_cols = df.select_dtypes(exclude=["number"]).columns.difference([Col.COUNTRY.value])
+        numeric_cols = df.select_dtypes(include=["number"]).columns.difference([Col.COUNTRY])
+        non_numeric_cols = df.select_dtypes(exclude=["number"]).columns.difference([Col.COUNTRY])
 
         agg_dict = {
             **dict.fromkeys(numeric_cols, agg_fn),
             **dict.fromkeys(non_numeric_cols, "first"),
         }
 
-        aggregated = df.groupby(Col.COUNTRY.value, as_index=False).agg(agg_dict)
+        aggregated = df.groupby(Col.COUNTRY, as_index=False).agg(agg_dict)
         means = aggregated.loc[:, numeric_cols].mean()
         aggregated.loc[:, numeric_cols] = aggregated.loc[:, numeric_cols].fillna(means)
         return aggregated
