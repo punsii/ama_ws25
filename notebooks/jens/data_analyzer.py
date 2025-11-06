@@ -11,6 +11,7 @@ from typing import Iterable, Optional
 
 import pandas as pd
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 
 class DataAnalyzer:
@@ -29,7 +30,7 @@ class DataAnalyzer:
         
         if not isinstance(df, pd.DataFrame):
             df = pd.DataFrame(df)
-
+        
         # Choose columns: provided or all numeric
         if columns is None:
             num_df = df.select_dtypes(include=["number"]).copy()
@@ -39,41 +40,53 @@ class DataAnalyzer:
             if len(selected_columns) == 0:
                 raise ValueError("None of the specified columns are present in the DataFrame")
             num_df = df[selected_columns].copy()
-
-        # Drop columns that are entirely NA (they don't contribute)
+        
         num_df = num_df.dropna(axis=1, how="all")
         if num_df.shape[1] == 0:
             raise ValueError("No numeric columns available to combine after filtering; nothing to do.")
+        
+        if num_df.shape[1] == 1:
+            print(f"Only one column '{num_df.columns[0]}' selected for concatenation. No PCA performed.")
+            if drop_original:
+                result = df.drop(columns=num_df.columns[0])
+            else:
+                result = df.copy()
+            result[new_column_name] = df[num_df.columns[0]] # Take from original df to handle potential NA in num_df
+            # For the Quarto section, you'd state: "Only one column was available, so it was directly used as the new feature, explaining 100% of its own variance."
+            return result
 
-        # Fit PCA to reduce to one component
+        # 1. Apply NaN handling (using fillna(0) as per your original logic)
+        filled_num_df = num_df.fillna(0) 
+        
+        # 2. Standardize the data before PCA
+        scaler = StandardScaler()
+        scaled_num_df = pd.DataFrame(scaler.fit_transform(filled_num_df), 
+                                     columns=filled_num_df.columns, 
+                                     index=filled_num_df.index)
+
         pca = PCA(n_components=1)
-        pc = pca.fit(num_df.fillna(0))
+        pc = pca.fit(scaled_num_df) 
+        
+        explained_variance_ratio_pc1 = pc.explained_variance_ratio_[0] * 100 # Convert to percentage
+        print(f"PCA performed on {len(selected_columns)} columns (after NA filtering).")
+        print(f"The first principal component (PC1) explains {explained_variance_ratio_pc1:.2f}% of the variance within these columns.")
 
-        # Build loadings: (n_features, 1) -> DataFrame with 'feature' and 'loading'
         loadings = pd.DataFrame(pc.components_.T, index=num_df.columns, columns=["loading"]).reset_index().rename(columns={"index": "feature"})
-
-        # Square loadings to get positive importance weights
         loadings["loading"] **= 2
-
-        print("PCA loadings, weighted")
+        print("PCA loadings, weighted (squared for component contribution):")
         print(loadings)
-
-        # Construct weighted sum using the squared loadings
+        
         weights = loadings.set_index("feature")["loading"]
-
         available = [f for f in weights.index if f in num_df.columns]
         if len(available) == 0:
             raise ValueError("None of the PCA features are present in the DataFrame columns")
+        selected = num_df[available].fillna(0) # Using fillna(0) for selected here too for consistency
+        weighted_series = selected.mul(weights.loc[available], axis=1).sum(axis=1) # This is your new column
 
-        selected = num_df[available].fillna(0)
-        weighted_series = selected.mul(weights.loc[available], axis=1).sum(axis=1)
-
-        # Compose resulting DataFrame
         if drop_original:
             result = df.drop(columns=available)
         else:
             result = df.copy()
-
         result[new_column_name] = weighted_series
         return result
 
