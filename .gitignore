@@ -44,6 +44,7 @@ docs/_site/
 docs/_freeze/
 docs/.quarto/
 docs/_environment
+pdoc
 
 # Old/backup files
 *_old/

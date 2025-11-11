@@ -1,0 +1,10 @@
+---
+title: "AMA Submission"
+format:
+  html:
+    toc: true
+---
+
+# Life Expectancy
+
+Analysis of life expectancy

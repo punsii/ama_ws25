@@ -1,0 +1,8 @@
+---
+title: "Principal Component Analysis"
+format:
+  html:
+    toc: true
+---
+
+## Dimensionality reduction

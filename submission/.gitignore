@@ -1,0 +1,6 @@
+/.quarto/
+/_site/
+/_freeze/
+/pdoc/
+/*_files/
+/*.html
