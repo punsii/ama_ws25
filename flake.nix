@@ -14,32 +14,6 @@
     let
       system = "x86_64-linux";
 
-      pyPkgs =
-        pythonPackages: with pythonPackages; [
-          ipykernel
-          ipympl
-          ipython
-          jupyter
-          jupyterlab
-          jupyterlab-widgets
-          matplotlib
-          mypy
-          nbformat
-          notebook
-          numpy
-          pandas
-          pandas-stubs
-          pdoc
-          pytest
-          pytest-cov
-          ruff
-          scikit-learn
-          scipy
-          seaborn
-          statsmodels
-          streamlit
-          sympy
-        ];
       pkgs = import nixpkgs {
         inherit system;
         config.allowUnfree = true;
@@ -66,7 +40,44 @@
         };
       };
 
-      pythonEnv = pkgs.python3.withPackages pyPkgs;
+      ama_tlbx = pkgs.callPackage ./nix/pkgs/ama_tlbx.nix {
+        inherit python;
+      };
+      python = pkgs.python3 // {
+        pkgs = pkgs.python3.pkgs.overrideScope (
+          self: super: {
+            inherit ama_tlbx;
+          }
+        );
+      };
+      pyPkgs =
+        pythonPackages: with pythonPackages; [
+          ama_tlbx
+          ipykernel
+          ipympl
+          ipython
+          jupyter
+          jupyterlab
+          jupyterlab-widgets
+          matplotlib
+          mypy
+          nbformat
+          notebook
+          numpy
+          pandas
+          pandas-stubs
+          pdoc
+          pytest
+          pytest-cov
+          ruff
+          scikit-learn
+          scipy
+          seaborn
+          statsmodels
+          streamlit
+          sympy
+        ];
+      pythonEnv = python.withPackages pyPkgs;
 
       src = pkgs.nix-gitignore.gitignoreSource [ ] ./.;
       runDev = pkgs.writeShellApplication {
