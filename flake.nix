@@ -81,11 +81,10 @@
       submission = pkgs.stdenv.mkDerivation {
         name = "submission";
         src = ./.;
-        QUARTO_PYTHON = "${pythonEnv}/bin/python";
         buildPhase = ''
           cd submission
           export HOME=$(mktemp -d)
-          ${pkgs.quarto}/bin/quarto render --output-dir  $out
+          ${pkgs.quarto}/bin/quarto render --output-dir  $out/var/www/ama/
         '';
       };
     in
