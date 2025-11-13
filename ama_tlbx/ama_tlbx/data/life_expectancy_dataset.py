@@ -51,6 +51,7 @@ class LifeExpectancyDataset(BaseDataset):
                 le_df,
                 agg_by=2007 if aggregate_by_country is True else aggregate_by_country,
             )
+            le_df.index.name = Col.COUNTRY
 
         return cls(df=le_df)
 

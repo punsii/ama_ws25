@@ -23,7 +23,7 @@ dependencies = [
         "mypy>=1.5.0",
         "pandas-stubs>=2.0.0",
         "types-seaborn>=0.12.0",
-        "ruff>=0.8.0",
+        "ruff>=0.14.3",
     ]
     docs = ["pdoc>=15.0.4", "nbformat>=5.10.0"]
     notebook = [
@@ -147,6 +147,7 @@ packages = ["ama_tlbx"]
             "PGH003",  # allow non-descriptive type ignore
             "FBT001",
             "FBT002",
+            "FIX002",  # Allow TODO comments in code (with proper author and issue links)
         ]
 
         # Allow autofix for all enabled rules
@@ -178,4 +179,8 @@ packages = ["ama_tlbx"]
             "ama_tlbx/data/base_dataset.py" = [
                 "E402",    # Allow imports not at top of file (lazy imports for circular dependency)
                 "PLC0415", # same as above
+            ]
+            # Allow additional rules in life_expectancy_dataset
+            "ama_tlbx/data/life_expectancy_dataset.py" = [
+                "PLC0415", # Allow lazy imports for circular dependency
             ]
