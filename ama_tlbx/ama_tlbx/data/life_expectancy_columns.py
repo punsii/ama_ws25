@@ -19,9 +19,9 @@ class LifeExpectancyColumn(BaseColumn):
     - ``measles``: int - Number of measles cases per 1000 population
     - ``bmi``: float - Average Body Mass Index
     - ``under_five_deaths``: int - Deaths of children under 5 per 1000 population
-    - ``polio``: float - Polio immunization coverage (%)
+    - ``polio``: float - Polio immunization coverage among 1-year-olds (%)
     - ``total_expenditure``: float - Government health expenditure (% of total govt expenditure)
-    - ``diphtheria``: float - Diphtheria immunization coverage (%)
+    - ``diphtheria``: float - Diphtheria tetanus toxoid and pertussis (DTP3) immunization coverage among 1-year-olds (%)
     - ``hiv_aids``: float - Deaths per 1000 live births due to HIV/AIDS (0-4 years)
     - ``gdp``: float - Gross Domestic Product per capita (USD)
     - ``population``: int - Population of the country
@@ -41,8 +41,10 @@ class LifeExpectancyColumn(BaseColumn):
     """Country name."""
     YEAR = "year"
     """Year of observation."""
+
+    # Binary indicator
     STATUS = "status"
-    """Development status (Developing/Developed)."""
+    """Development status: 0 = Developing, 1 = Developed (binary indicator)."""
 
     # Mortality indicators
     ADULT_MORTALITY = "adult_mortality"
@@ -104,16 +106,16 @@ class LifeExpectancyColumn(BaseColumn):
 
     @classmethod
     def numeric_columns(cls) -> list[str]:
-        return [col.value for col in cls if col not in {cls.COUNTRY, cls.STATUS, cls.YEAR}]
+        return [col.value for col in cls if col not in {cls.COUNTRY, cls.YEAR}]
 
     @classmethod
     def identifier_columns(cls) -> list[str]:
         """Get identifier column names.
 
         Returns:
-            List of identifier column names (country, year, status).
+            List of identifier column names (country, year).
         """
-        return [cls.COUNTRY, cls.YEAR, cls.STATUS]
+        return [cls.COUNTRY, cls.YEAR]
 
 
 # Column metadata mapping
@@ -134,8 +136,8 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
     LifeExpectancyColumn.STATUS: ColumnMetadata(
         original_name="Status",
         cleaned_name="status",
-        dtype="str",
-        pretty_name="Development Status",
+        dtype="int64",
+        pretty_name="Development Status (0=Developing, 1=Developed)",
     ),
     # Target variable
     LifeExpectancyColumn.TARGET: ColumnMetadata(

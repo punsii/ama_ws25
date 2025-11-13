@@ -1,6 +1,6 @@
 """Refactored dataset class focused on data loading and preprocessing only."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -72,15 +72,19 @@ class LifeExpectancyDataset(BaseDataset):
 
     @staticmethod
     def _convert_data_types(df: pd.DataFrame) -> pd.DataFrame:
-        """Set appropriate data types for each col."""
-        identifier_cols = {Col.COUNTRY, Col.STATUS, Col.YEAR}
+        """Set appropriate data types for each col.
+
+        Converts STATUS to binary: 0 = Developing, 1 = Developed.
+        """
+        identifier_cols = {Col.COUNTRY, Col.YEAR}
         numeric_cols = df.columns.difference(list(identifier_cols))
 
         converted = df.assign(
             year=pd.to_datetime(df[Col.YEAR].astype(str), format="%Y", errors="coerce"),
+            status=(df[Col.STATUS].str.strip().str.lower() == "developed").astype(int),
         )
         return converted.assign(
-            **{col: pd.to_numeric(converted[col], errors="coerce") for col in numeric_cols},
+            **{col: pd.to_numeric(converted[col], errors="coerce") for col in numeric_cols if col != Col.STATUS},
         )
 
     @staticmethod
@@ -101,7 +105,7 @@ class LifeExpectancyDataset(BaseDataset):
 
         # Separate numeric and non-numeric columns
         numeric_cols = df.select_dtypes(include=["number"]).columns.difference([Col.COUNTRY])
-        non_numeric_cols = df.select_dtypes(exclude=["number"]).columns.difference([Col.COUNTRY])
+        non_numeric_cols = df.select_dtypes(exclude=["number"]).columns.difference([Col.COUNTRY, Col.STATUS])
 
         agg_dict = {
             **dict.fromkeys(numeric_cols, agg_by),
