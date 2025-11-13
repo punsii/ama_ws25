@@ -3,6 +3,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+from matplotlib import legend
 from matplotlib.figure import Figure
 
 from ama_tlbx.analysis.correlation_analyzer import CorrelationResult
@@ -26,10 +27,17 @@ def plot_correlation_heatmap(
         vmin=-1,
         vmax=1,
         ax=ax,
+        square=True,
+        cbar_kws={"shrink": 0.8},
         **kwargs,  # type: ignore[arg-type]
     )
 
-    ax.tick_params(axis="x", rotation=45)
+    ax.set_xticklabels(
+        ax.get_xticklabels(),
+        rotation=45,
+        ha="right",
+        rotation_mode="anchor",
+    )
     ax.tick_params(axis="y", rotation=0)
     ax.set_title("Feature Correlation Heatmap")
     fig.tight_layout()
@@ -56,25 +64,37 @@ def _prettify_pair_columns(
 def plot_top_correlated_pairs(
     result: CorrelationResult,
     n: int = 20,
+    threshold: float | None = 0.8,
     figsize: tuple[int, int] = (12, 10),
 ) -> tuple[Figure, Figure]:
-    """Plot top positively and negatively correlated feature pairs."""
+    """Plot top positively and negatively correlated feature pairs.
+
+    Args:
+        result: CorrelationResult from CorrelationAnalyzer.
+        n: Number of top correlated pairs to display in each plot.
+        threshold: Minimum absolute correlation to justify grouping features.
+        figsize: Figure size for each plot.
+    """
     pairs = _prettify_pair_columns(result.feature_pairs, result.pretty_by_col)
-    positive = pairs.query("correlation > 0").nlargest(n, "correlation").sort_values("correlation", ascending=True)
-    negative = pairs.query("correlation < 0").nsmallest(n, "correlation").sort_values("correlation", ascending=False)
+    positive = pairs.query("correlation > 0").nlargest(n, "abs_correlation")
+    negative = pairs.query("correlation < 0").nlargest(n, "abs_correlation")
 
     fig_pos, ax_pos = plt.subplots(figsize=figsize)
-    sns.barplot(data=positive, x="correlation", y="pretty_pair", color="#d62728", ax=ax_pos)
+    sns.barplot(data=positive, x="correlation", y="pretty_pair", color="tab:red", ax=ax_pos)
     ax_pos.set_title(f"Top {len(positive)} Positive Correlations")
     ax_pos.set_xlabel("Pearson Correlation")
     ax_pos.axvline(0, color="black", linewidth=1, linestyle="--")
+    if threshold is not None:
+        ax_pos.axvline(threshold, color="tab:orange", linewidth=2, linestyle="--")
     fig_pos.tight_layout()
 
     fig_neg, ax_neg = plt.subplots(figsize=figsize)
-    sns.barplot(data=negative, x="correlation", y="pretty_pair", color="#1f77b4", ax=ax_neg)
+    sns.barplot(data=negative, x="correlation", y="pretty_pair", color="tab:blue", ax=ax_neg)
     ax_neg.set_title(f"Top {len(negative)} Negative Correlations")
     ax_neg.set_xlabel("Pearson Correlation")
     ax_neg.axvline(0, color="black", linewidth=1, linestyle="--")
+    if threshold is not None:
+        ax_neg.axvline(-threshold, color="tab:orange", linewidth=2, linestyle="--")
     fig_neg.tight_layout()
 
     return fig_pos, fig_neg
