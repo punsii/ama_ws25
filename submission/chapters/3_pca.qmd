@@ -6,6 +6,7 @@ format:
 ---
 
 ## Dimensionality reduction
+
 Performing analysis on large invaried data often leads to significant noise, unwanted or unneeded data in further analysis.
 To combat this a dimensionality reduction can be performed on the dataset using a PCA.
 The goal here is to make sure that unneeded columns are merged together if they share variance, thus reducing our column size.
@@ -17,11 +18,10 @@ One candidates that stood out were the columns 'Hepatitis B' , 'Polio' and 'Diph
 The column description also states that they represent the vaccination percentage for these specific deceases. The reason these columns intuatively make sense for merging is that we don't neccesarily care about the correlation between speficic deceases and life expecency, especially if they are all highly correlated.
 
 So the process we went with for data concatination was as follows:
-- Extract columns for concatination and put them into their own dataframe (DF-A) and make a dataframe containing the removed columns (DF-B)
+- Extract columns you want to remove from original dataframe (DF) and put them into their own dataframe (DF-A) and make a dataframe containing the removed columns (DF-B)
 - Perform a PCA with dimensionality of 1 on the columns (DF-A).
 - Extract the loadings from the PCA.
 - Take the loadings and lift them to the power of 2 effectively normalising them.
-- Row by Row (DF-A)
-  - create new row based on weighted sum of the analysed columns row.
-- Add new row to original dataframe  (DF-A) <- (DF-B)
+- Row by Row create new row based in (DF-B) based on weighted sum of the analysed columns row.
 
+### Implementation
