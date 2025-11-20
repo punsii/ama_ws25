@@ -66,3 +66,13 @@ PCA loadings, weighted (squared for component contribution):
 
 The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.83% that they might aswell mean the same thing.
 A second easy candidate for concatination is "thinnness 1-19 years" and "thinness 5-9 years" since one is a subset of the other concatinating them makes sense from a data reduction perspective, the explained variance of 97%.
+
+## General Principle Component Analysis
+
+Performing a general principle component analysis on the reduced data signficantly reduces the amount of noise in our principle components aswell as our initial principle components, this eases the readability of PC analysis.
+
+
+
+
+
+TODO: describe PC from broad PCA
