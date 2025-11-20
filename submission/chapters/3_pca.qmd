@@ -70,6 +70,36 @@ A second easy candidate for concatination is "thinnness 1-19 years" and "thinnes
 ## General Principle Component Analysis
 
 Performing a general principle component analysis on the reduced data signficantly reduces the amount of noise in our principle components aswell as our initial principle components, this eases the readability of PC analysis.
+Our underlying goal of performing a PCA is to figure out if there is some underlying correlation between the variables
+
+The full PCA for the dataset
+```
+	feature	PC1	PC2	PC3	PC4	PC5
+0	life_expectancy	0.361855	0.130614	-0.228990	0.023706	-0.007008
+1	adult_mortality	-0.309021	-0.179180	0.388777	0.001862	-0.167414
+2	alcohol	0.257201	0.039492	0.360851	0.243854	-0.042597	0.247928
+3	percentage_expenditure	0.281612	0.112948	0.322523	-0.452369	0.325435
+4	measles	-0.132957	0.442035	0.106486	0.104698	0.023987	0.656015
+5	bmi	0.329641	-0.034862	-0.096278	0.285799	-0.211092	-0.013664
+6	total_expenditure	0.172507	-0.096567	0.291616	0.562497	0.591793
+7	hiv/aids	-0.179048	-0.167945	0.599997	0.013996	-0.341367
+8	gdp	0.298375	0.120481	0.259397	-0.474694	0.198554	0.015851
+9	population	-0.090882	0.546238	0.048160	0.160008	-0.085112
+10	income_composition_of_resources	0.343011	0.134960	0.058061
+11	schooling	0.343628	0.094620	0.113897	0.051756	-0.376017
+12	Immunisation	-0.157956	0.557837	0.100588	0.145554	0.031030
+13	Child Thinness	-0.286315	0.226130	-0.021637	-0.219200	0.055522
+
+Explained variance
+  0.43486117 0.17509572 0.10366902 0.07807773 0.04615732
+```
+NOTE: Only the top 5 PCs are included in this report for brevity. 
+
+If we look at each of the significant PC we can see they explain certain concepts often found in developed countries.
+
+For example PC1 weighs life_expectancy, schooling, income_composition_of_resources and bmi highly and negative loadins such as adult_mortality and Child Thinness.
+Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense.
+
 
 
 
