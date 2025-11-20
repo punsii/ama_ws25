@@ -23,6 +23,7 @@ So the process we went with for data concatination was as follows:
 ### Implementation
 
 
+
 ### Findings
 
 Finding candidates for column concatinations originally involved looking at the descriptions of the columns.
@@ -45,4 +46,23 @@ However not high enough to where you could safely concat them with no pratical d
 In our case since we aren't as much intrested in the which deceases are the biggest contributors to life expecency. We decided to concat the columns, perhaps with the ability to do further analysis on which vaccine is best for life expectancy.
 The reason for ommiting this analysis point is that the variance between them is to similar in this dataset so we dont belive the time is at the given moment best spent there.
 
-Other columns concatination candiates are way more clear cut.
+Other columns concatination candiates are way more clear cut when it came to whether or not to concatinate them:
+
+```
+The first principal component (PC1) explains 99.83% of the variance within these columns.
+PCA loadings, weighted (squared for component contribution):
+              feature  loading
+0  under-five deaths       0.5
+1       infant deaths      0.5
+```
+and
+```
+The first principal component (PC1) explains 97.00% of the variance within these columns.
+PCA loadings, weighted (squared for component contribution):
+                 feature  loading
+0   thinness  1-19 years      0.5
+1     thinness 5-9 years      0.5
+```
+
+The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.83% that they might aswell mean the same thing.
+A second easy candidate for concatination is "thinnness 1-19 years" and "thinness 5-9 years" since one is a subset of the other concatinating them makes sense from a data reduction perspective, the explained variance of 97%.
