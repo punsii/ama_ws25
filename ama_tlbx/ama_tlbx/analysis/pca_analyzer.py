@@ -14,12 +14,10 @@ class PCAResult:
     """PCA outputs packaged for downstream visualization and reporting.
 
     Attributes:
-        scores: DataFrame of observation coordinates in PC space; columns named
-            `PC1..PCk`, index aligned to the input data.
-        loadings: DataFrame of feature loadings; index = feature names, columns
-            `PC1..PCk` matching the fitted components.
+        scores: DataFrame of observation coordinates w.r.t. the principal components; columns named `PC1..PCk`, same index as in the input data.
+        loadings: DataFrame of feature loadings; index = original feature names, columns `PC1..PCk` matching the fitted components. Each `PCi` column is the unit-length eigenvector of the sample covariance matrix **X** associated with the i-th largest eigenvalue. The j-th value of each eigenvector expresses the relative weight of each feature in that orthonormal basis vector; hence ||PCi||_2 = 1. The sings of the loadings are arbitrary.
         explained_variance: DataFrame with columns `PC`, `variance`,
-            `explained_ratio`, `cumulative_ratio` for each component.
+            `explained_ratio`, `cumulative_ratio` for each component; the `variance` of each PC equals their eigenvalues, ordered from largest to smallest, describing the variance captured along each orthogonal principal axis.
     """
 
     scores: pd.DataFrame
@@ -34,8 +32,8 @@ class PCAAnalyzer:
     summarizing component loadings.
 
     Example:
-        >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
-        >>> from ama_tlbx.plotting.pca_plots import plot_explained_variance
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> from ama_tlbx.plotting import plot_explained_variance
         >>> pca_result = (
         ...     LifeExpectancyDataset.from_csv()
         ...     .make_pca_analyzer(standardized=True, exclude_target=True)
@@ -44,6 +42,7 @@ class PCAAnalyzer:
         ... )
         >>> pca_result.explained_variance.head()
         >>> fig = plot_explained_variance(pca_result)
+        >>> fig = plot_biplot_plotly(pca_result, color=le_ds[LECol.Target], ...)
     """
 
     def __init__(self, view: DatasetView):
@@ -59,9 +58,9 @@ class PCAAnalyzer:
     ) -> "PCAAnalyzer":
         r"""Fit a PCA model using :class:`sklearn.decomposition.PCA`.
 
-        Principal Component Analysis projects the _standardized_ data matrix
-        **X** onto orthogonal directions of maximal variance, enabling
-        dimensionality reduction. See [scikit-learn PCA documentation](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html) for details.
+        Principal Component Analysis projects the data matrix **X** onto a new orthonormal
+        basis of maximal variance. The columns of this basis are eigenvectors of Cov(**X**, **X**), ordered by descending eigenvalue; each successive component explains the largest remaining variance while staying orthogonal to the previous ones.
+        See [scikit-learn PCA documentation](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html) for details.
         """
         features = self._view.features.copy()
 
@@ -162,8 +161,7 @@ class PCAAnalyzer:
         elif method_key == "l2":
             importance = (loadings[pc_cols] ** 2).sum(axis=1).pow(0.5)
         else:
-            msg = "method must be one of {'max', 'l2'}"
-            raise ValueError(msg)
+            raise ValueError("method must be one of {'max', 'l2'}")
 
         return importance.sort_values(ascending=False).index
 
