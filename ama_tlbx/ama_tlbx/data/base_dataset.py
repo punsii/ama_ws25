@@ -3,9 +3,10 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
+from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
         ZScoreOutlierDetector,
     )
     from ama_tlbx.analysis.pca_analyzer import PCAAnalyzer
+    from ama_tlbx.analysis.pca_dim_reduction import FeatureGroup, PCADimReductionAnalyzer
 
 from .base_columns import BaseColumn
 from .views import DatasetView
@@ -134,6 +136,7 @@ class BaseDataset(ABC):
         columns: Iterable[str] | None = None,
         standardized: bool = False,
         target_col: str | None = None,
+        missing_strategy: Literal["drop", "global_impute"] = "drop",
     ) -> DatasetView:
         """Build an immutable dataset view for analyzers and plotting layers.
 
@@ -141,18 +144,39 @@ class BaseDataset(ABC):
             columns: Columns to include in the view (defaults to all)
             standardized: Use standardized dataframe if available
             target_col: Optional target column reference
+            missing_strategy: Strategy to handle missing values ("drop" or "global_impute")
 
         Returns:
             DatasetView containing selected data and metadata
         """
         frame = self.df_standardized if standardized else self.df
+
+        if missing_strategy == "global_impute":
+            # Impute numeric columns globally (column-wise median)
+            numeric_cols = filter(lambda c: c in frame.columns, numeric_cols)
+            if numeric_cols:
+                frame[numeric_cols] = SimpleImputer(strategy="median").fit_transform(frame[numeric_cols])
+        elif missing_strategy == "drop":
+            # Drop rows after selecting the relevant columns
+            pass
+        else:
+            raise ValueError(
+                f"Invalid missing_strategy='{missing_strategy}'. Use 'drop' or 'global_impute'.",
+            )
+
         selected_cols = list(columns or frame.columns.to_list())
+        frame = frame.loc[:, selected_cols]
+
+        if missing_strategy == "drop":
+            # Drop rows with any missing values in the selected columns
+            frame = frame.dropna(axis=0, how="any")
 
         return DatasetView(
-            df=frame.loc[:, selected_cols].copy(),
+            df=frame,
             pretty_by_col={col: self.get_pretty_name(col) for col in selected_cols},
             numeric_cols=[col for col in selected_cols if col in self.numeric_cols],
             target_col=target_col or self.Col.TARGET,
+            is_standardized=standardized,
         )
 
     def feature_columns(
@@ -173,14 +197,14 @@ class BaseDataset(ABC):
         columns: Iterable[str] | None = None,
         standardized: bool = True,
         include_target: bool = True,
+        missing_strategy: Literal["drop", "global_impute"] = "drop",
     ) -> DatasetView:
         """Build a dataset view tailored for downstream analyzers."""
-        if columns is None:
-            columns = self.feature_columns(include_target=include_target)
         return self.view(
-            columns=columns,
+            columns=columns if columns is not None else self.feature_columns(include_target=include_target),
             standardized=standardized,
             target_col=self.Col.TARGET if include_target else None,
+            missing_strategy=missing_strategy,
         )
 
     def get_pretty_name(self, column_name: str) -> str:
@@ -203,7 +227,7 @@ class BaseDataset(ABC):
     def make_correlation_analyzer(
         self,
         columns: Iterable[str] | None = None,
-        standardized: bool = True,
+        standardized: bool = False,
         include_target: bool = True,
     ) -> "CorrelationAnalyzer":
         """Instantiate a correlation analyzer configured for this dataset."""
@@ -230,6 +254,62 @@ class BaseDataset(ABC):
             ),
         )
 
+    def make_pca_dim_reduction_analyzer(
+        self,
+        feature_groups: list["FeatureGroup"],
+        columns: Iterable[str] | None = None,
+        standardized: bool = True,
+        min_var_explained: float | list[float] = 0.7,
+        missing_strategy: Literal["drop", "global_impute"] = "drop",
+    ) -> "PCADimReductionAnalyzer":
+        """Instantiate a PCA dimensionality reduction analyzer for grouped features.
+
+        This analyzer automatically determines the number of principal components
+        needed to explain a specified proportion of variance in each feature group.
+
+        Args:
+            feature_groups: List of FeatureGroup objects defining correlated feature sets
+            columns: Optional column subset (groups must be within these columns)
+            standardized: Use standardized data (recommended: True)
+            min_var_explained: Minimum proportion of variance to explain per group.
+                The analyzer will keep the minimum number of PCs needed to reach
+                this threshold.
+                - float: Same threshold for all groups (default: 0.7)
+                - list[float]: Specific threshold for each group (must match length)
+            missing_strategy: Strategy to handle missing values ("drop" or "global_impute")
+
+        Returns:
+            PCADimReductionAnalyzer instance
+
+        Example:
+            >>> from ama_tlbx.analysis.pca_dim_reduction import FeatureGroup
+            >>> groups = [
+            ...     FeatureGroup("Immunization", ["hepatitis_b", "polio", "diphtheria"]),
+            ...     FeatureGroup("Mortality", ["infant_deaths", "under_five_deaths"]),
+            ... ]
+            >>> # Keep PCs explaining ≥80% variance (default)
+            >>> analyzer = dataset.make_pca_dim_reduction_analyzer(groups)
+            >>> result = analyzer.fit().result()
+            >>> print(f"Group 1 kept {result.group_results[0].n_components} PCs")
+            >>>
+            >>> # Keep PCs explaining ≥95% variance for all groups
+            >>> analyzer = dataset.make_pca_dim_reduction_analyzer(groups, min_var_explained=0.95)
+            >>> result = analyzer.fit().result()
+            >>>
+            >>> # Different thresholds per group (90% for first, 70% for second)
+            >>> analyzer = dataset.make_pca_dim_reduction_analyzer(groups, min_var_explained=[0.9, 0.7])
+            >>> result = analyzer.fit().result()
+        """
+        from ama_tlbx.analysis.pca_dim_reduction import PCADimReductionAnalyzer
+
+        view = self.analyzer_view(
+            columns=columns,
+            standardized=standardized,
+            include_target=False,
+            missing_strategy=missing_strategy,
+        )
+        return PCADimReductionAnalyzer(view=view, feature_groups=feature_groups, min_var_explained=min_var_explained)
+
     def make_iqr_outlier_detector(
         self,
         columns: Iterable[str] | None = None,
@@ -237,6 +317,13 @@ class BaseDataset(ABC):
         threshold: float = 1.5,
     ) -> "IQROutlierDetector":
         """Instantiate an IQR outlier detector configured for this dataset.
+
+        Example:
+            >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
+            >>> ds = LifeExpectancyDataset.from_csv()
+            >>> detector = ds.make_iqr_outlier_detector(threshold=1.5)
+            >>> outlier_result = detector.fit().result()
+            >>> mask = outlier_result.outlier_mask
 
         Args:
             columns: Columns to analyze (defaults to all numeric features)

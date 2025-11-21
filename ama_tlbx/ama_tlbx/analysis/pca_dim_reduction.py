@@ -30,10 +30,13 @@ class GroupPCAResult:
     """PCA dimensionality reduction results for a single feature group.
 
     Attributes:
-        group: The feature group that was analyzed
-        pc_scores: Principal component scores (observations x n_components)
-        explained_variance: DataFrame with variance explained by each PC (all components)
-        loadings: Feature loadings on retained PCs - contribution of each original feature
+        group: The feature group that was analyzed.
+        pc_scores: DataFrame of retained PC scores for this group; columns named
+            `{group.name}_PC1..k`, index aligned to the original data.
+        explained_variance: DataFrame with columns `PC`, `variance`,
+            `explained_ratio`, `cumulative_ratio` for all PCs prior to trimming.
+        loadings: DataFrame of feature loadings for all PCs; index = original
+            feature names, columns `PC1..PCm`.
         n_features: Number of original features in the group
         n_components: Number of principal components retained
         min_var_explained: Minimum variance threshold used to determine n_components
@@ -53,18 +56,20 @@ class GroupPCAResult:
         return self.explained_variance["explained_ratio"].iloc[: self.n_components]
 
     @property
+    def loadings_retained(self) -> pd.DataFrame:
+        """Feature loadings on retained PCs only."""
+        return self.loadings.iloc[:, : self.n_components]
+
+    @property
     def pc1_scores(self) -> pd.Series:
-        """Convenience property to access PC1 scores for backward compatibility."""
         return self.pc_scores.iloc[:, 0]
 
     @property
     def explained_variance_pc1(self) -> float:
-        """Convenience property to access PC1 explained variance for backward compatibility."""
         return float(self.explained_variance_retained.iloc[0])
 
     @property
     def cumulative_variance_explained(self) -> float:
-        """Total variance explained by all retained principal components."""
         return float(self.explained_variance_retained.sum())
 
 
@@ -73,12 +78,13 @@ class PCADimReductionResult:
     """Complete results from PCA-based dimensionality reduction.
 
     Attributes:
-        group_results: Results for each feature group
-        reduced_df: DataFrame with PC scores for each group (observations x total_n_components)
-        original_n_features: Total number of features before reduction
-        reduced_n_features: Number of features after reduction (sum of n_components across groups)
-        pretty_by_col: Mapping from original column names to pretty names
-        min_var_explained_per_group: Variance threshold(s) used to determine n_components (per group)
+        group_results: List of `GroupPCAResult` objects (one per group).
+        reduced_df: DataFrame concatenating all retained PCs; columns are
+            `{group}_PCj`, index aligned to the source data.
+        original_n_features: Total number of features before reduction.
+        reduced_n_features: Number after reduction (sum of retained PCs).
+        pretty_by_col: Mapping from original column names to pretty names.
+        min_var_explained_per_group: Variance threshold(s) used per group.
     """
 
     group_results: list[GroupPCAResult]
@@ -129,15 +135,20 @@ class PCADimReductionAnalyzer(BaseAnalyser):
     - Want data-driven component selection based on information retention
 
     **Example:**
-    >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
+    >>> from ama_tlbx.data import LifeExpectancyDataset, LECol
     >>> from ama_tlbx.analysis import FeatureGroup
     >>> dataset = LifeExpectancyDataset.from_csv()
     >>> groups = [
-    ...     FeatureGroup("Immunization", ["hepatitis_b", "polio", "diphtheria"]),
-    ...     FeatureGroup("Child Mortality", ["infant_deaths", "under_five_deaths"]),
+    ...     FeatureGroup("immunization", [LECol.POLIO, LECol.HEPATITIS_B, LECol.DIPHTHERIA]),
+    ...     FeatureGroup("child_mortality", [LECol.INFANT_DEATHS, LECol.UNDER_FIVE_DEATHS]),
     ... ]
-    >>> result = dataset.make_pca_dim_reduction_analyzer(groups, min_var_explained=0.95).fit().result()
-    >>> print(f"Reduced from {result.original_n_features} to {result.reduced_n_features}")
+    >>> result = (
+    ...     dataset
+    ...     .make_pca_dim_reduction_analyzer(groups, min_var_explained=0.9)
+    ...     .fit()
+    ...     .result()
+    ... )
+    >>> reduced_df = result.reduced_df
 
     Different thresholds per group:
 
@@ -163,8 +174,7 @@ class PCADimReductionAnalyzer(BaseAnalyser):
                 Values must be between 0 and 1.
 
         Raises:
-            ValueError: If feature groups are empty, contain invalid columns, or
-                min_var_explained specification is invalid
+            ValueError: If feature groups are empty, contain invalid columns, or min_var_explained specification is invalid
         """
         self._view = view
         self._group_results: list[GroupPCAResult] = []
@@ -251,16 +261,16 @@ class PCADimReductionAnalyzer(BaseAnalyser):
             # Rename columns with group name
             pc_scores.columns = [f"{group.name}_PC{j + 1}" for j in range(n_comp)]
 
-            # Get loadings for retained PCs
-            loadings = pca_result.loadings.iloc[:, :n_comp].copy()
-            loadings.columns = [f"PC{j + 1}" for j in range(n_comp)]
+            # Get all loadings (not just retained ones)
+            all_loadings = pca_result.loadings.copy()
+            all_loadings.columns = [f"PC{j + 1}" for j in range(len(all_loadings.columns))]
 
             # Store results
             group_result = GroupPCAResult(
                 group=group,
                 pc_scores=pc_scores,
                 explained_variance=pca_result.explained_variance,
-                loadings=loadings,
+                loadings=all_loadings,
                 n_features=len(group.features),
                 n_components=n_comp,
                 min_var_explained=threshold,

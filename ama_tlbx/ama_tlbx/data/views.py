@@ -15,6 +15,7 @@ class DatasetView:
         pretty_by_col: Mapping from normalized column names to display-friendly labels.
         numeric_cols: Ordered list of numeric feature names present in ``data``.
         target_col: Optional name of the target variable used for analysis.
+        is_standardized: Indicates if numeric features have been standardized (zero mean, unit variance).
     """
 
     df: pd.DataFrame
@@ -23,6 +24,8 @@ class DatasetView:
     """Mapping from normalized column names to display-friendly labels."""
     numeric_cols: list[str]
     target_col: str | None = None
+    is_standardized: bool | None = None
+    """Indicates if numeric features have been standardized (zero mean, unit variance)."""
 
     @property
     def features(self) -> pd.DataFrame:

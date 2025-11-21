@@ -1,11 +1,14 @@
 """Correlation analysis for dataset features."""
 
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 import pandas as pd
 
 from ama_tlbx.data.views import DatasetView
+
+from .base_analyser import BaseAnalyser
 
 
 @dataclass(frozen=True)
@@ -13,10 +16,12 @@ class CorrelationResult:
     """Correlation analysis outputs grouped for plotting and reporting.
 
     Attributes:
-        matrix: Full Pearson correlation matrix for the selected view.
+        matrix: Full Pearson correlation matrix (DataFrame; rows/cols = features in view).
         pretty_by_col: Mapping from raw feature names to presentation labels.
-        feature_pairs: Sorted table of top absolute correlations between features.
-        target_correlations: Optional correlations between each feature and the target.
+        feature_pairs: DataFrame with columns `feature_a`, `feature_b`, `correlation`,
+            `abs_correlation`, `pair`; sorted by strongest absolute correlations.
+        target_correlations: Optional DataFrame with columns `feature`, `correlation`
+            for feature-vs-target correlations (sorted descending).
     """
 
     matrix: pd.DataFrame
@@ -25,8 +30,26 @@ class CorrelationResult:
     target_correlations: pd.DataFrame | None = None
 
 
-class CorrelationAnalyzer:
-    """Analyzer for computing feature correlations."""
+class CorrelationAnalyzer(BaseAnalyser):
+    """Analyzer for computing feature correlations.
+
+    Example:
+        >>> import matplotlib.pyplot as plt
+        >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
+        >>> from ama_tlbx.plotting.correlation_plots import (
+        ...     plot_correlation_heatmap,
+        ...     plot_top_correlated_pairs,
+        ...     plot_target_correlations,
+        ... )
+        >>> ds = LifeExpectancyDataset.from_csv()
+        >>> corr_res = ds.make_correlation_analyzer(standardized=True, include_target=True).fit().result()
+        >>> fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+        >>> _ = plot_correlation_heatmap(corr_res, ax=axes[0])
+        >>> pos_fig, neg_fig = plot_top_correlated_pairs(corr_res, n=10, axes=axes)
+        >>> # Target correlations on separate axes
+        >>> fig_tc, axes_tc = plt.subplots(1, 2, figsize=(18, 6))
+        >>> _ = plot_target_correlations(corr_res, axes=axes_tc)
+    """
 
     def __init__(self, view: DatasetView):
         """Initialize the correlation analyzer with a dataset view."""
@@ -77,14 +100,12 @@ class CorrelationAnalyzer:
             DataFrame of features and their correlation with the target variable.
         """
         if not self._view.target_col:
-            msg = "Dataset view has no target column configured."
-            raise ValueError(msg)
+            raise ValueError("Dataset view has no target column configured.")
 
         corr_matrix = self.get_correlation_matrix()
 
         if self._view.target_col not in corr_matrix.index:
-            msg = f"Target column '{self._view.target_col}' not found in data"
-            raise ValueError(msg)
+            raise ValueError(f"Target column '{self._view.target_col}' not found in data")
 
         assert self._view.target_col is not None, "get_target_correlations requires a target_col"
 
@@ -97,16 +118,23 @@ class CorrelationAnalyzer:
             .reset_index(drop=True)
         )
 
-    def fit(self, *, top_n_pairs: int = 20) -> CorrelationResult:
-        """Assemble correlation results for downstream plotting and reporting."""
+    def fit(self) -> Self:
+        """Compute correlation matrix."""
+        self.get_correlation_matrix()
+
+        return self
+
+    def result(self, *, top_n_pairs: int = 20) -> CorrelationResult:
         matrix = self.get_correlation_matrix()
         pairs = self.get_top_correlated_pairs(n=top_n_pairs)
-        target_corr = None
-        if self._view.target_col:
-            target_corr = self.get_target_correlations()
+
+        target_corr = (
+            self.get_target_correlations() if self._view.target_col and self._view.target_col in matrix.index else None
+        )
+
         return CorrelationResult(
             matrix=matrix,
-            pretty_by_col=dict(self._view.pretty_by_col),
+            pretty_by_col=self._view.pretty_by_col,
             feature_pairs=pairs,
             target_correlations=target_corr,
         )

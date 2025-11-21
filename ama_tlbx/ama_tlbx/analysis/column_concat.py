@@ -1,7 +1,6 @@
 """Column Concatenation."""
 
 from dataclasses import dataclass
-from typing import Literal
 
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -11,7 +10,16 @@ from ama_tlbx.data.views import DatasetView
 
 @dataclass
 class ColumnConcatenator:
-    """Utility for concatenating multiple columns into a single column."""
+    """Utility for concatenating multiple columns into a single column.
+
+    Example:
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> from ama_tlbx.analysis.column_concat import ColumnConcatenator
+        >>> dataset = LifeExpectancyDataset.from_csv()
+        >>> view = dataset.analyzer_view(standardized=False)
+        >>> cc = ColumnConcatenator(view)
+        >>> combined_view = cc.concatenate(["polio", "diphtheria"], new_column_name="immunization_mean")
+    """
 
     view: DatasetView
 

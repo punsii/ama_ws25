@@ -13,7 +13,43 @@ from .life_expectancy_columns import LifeExpectancyColumn as Col
 
 
 class LifeExpectancyDataset(BaseDataset):
-    """Loading, preprocessing and normalization for the [Life Expectancy dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who)."""
+    """Loading, preprocessing and normalization for the [Life Expectancy dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who).
+
+    **Example workflows**:
+    >>> from ama_tlbx.data import LifeExpectancyDataset, LECol
+    >>> from ama_tlbx.analysis import FeatureGroup
+    >>> from ama_tlbx.plotting.correlation_plots import (
+    ...     plot_correlation_heatmap,
+    ...     plot_top_correlated_pairs,
+    ...     plot_target_correlations,
+    ... )
+    >>> ds = LifeExpectancyDataset.from_csv()
+    >>> corr = ds.make_correlation_analyzer(standardized=True, include_target=False).fit().result()
+    >>> pca = ds.make_pca_analyzer(standardized=True, exclude_target=True).fit().result()
+    >>> groups = [
+    ...     FeatureGroup("immunization", [LECol.POLIO, LECol.HEPATITIS_B, LECol.DIPHTHERIA]),
+    ...     FeatureGroup("child_mortality", [LECol.INFANT_DEATHS, LECol.UNDER_FIVE_DEATHS]),
+    ... ]
+    >>> dimred = ds.make_pca_dim_reduction_analyzer(groups, min_var_explained=0.9).fit().result()
+    >>> iqr = ds.make_iqr_outlier_detector(threshold=1.5).fit().result()
+    >>> corr.matrix.shape, pca.scores.shape, dimred.reduced_df.shape, iqr.outlier_mask.shape
+
+
+    Using a modified DataFrame (that still has a subset of the original columns) with analyzers:
+
+    >>> cov_cols = [LECol.POLIO, LECol.HEPATITIS_B, LECol.DIPHTHERIA]
+    >>> le_ds = LifeExpectancyDataset.from_csv()
+    >>> df = le_ds.df.assign(**{col: 1 - le_ds.df[col] for col in cov_cols})
+    >>> corr_result = (
+    ...     LifeExpectancyDataset(df[[*cov_cols, LECol.TARGET]])
+    ...     .make_correlation_analyzer()
+    ...     .fit()
+    ...     .result()
+    ... )
+    >>> _ = plot_correlation_heatmap(corr_result, figsize=(16, 16))
+    >>> _ = plot_top_correlated_pairs(corr_result, n=15, threshold=0.7)
+    >>> _ = plot_target_correlations(result=corr_result)
+    """
 
     Col = Col
 
@@ -32,8 +68,7 @@ class LifeExpectancyDataset(BaseDataset):
 
         Args:
             csv_path: Path to the CSV file
-            aggregate_by_country: aggregate data by country (mean over years, label for other agg fn, or selected year)
-                 defaults to selecting year 2014 based on previous analysis.
+            aggregate_by_country: aggregate data by country (mean over years, label for other agg fn, or selected year) defaults to selecting year 2014 based on previous analysis.
             drop_missing_target: If True, drop rows with missing life expectancy values
 
         Returns:

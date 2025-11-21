@@ -15,16 +15,11 @@ from .base_analyser import BaseAnalyser
 class OutlierDetectionResult:
     """Container for outlier detection results.
 
-    TODO(@jd): Expand with relevant statistics (for each outlier detection strategy).
-        https://github.com/punsii/ama_ws25/issues/TBD
-
     Attributes:
-        outlier_mask: DataFrame of boolean values indicating outliers per column
-        n_outliers_per_column: Series with count of outliers per column
-        n_outliers_per_row: Series with count of outliers per row
-        total_outliers: Total number of outlier flags across all entries
-        outlier_percentage: Percentage of values flagged as outliers
-        pretty_names: Mapping of column names to pretty display names
+        outlier_mask: Boolean DataFrame; rows = dataset index, columns = analyzed numeric features.
+        n_outliers_per_column: Series counting True values per feature (index = feature).
+        n_outliers_per_row: Series counting True values per row (index = dataset index).
+        pretty_names: Optional mapping of column names to display labels.
     """
 
     outlier_mask: pd.DataFrame
@@ -47,6 +42,13 @@ class IQROutlierDetector(BaseAnalyser):
     Attributes:
         threshold: Multiplier ``k`` applied to the IQR when computing the fences.
             Default is 1.5 according to Tukey's rule. 5-10% of data points are typically flagged as outliers.
+
+    Example:
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> ds = LifeExpectancyDataset.from_csv()
+        >>> detector = ds.make_iqr_outlier_detector(threshold=1.5)
+        >>> result = detector.fit().result()
+        >>> result.outlier_mask.head()
     """
 
     def __init__(self, view: DatasetView, threshold: float = 1.5) -> None:
@@ -110,6 +112,13 @@ class ZScoreOutlierDetector(BaseAnalyser):
 
     Attributes:
         threshold: Absolute z-score limit used to flag observations (default: 3.0).
+
+    Example:
+        >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
+        >>> ds = LifeExpectancyDataset.from_csv()
+        >>> detector = ds.make_zscore_outlier_detector(threshold=3.0)
+        >>> result = detector.fit().result()
+        >>> result.n_outliers_per_column.sort_values(ascending=False).head()
     """
 
     def __init__(self, view: DatasetView, threshold: float = 3.0) -> None:
@@ -178,6 +187,13 @@ class IsolationForestOutlierDetector(BaseAnalyser):
         contamination: Expected proportion of outliers in the dataset (default: "auto").
         random_state: Optional random seed for reproducible tree ensembles.
         n_estimators: Number of isolation trees fitted in the ensemble (default: 100).
+
+    Example:
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> ds = LifeExpectancyDataset.from_csv()
+        >>> detector = ds.make_isolation_forest_outlier_detector(contamination=0.05, random_state=42)
+        >>> result = detector.fit().result()
+        >>> result.n_outliers_per_row.head()
     """
 
     def __init__(

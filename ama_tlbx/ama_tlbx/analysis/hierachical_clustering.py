@@ -1,3 +1,7 @@
+from collections.abc import Iterable
+from typing import Union
+
+import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
@@ -9,7 +13,8 @@ def suggest_groups_from_correlation(
     corr_mat: pd.DataFrame,
     threshold: float = 0.7,
     min_group_size: int = 2,
-) -> list[FeatureGroup]:
+    return_summary: bool = False,
+) -> list[FeatureGroup] | tuple[list[FeatureGroup], pd.DataFrame]:
     """Suggest feature groups based on hierarchical clustering of correlations. Heavily inspired by this
     [Stack Overflow discussion](https://stackoverflow.com/questions/38070478/how-to-do-clustering-using-the-matrix-of-correlation-coefficients).
 
@@ -25,11 +30,18 @@ def suggest_groups_from_correlation(
             Lower values (e.g., 0.6) create larger, looser groups.
         min_group_size: Minimum number of features required to form a group
             (default: 2). Groups with fewer features are discarded to prevent singleton groups.
+        return_summary: If True, also return a summary DataFrame with group statistics.
 
     Returns:
-        List of FeatureGroup objects, each containing 2+ highly correlated
-        features. Groups are named "Group_1", "Group_2", etc. based on
-        cluster labels from the algorithm.
+        - If ``return_summary`` is False (default): list of FeatureGroup objects
+          (2+ highly correlated features), named "Group_1", "Group_2", ...
+        - If ``return_summary`` is True: tuple of (
+              groups: list[FeatureGroup],
+              summary: DataFrame with columns
+                  `group`, `size`, `features` (comma-separated),
+                  `mean_abs_corr` (average |r| within group),
+                  `min_abs_corr` (minimum |r| within group)
+          )
 
     **Theory: Hierarchical Clustering on Correlation Distance**
 
@@ -72,7 +84,7 @@ def suggest_groups_from_correlation(
     labels to each feature.
 
     Example:
-        >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
+        >>> from ama_tlbx.data import LifeExpectancyDataset
         >>> groups = (
         ...     LifeExpectancyDataset.from_csv()
         ...     .make_correlation_analyzer(standardized=True)
@@ -110,4 +122,30 @@ def suggest_groups_from_correlation(
         )
     ]
 
-    return groups
+    if not return_summary:
+        return groups
+
+    def _within_group_stats(features: Iterable[str]) -> tuple[float, float]:
+        if len(features) < min_group_size:
+            return (float("nan"), float("nan"))
+        sub = corr_mat.loc[features, features].abs()
+        mask = np.tril(np.ones(sub.shape, dtype=bool), k=-1)  # lower triangle excl diag
+        vals = sub.where(mask).stack()
+        if vals.empty:
+            return (float("nan"), float("nan"))
+        return float(vals.mean()), float(vals.min())
+
+    summary_rows = []
+    for g in groups:
+        mean_abs, min_abs = _within_group_stats(g.features)
+        summary_rows.append(
+            {
+                "group": g.name,
+                "size": len(g.features),
+                "features": ", ".join(map(str, g.features)),
+                "mean_abs_corr": mean_abs,
+                "min_abs_corr": min_abs,
+            },
+        )
+
+    return groups, pd.DataFrame(summary_rows).sort_values("group").reset_index(drop=True)

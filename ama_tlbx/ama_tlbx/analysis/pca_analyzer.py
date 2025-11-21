@@ -14,9 +14,12 @@ class PCAResult:
     """PCA outputs packaged for downstream visualization and reporting.
 
     Attributes:
-        scores: Observation coordinates in principal-component space.
-        loadings: Feature loadings relating original variables to components.
-        explained_variance: Variance, ratio, and cumulative ratio per component.
+        scores: DataFrame of observation coordinates in PC space; columns named
+            `PC1..PCk`, index aligned to the input data.
+        loadings: DataFrame of feature loadings; index = feature names, columns
+            `PC1..PCk` matching the fitted components.
+        explained_variance: DataFrame with columns `PC`, `variance`,
+            `explained_ratio`, `cumulative_ratio` for each component.
     """
 
     scores: pd.DataFrame
@@ -29,6 +32,18 @@ class PCAAnalyzer:
 
     Provides methods for fitting PCA models, transforming data, and
     summarizing component loadings.
+
+    Example:
+        >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
+        >>> from ama_tlbx.plotting.pca_plots import plot_explained_variance
+        >>> pca_result = (
+        ...     LifeExpectancyDataset.from_csv()
+        ...     .make_pca_analyzer(standardized=True, exclude_target=True)
+        ...     .fit(n_components=None)
+        ...     .result()
+        ... )
+        >>> pca_result.explained_variance.head()
+        >>> fig = plot_explained_variance(pca_result)
     """
 
     def __init__(self, view: DatasetView):
@@ -129,7 +144,7 @@ class PCAAnalyzer:
     def get_top_loading_features(
         self,
         n_components: int = 3,
-        method: Literal["sum", "max", "l2"] = "sum",
+        method: Literal["max", "l2"] = "l2",
     ) -> pd.Index:
         """Rank features by aggregated loading strength across leading components."""
         if self._pca_model is None:
@@ -142,14 +157,12 @@ class PCAAnalyzer:
         pc_cols = [f"PC{i + 1}" for i in range(min(n_components, loadings.shape[1]))]
 
         method_key = method.lower()
-        if method_key == "sum":
-            importance = loadings[pc_cols].abs().sum(axis=1)
-        elif method_key == "max":
+        if method_key == "max":
             importance = loadings[pc_cols].abs().max(axis=1)
         elif method_key == "l2":
             importance = (loadings[pc_cols] ** 2).sum(axis=1).pow(0.5)
         else:
-            msg = "method must be one of {'sum', 'max', 'l2'}"
+            msg = "method must be one of {'max', 'l2'}"
             raise ValueError(msg)
 
         return importance.sort_values(ascending=False).index
