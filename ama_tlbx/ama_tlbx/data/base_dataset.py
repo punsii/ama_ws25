@@ -99,10 +99,10 @@ class BaseDataset(ABC):
             Standardized DataFrame
         """
         if self._df_standardized is None:
-            self._df_standardized = self._compute_standardized()
+            self._df_standardized = self.standardize()
         return self._df_standardized
 
-    def _compute_standardized(self) -> pd.DataFrame:
+    def standardize(self, df: pd.DataFrame | None = None) -> pd.DataFrame:
         """Compute standardized version of the dataset using [sklearn's StandardScaler](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html).
 
         Default implementation uses StandardScaler on numeric columns.
@@ -111,13 +111,16 @@ class BaseDataset(ABC):
         Returns:
             Standardized DataFrame with numeric columns scaled to mean=0, std=1
         """
+        if df is None:
+            df = self.df
+
         self._scaler = StandardScaler()
-        scaled_data = self._scaler.fit_transform(self.df[self.numeric_cols])
+        scaled_data = self._scaler.fit_transform(df[self.numeric_cols])
 
         return pd.DataFrame(
             scaled_data,
             columns=self.numeric_cols,
-            index=self.df.index,
+            index=df.index,
         )
 
     def get_pretty_names(self, column_names: list[str] | None = None) -> list[str]:

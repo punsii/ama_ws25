@@ -151,3 +151,46 @@ class LifeExpectancyDataset(BaseDataset):
         means = aggregated.loc[:, numeric_cols].mean()
         aggregated.loc[:, numeric_cols] = aggregated.loc[:, numeric_cols].fillna(means)
         return aggregated
+
+    @property
+    def numeric_cols(self) -> pd.Index:
+        return super().numeric_cols.difference([Col.YEAR, Col.STATUS])
+
+    def tf_and_norm(self, tf_map: dict[Col, Callable] | None = None) -> pd.DataFrame:
+        """Apply per-column transformations then z-score numeric columns.
+
+        - Uses the default transforms from :class:`LifeExpectancyColumn` metadata.
+        - Allows overrides via ``tf_map`` (set a value to ``None`` to drop a default).
+        - Never transforms or standardizes the year column or the binary ``status`` indicator.
+
+        Args:
+            tf_map: Optional mapping from ``LifeExpectancyColumn`` to a callable that
+                accepts and returns a ``pd.Series``. Custom entries override defaults.
+
+        Returns:
+            DataFrame with transforms applied and numeric columns standardized
+            (mean=0, std=1) except for ``year`` and ``status``.
+        """
+        df = self.df.copy()
+
+        # Defaults from metadata
+        default_tf: dict[Col, Callable] = {col: col.transform for col in Col if col.transform is not None}
+
+        # Apply overrides; None means remove the default transform
+        transforms: dict[Col, Callable] = default_tf.copy()
+        for col, fn in (tf_map or {}).items():
+            if fn is None:
+                transforms.pop(col, None)
+            else:
+                transforms[col] = fn
+
+        for col, transform in transforms.items():
+            if col in df.columns:
+                df[col] = transform(df[col])
+
+        # Standardize numeric columns (status excluded by numeric_cols property)
+        numeric_cols = self.numeric_cols
+        if len(numeric_cols) > 0:
+            df.loc[:, numeric_cols] = self.standardize(df)
+
+        return df

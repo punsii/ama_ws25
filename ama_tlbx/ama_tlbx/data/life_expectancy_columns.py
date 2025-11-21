@@ -1,6 +1,19 @@
 """Column definitions for the Life Expectancy dataset. Created by GitHub Copilot, Claude Sonnet 4.5."""
 
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
 from .base_columns import BaseColumn, ColumnMetadata
+
+
+def _log1p_nonnegative(series: pd.Series) -> pd.Series:
+    return np.log1p(series.clip(lower=0))
+
+
+def _log1p_under_coverage(series: pd.Series) -> pd.Series:
+    return np.log1p(100 - series)
 
 
 class LifeExpectancyColumn(BaseColumn):
@@ -126,18 +139,21 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="country",
         dtype="str",
         pretty_name="Country",
+        transform=None,
     ),
     LifeExpectancyColumn.YEAR: ColumnMetadata(
         original_name="Year",
         cleaned_name="year",
         dtype="datetime64[ns]",
         pretty_name="Year",
+        transform=None,
     ),
     LifeExpectancyColumn.STATUS: ColumnMetadata(
         original_name="Status",
         cleaned_name="status",
         dtype="int64",
         pretty_name="Development Status (0=Developing, 1=Developed)",
+        transform=None,
     ),
     # Target variable
     LifeExpectancyColumn.TARGET: ColumnMetadata(
@@ -145,6 +161,7 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="life_expectancy",
         dtype="float64",
         pretty_name="Life Expectancy (years)",
+        transform=None,
     ),
     # Mortality indicators
     LifeExpectancyColumn.ADULT_MORTALITY: ColumnMetadata(
@@ -152,18 +169,21 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="adult_mortality",
         dtype="float64",
         pretty_name="Adult Mortality (per 1000)",
+        transform=_log1p_nonnegative,
     ),
     LifeExpectancyColumn.INFANT_DEATHS: ColumnMetadata(
         original_name="infant deaths",
         cleaned_name="infant_deaths",
         dtype="float64",
         pretty_name="Infant Deaths (per 1000)",
+        transform=_log1p_nonnegative,
     ),
     LifeExpectancyColumn.UNDER_FIVE_DEATHS: ColumnMetadata(
         original_name="under-five deaths ",
         cleaned_name="under_five_deaths",
         dtype="float64",
         pretty_name="Under-5 Deaths (per 1000)",
+        transform=_log1p_nonnegative,
     ),
     # Disease and health indicators
     LifeExpectancyColumn.HIV_AIDS: ColumnMetadata(
@@ -171,12 +191,14 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="hiv_aids",
         dtype="float64",
         pretty_name="HIV/AIDS Deaths (per 1000 births)",
+        transform=_log1p_nonnegative,
     ),
     LifeExpectancyColumn.MEASLES: ColumnMetadata(
         original_name="Measles ",
         cleaned_name="measles",
         dtype="float64",
         pretty_name="Measles Cases (per 1000)",
+        transform=_log1p_nonnegative,
     ),
     # Immunization coverage (%)
     LifeExpectancyColumn.HEPATITIS_B: ColumnMetadata(
@@ -184,18 +206,21 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="hepatitis_b",
         dtype="float64",
         pretty_name="Hepatitis B Coverage (%)",
+        transform=_log1p_under_coverage,
     ),
     LifeExpectancyColumn.POLIO: ColumnMetadata(
         original_name="Polio",
         cleaned_name="polio",
         dtype="float64",
         pretty_name="Polio Coverage (%)",
+        transform=_log1p_under_coverage,
     ),
     LifeExpectancyColumn.DIPHTHERIA: ColumnMetadata(
         original_name="Diphtheria ",
         cleaned_name="diphtheria",
         dtype="float64",
         pretty_name="Diphtheria Coverage (%)",
+        transform=_log1p_under_coverage,
     ),
     # Nutrition and physical health
     LifeExpectancyColumn.BMI: ColumnMetadata(
@@ -203,18 +228,21 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="bmi",
         dtype="float64",
         pretty_name="BMI (Average)",
+        transform=None,
     ),
     LifeExpectancyColumn.THINNESS_1_19_YEARS: ColumnMetadata(
         original_name=" thinness  1-19 years",
         cleaned_name="thinness_1_19_years",
         dtype="float64",
         pretty_name="Thinness 10-19 Years (%)",
+        transform=_log1p_nonnegative,
     ),
     LifeExpectancyColumn.THINNESS_5_9_YEARS: ColumnMetadata(
         original_name=" thinness 5-9 years",
         cleaned_name="thinness_5_9_years",
         dtype="float64",
         pretty_name="Thinness 5-9 Years (%)",
+        transform=_log1p_nonnegative,
     ),
     # Economic indicators
     LifeExpectancyColumn.GDP: ColumnMetadata(
@@ -222,18 +250,21 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="gdp",
         dtype="float64",
         pretty_name="GDP per Capita (USD)",
+        transform=_log1p_nonnegative,
     ),
     LifeExpectancyColumn.PERCENTAGE_EXPENDITURE: ColumnMetadata(
         original_name="percentage expenditure",
         cleaned_name="percentage_expenditure",
         dtype="float64",
         pretty_name="Health Expenditure (% of GDP per capita)",
+        transform=_log1p_nonnegative,
     ),
     LifeExpectancyColumn.TOTAL_EXPENDITURE: ColumnMetadata(
         original_name="Total expenditure",
         cleaned_name="total_expenditure",
         dtype="float64",
         pretty_name="Total Health Expenditure (% of govt expenditure)",
+        transform=None,
     ),
     # Social indicators
     LifeExpectancyColumn.INCOME_COMPOSITION: ColumnMetadata(
@@ -241,18 +272,21 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="income_composition_of_resources",
         dtype="float64",
         pretty_name="Income Composition (HDI)",
+        transform=None,
     ),
     LifeExpectancyColumn.SCHOOLING: ColumnMetadata(
         original_name="Schooling",
         cleaned_name="schooling",
         dtype="float64",
         pretty_name="Schooling (years)",
+        transform=None,
     ),
     LifeExpectancyColumn.ALCOHOL: ColumnMetadata(
         original_name="Alcohol",
         cleaned_name="alcohol",
         dtype="float64",
         pretty_name="Alcohol Consumption (liters per capita)",
+        transform=None,
     ),
     # Population
     LifeExpectancyColumn.POPULATION: ColumnMetadata(
@@ -260,5 +294,6 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="population",
         dtype="float64",
         pretty_name="Population",
+        transform=_log1p_nonnegative,
     ),
 }
