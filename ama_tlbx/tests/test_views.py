@@ -26,7 +26,7 @@ class TestDatasetView:
         }
         numeric_cols = ["feature1", "feature2"]
         return DatasetView(
-            data=data,
+            df=data,
             pretty_by_col=pretty_by_col,
             numeric_cols=numeric_cols,
             target_col="feature1",
@@ -34,8 +34,8 @@ class TestDatasetView:
 
     def test_view_creation(self, sample_view: DatasetView) -> None:
         """Test creating a DatasetView."""
-        assert len(sample_view.data) == 3
-        assert list(sample_view.data.columns) == ["feature1", "feature2", "category"]
+        assert len(sample_view.df) == 3
+        assert list(sample_view.df.columns) == ["feature1", "feature2", "category"]
         assert sample_view.target_col == "feature1"
 
     def test_view_is_frozen(self, sample_view: DatasetView) -> None:
@@ -53,7 +53,7 @@ class TestDatasetView:
         """Test features property when numeric_cols is empty."""
         data = pd.DataFrame({"col1": [1, 2, 3], "col2": [4, 5, 6]})
         view = DatasetView(
-            data=data,
+            df=data,
             pretty_by_col={"col1": "Column 1", "col2": "Column 2"},
             numeric_cols=[],
         )
@@ -70,7 +70,7 @@ class TestDatasetView:
         """Test creating a view without a target column."""
         data = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         view = DatasetView(
-            data=data,
+            df=data,
             pretty_by_col={"x": "X", "y": "Y"},
             numeric_cols=["x", "y"],
             target_col=None,

@@ -23,7 +23,7 @@ class TestCorrelationAnalyzer:
             },
         )
         return DatasetView(
-            data=data,
+            df=data,
             pretty_by_col={
                 "feature1": "Feature 1",
                 "feature2": "Feature 2",
@@ -44,7 +44,7 @@ class TestCorrelationAnalyzer:
             },
         )
         return DatasetView(
-            data=data,
+            df=data,
             pretty_by_col={"feature1": "Feature 1", "feature2": "Feature 2"},
             numeric_cols=["feature1", "feature2"],
             target_col=None,
@@ -120,7 +120,7 @@ class TestCorrelationAnalyzer:
     def test_compute_returns_result(self, sample_view: DatasetView) -> None:
         """Test that compute returns CorrelationResult."""
         analyzer = CorrelationAnalyzer(sample_view)
-        result = analyzer.compute()
+        result = analyzer.fit()
 
         assert isinstance(result, CorrelationResult)
         assert result.matrix is not None
@@ -130,7 +130,7 @@ class TestCorrelationAnalyzer:
     def test_compute_without_target(self, view_without_target: DatasetView) -> None:
         """Test compute works without target column."""
         analyzer = CorrelationAnalyzer(view_without_target)
-        result = analyzer.compute()
+        result = analyzer.fit()
 
         assert isinstance(result, CorrelationResult)
         assert result.matrix is not None
@@ -165,14 +165,14 @@ class TestCorrelationAnalyzer:
             },
         )
         view = DatasetView(
-            data=data,
+            df=data,
             pretty_by_col={"feature1": "Feature 1", "feature2": "Feature 2", "target": "Target"},
             numeric_cols=["feature1", "feature2", "target"],
             target_col="target",
         )
 
         analyzer = CorrelationAnalyzer(view)
-        result = analyzer.compute()
+        result = analyzer.fit()
 
         # Should still compute correlations (using pairwise complete observations)
         assert result.matrix is not None

@@ -66,4 +66,3 @@ excludes = [
     ".svnignore",
 ]
 on-unmatched = "warn"
-

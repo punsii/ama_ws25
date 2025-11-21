@@ -32,7 +32,7 @@ class TestLifeExpectancyDataset:
         csv_path = tmp_path / "test_data.csv"
         sample_df.to_csv(csv_path, index=False)
         return LifeExpectancyDataset.from_csv(
-            csv_path,
+            csv_path=csv_path,
             aggregate_by_country=False,
             drop_missing_target=False,
         )
@@ -89,7 +89,7 @@ class TestLifeExpectancyDataset:
         multi_year_df.to_csv(csv_path, index=False)
 
         dataset = LifeExpectancyDataset.from_csv(
-            csv_path,
+            csv_path=csv_path,
             aggregate_by_country=True,
         )
 
@@ -112,7 +112,7 @@ class TestLifeExpectancyDataset:
         df_with_missing.to_csv(csv_path, index=False)
 
         dataset = LifeExpectancyDataset.from_csv(
-            csv_path,
+            csv_path=csv_path,
             aggregate_by_country=False,
             drop_missing_target=True,
         )
@@ -160,10 +160,11 @@ class TestLifeExpectancyDataset:
 
     def test_identifier_columns(self, sample_dataset: LifeExpectancyDataset) -> None:
         """Test identifier columns attribute."""
-        assert "country" in sample_dataset.identifier_columns
-        assert "status" in sample_dataset.identifier_columns
-        assert "year" in sample_dataset.identifier_columns
+        identifier_cols = sample_dataset.Col.identifier_columns()
+        assert "country" in identifier_cols
+        assert "status" in identifier_cols
+        assert "year" in identifier_cols
 
     def test_default_target_column(self, sample_dataset: LifeExpectancyDataset) -> None:
         """Test default target column."""
-        assert sample_dataset.default_target_column == "life_expectancy"
+        assert sample_dataset.Col.TARGET == "life_expectancy"

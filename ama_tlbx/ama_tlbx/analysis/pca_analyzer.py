@@ -1,7 +1,7 @@
 """PCA analysis for dimensionality reduction and feature interpretation."""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Dict, Literal
 
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -14,14 +14,19 @@ class PCAResult:
     """PCA outputs packaged for downstream visualization and reporting.
 
     Attributes:
-        scores: Observation coordinates in principal-component space.
-        loadings: Feature loadings relating original variables to components.
-        explained_variance: Variance, ratio, and cumulative ratio per component.
+        scores: DataFrame of observation coordinates w.r.t. the principal components; columns named `PC1..PCk`, same index as in the input data.
+        loadings: DataFrame of feature loadings; index = original feature names, columns `PC1..PCk` matching the fitted components. Each `PCi` column is the unit-length eigenvector of the sample covariance matrix **X** associated with the i-th largest eigenvalue. The j-th value of each eigenvector expresses the relative weight of each feature in that orthonormal basis vector; hence ||PCi||_2 = 1. The sings of the loadings are arbitrary.
+        explained_variance: DataFrame with columns `PC`, `variance`,
+            `explained_ratio`, `cumulative_ratio` for each component; the `variance` of each PC equals their eigenvalues, ordered from largest to smallest, describing the variance captured along each orthogonal principal axis.
+        top_features_global: Features ranked by overall loading strength (L2 across PCs).
+        top_features_per_pc: Per-component ranking by absolute loading.
     """
 
     scores: pd.DataFrame
     loadings: pd.DataFrame
     explained_variance: pd.DataFrame
+    top_features_global: pd.Index
+    top_features_per_pc: Dict[str, pd.Index]
 
 
 class PCAAnalyzer:
@@ -29,6 +34,19 @@ class PCAAnalyzer:
 
     Provides methods for fitting PCA models, transforming data, and
     summarizing component loadings.
+
+    Example:
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> from ama_tlbx.plotting import plot_explained_variance
+        >>> pca_result = (
+        ...     LifeExpectancyDataset.from_csv()
+        ...     .make_pca_analyzer(standardized=True, exclude_target=True)
+        ...     .fit(n_components=None)
+        ...     .result()
+        ... )
+        >>> pca_result.explained_variance.head()
+        >>> fig = plot_explained_variance(pca_result)
+        >>> fig = plot_biplot_plotly(pca_result, color=le_ds[LECol.Target], ...)
     """
 
     def __init__(self, view: DatasetView):
@@ -44,9 +62,9 @@ class PCAAnalyzer:
     ) -> "PCAAnalyzer":
         r"""Fit a PCA model using :class:`sklearn.decomposition.PCA`.
 
-        Principal Component Analysis projects the _standardized_ data matrix
-        **X** onto orthogonal directions of maximal variance, enabling
-        dimensionality reduction. See [scikit-learn PCA documentation](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html) for details.
+        Principal Component Analysis projects the data matrix **X** onto a new orthonormal
+        basis of maximal variance. The columns of this basis are eigenvectors of Cov(**X**, **X**), ordered by descending eigenvalue; each successive component explains the largest remaining variance while staying orthogonal to the previous ones.
+        See [scikit-learn PCA documentation](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html) for details.
         """
         features = self._view.features.copy()
 
@@ -77,7 +95,7 @@ class PCAAnalyzer:
         return pd.DataFrame(
             transformed,
             columns=[f"PC{i + 1}" for i in range(transformed.shape[1])],
-            index=self._view.data.index,
+            index=self._view.df.index,
         )
 
     def get_explained_variance(self) -> pd.DataFrame:
@@ -129,7 +147,7 @@ class PCAAnalyzer:
     def get_top_loading_features(
         self,
         n_components: int = 3,
-        method: Literal["sum", "max", "l2"] = "sum",
+        method: Literal["max", "l2"] = "l2",
     ) -> pd.Index:
         """Rank features by aggregated loading strength across leading components."""
         if self._pca_model is None:
@@ -142,15 +160,12 @@ class PCAAnalyzer:
         pc_cols = [f"PC{i + 1}" for i in range(min(n_components, loadings.shape[1]))]
 
         method_key = method.lower()
-        if method_key == "sum":
-            importance = loadings[pc_cols].abs().sum(axis=1)
-        elif method_key == "max":
+        if method_key == "max":
             importance = loadings[pc_cols].abs().max(axis=1)
         elif method_key == "l2":
             importance = (loadings[pc_cols] ** 2).sum(axis=1).pow(0.5)
         else:
-            msg = "method must be one of {'sum', 'max', 'l2'}"
-            raise ValueError(msg)
+            raise ValueError("method must be one of {'max', 'l2'}")
 
         return importance.sort_values(ascending=False).index
 
@@ -164,4 +179,14 @@ class PCAAnalyzer:
         if isinstance(loadings, pd.Series):
             loadings = loadings.to_frame(name="PC1")
         explained = self.get_explained_variance()
-        return PCAResult(scores=scores, loadings=loadings, explained_variance=explained)
+        top_global = self.get_top_loading_features(n_components=loadings.shape[1])
+        top_per_pc: Dict[str, pd.Index] = {
+            pc: loadings[pc].abs().sort_values(ascending=False).index for pc in loadings.columns
+        }
+        return PCAResult(
+            scores=scores,
+            loadings=loadings,
+            explained_variance=explained,
+            top_features_global=top_global,
+            top_features_per_pc=top_per_pc,
+        )
