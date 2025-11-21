@@ -6,3 +6,103 @@ format:
 ---
 
 ## Dimensionality reduction
+
+Performing analysis on large invaried data often leads to significant noise, unwanted or unneeded data in further analysis.
+To combat this a dimensionality reduction can be performed on the dataset using a PCA.
+The goal here is to make sure that unneeded columns are merged together if they share variance, thus reducing our column size.
+
+### Methodology
+
+So the process we went with for data concatination was as follows:
+- Extract columns you want to remove from original dataframe (DF) and put them into their own dataframe (DF-A) and make a dataframe containing the removed columns (DF-B)
+- Perform a PCA with dimensionality of 1 on the columns (DF-A).
+- Extract the loadings from the PCA.
+- Take the loadings and lift them to the power of 2 effectively normalising them.
+- Row by Row create new row based in (DF-B) based on weighted sum of the analysed columns row.
+
+### Implementation
+
+
+
+### Findings
+
+Finding candidates for column concatinations originally involved looking at the descriptions of the columns.
+One candidates that stood out were the columns 'Hepatitis B' , 'Polio' and 'Diphtheria' all having a minimum value of around 1-3 and a maximum value of 99.
+This means that there is a high likelyhood of this data is correlated.
+The meta-data gathered from concatinating these columns returns the values of:
+
+```
+The first principal component (PC1) explains 69.48% of the variance within these columns.
+       feature   loading
+0  Hepatitis B  0.263158
+1  Diphtheria   0.381350
+2        Polio  0.355491
+```
+
+Based on these values we get a weight values for the first PC column of around 0.25 to 0.4, which roughly makes sense. Most of them ringe around the value of ```0.33``` which should make sense for correlated variables.
+Secondly we also get an explained variance of 69.48% for the first column. Which is high showing a strong correlation between each column.
+However not high enough to where you could safely concat them with no pratical dataloss.
+
+In our case since we aren't as much intrested in the which deceases are the biggest contributors to life expecency. We decided to concat the columns, perhaps with the ability to do further analysis on which vaccine is best for life expectancy.
+The reason for ommiting this analysis point is that the variance between them is to similar in this dataset so we dont belive the time is at the given moment best spent there.
+
+Other columns concatination candiates are way more clear cut when it came to whether or not to concatinate them:
+
+```
+The first principal component (PC1) explains 99.83% of the variance within these columns.
+PCA loadings, weighted (squared for component contribution):
+              feature  loading
+0  under-five deaths       0.5
+1       infant deaths      0.5
+```
+and
+```
+The first principal component (PC1) explains 97.00% of the variance within these columns.
+PCA loadings, weighted (squared for component contribution):
+                 feature  loading
+0   thinness  1-19 years      0.5
+1     thinness 5-9 years      0.5
+```
+
+The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.83% that they might aswell mean the same thing.
+A second easy candidate for concatination is "thinnness 1-19 years" and "thinness 5-9 years" since one is a subset of the other concatinating them makes sense from a data reduction perspective, the explained variance of 97%.
+
+## General Principle Component Analysis
+
+Performing a general principle component analysis on the reduced data signficantly reduces the amount of noise in our principle components aswell as our initial principle components, this eases the readability of PC analysis.
+Our underlying goal of performing a PCA is to figure out if there is some underlying correlation between the variables
+
+The full PCA for the dataset
+```
+	feature	PC1	PC2	PC3	PC4	PC5
+0	life_expectancy	0.361855	0.130614	-0.228990	0.023706	-0.007008
+1	adult_mortality	-0.309021	-0.179180	0.388777	0.001862	-0.167414
+2	alcohol	0.257201	0.039492	0.360851	0.243854	-0.042597	0.247928
+3	percentage_expenditure	0.281612	0.112948	0.322523	-0.452369	0.325435
+4	measles	-0.132957	0.442035	0.106486	0.104698	0.023987	0.656015
+5	bmi	0.329641	-0.034862	-0.096278	0.285799	-0.211092	-0.013664
+6	total_expenditure	0.172507	-0.096567	0.291616	0.562497	0.591793
+7	hiv/aids	-0.179048	-0.167945	0.599997	0.013996	-0.341367
+8	gdp	0.298375	0.120481	0.259397	-0.474694	0.198554	0.015851
+9	population	-0.090882	0.546238	0.048160	0.160008	-0.085112
+10	income_composition_of_resources	0.343011	0.134960	0.058061
+11	schooling	0.343628	0.094620	0.113897	0.051756	-0.376017
+12	Immunisation	-0.157956	0.557837	0.100588	0.145554	0.031030
+13	Child Thinness	-0.286315	0.226130	-0.021637	-0.219200	0.055522
+
+Explained variance
+  0.43486117 0.17509572 0.10366902 0.07807773 0.04615732
+```
+NOTE: Only the top 5 PCs are included in this report for brevity. 
+
+If we look at each of the significant PC we can see they explain certain concepts often found in developed countries.
+
+For example PC1 weighs life_expectancy, schooling, income_composition_of_resources and bmi highly and negative loadins such as adult_mortality and Child Thinness.
+Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense.
+
+
+
+
+
+
+TODO: describe PC from broad PCA

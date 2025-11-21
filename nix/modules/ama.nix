@@ -34,10 +34,10 @@
       };
       "ama" =
         let
-          WorkingDirectory = "/root/uni_services/ama/";
+          WorkingDirectory = "/var/www/ama/";
         in
         {
-          description = "Service for hosting the applied multivariate analysis streamlit app";
+          description = "Service for hosting the applied multivariate analysis quarto page";
           script = ''
             mkdir -p ${WorkingDirectory};
             ${pkgs.nix}/bin/nix run "git+ssh://gitlab.lrz.de/XXXXXXXXXXXXXXXXXXXXXXX"
