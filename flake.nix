@@ -96,7 +96,11 @@
           cd submission
           export HOME=$(mktemp -d)
           export QUARTO_PYTHON="${pythonEnv}/bin/python"
-          ${pkgs.quarto}/bin/quarto render --output-dir  $out/var/www/ama/
+
+          mkdir -p $out/var/www/ama/
+          ${pkgs.quarto}/bin/quarto render .
+          mv _site $out/var/www/ama/
+          find $out/var/www/ama/
         '';
       };
     in
