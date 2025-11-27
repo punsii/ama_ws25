@@ -22,7 +22,7 @@ So the process we went with for data concatination was as follows:
 
 ### Implementation
 
-
+TODO: write when final solution is made !!!
 
 ### Findings
 
@@ -85,7 +85,7 @@ The full PCA for the dataset
 7	hiv/aids	-0.179048	-0.167945	0.599997	0.013996	-0.341367
 8	gdp	0.298375	0.120481	0.259397	-0.474694	0.198554	0.015851
 9	population	-0.090882	0.546238	0.048160	0.160008	-0.085112
-10	income_composition_of_resources	0.343011	0.134960	0.058061
+10	income_composition_of_resources	0.343011	0.134960	0.058061	-0.056920	-0.400266
 11	schooling	0.343628	0.094620	0.113897	0.051756	-0.376017
 12	Immunisation	-0.157956	0.557837	0.100588	0.145554	0.031030
 13	Child Thinness	-0.286315	0.226130	-0.021637	-0.219200	0.055522
@@ -97,8 +97,12 @@ NOTE: Only the top 5 PCs are included in this report for brevity.
 
 If we look at each of the significant PC we can see they explain certain concepts often found in developed countries.
 
-For example PC1 weighs life_expectancy, schooling, income_composition_of_resources and bmi highly and negative loadins such as adult_mortality and Child Thinness.
-Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense.
+For example PC1 weighs life_expectancy highly schooling, income_composition_of_resources and bmi highly and negative loading such as adult_mortality and Child Thinness.
+Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense. If we were to give this principle component a name we could call it **Development** and that it is relates significantly with **life expectancy**. It is the principle component with the highest life expectency weight (+0.36). 
+
+PC2 has a significantly smaller explained variance of 17% and weighs Immunisation, measels cases and population highly and adult mortality and AIDS deaths negatively. The columns does weigh things inversely to what you would expect. Immunisation is weighted highly and Measels cases are also weighed highly. This suggest the PC represent something like **Population and Decease surveylance** with tihs PC having a small positive weight (+0.13).
+
+PC3 has similar variance as PC2 with a variance of 10% and weighs HIV/AIDS deaths, adult mortality, alcohol highly and weighs population and income composition neutrally, this PC doesn't have strong negative weights except for our **life expectency** with a significant negative weight of (-0.25)
 
 
 
