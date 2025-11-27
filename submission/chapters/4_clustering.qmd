@@ -8,44 +8,71 @@ format:
 # Clustering
 
 ```{python}
-#| label: fig-polar
+## | label: clustering-imports
 #| fig-cap: "A line plot on a polar axis"
+#| include: false
+from IPython.display import display, Math, Latex
+from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_samples, silhouette_score
+from sklearn.preprocessing import StandardScaler
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
 
-r = np.arange(0, 2, 0.01)
-theta = 2 * np.pi * r
-fig, ax = plt.subplots(
-  subplot_kw = {'projection': 'polar'} 
-)
-ax.plot(theta, r)
-# ax.set_rticks([0.5, 1, 1.5, 2])
-ax.grid(True)
-plt.show()
+import ama_tlbx.plotting as plotting
+import ama_tlbx.data as data
+import ama_tlbx.analysis as analysis
 ```
+
 
 ```{python}
 #| label: fig-test
 #| fig-cap: "A line plot on a polar axis"
-#| include: false
 
+dataset = data.LifeExpectancyDataset.from_csv("../../_data/life_expectancy_data.csv")
+df = dataset.df_standardized
+print(df)
 
-print("asdf")
-x = "XXXXXXXXXXXX"
-```
+kmeans_4 = KMeans(n_clusters=4, n_init=25)
+print(type(df))
+kmeans_4.fit(df)
 
-```{python}
-#| label: fig-test2
-#| fig-cap: "A line plot on a polar axis"
-print(x)
-```
+pca = PCA(n_components=2) # 2-D visualization
+pca_fit = pca.fit_transform(df)
+# Create a DataFrame for PCA results (i.e. score-vector of datapoints w.r.t principal components)
+pca_df = pd.DataFrame(pca_fit, columns=['PC1', 'PC2'], index=df.index)
 
-```{python}
-#| label: fig-line-plot
-#| fig-cap: "A line plot "
+pca_df['Cluster_4means'] = kmeans_4.labels_
 
-import matplotlib.pyplot as plt
-plt.plot([1,23,2,4])
+# Biplot Visualization
+plt.figure(figsize=(15, 10))
+
+# Plot datapoints with different colors for different clusters
+clusters = np.unique(pca_df['Cluster_4means'])
+colors = plt.get_cmap('viridis', len(clusters))
+
+for cluster in clusters:
+    cluster_data = pca_df[pca_df['Cluster_4means'] == cluster]
+    plt.scatter(cluster_data['PC1'], cluster_data['PC2'], color=colors(cluster), label=f'Cluster {cluster}')
+
+# Plot cluster centroids
+centroids = pd.DataFrame(kmeans_4.cluster_centers_, columns=df.columns)
+centroids_pca=pca.transform(centroids)
+plt.scatter(centroids_pca[:, 0], centroids_pca[:, 1], s=100, c='black', marker='X', label='Centroids')
+
+# Plot arrows for principal components
+for i, var in enumerate(dataset.feature_columns()):
+    plt.arrow(0, 0, pca.components_[0, i], pca.components_[1, i], color='r', alpha=0.5, head_width=0.05, head_length=0.1)
+    plt.text(pca.components_[0, i] * 1.15, pca.components_[1, i] * 1.15, var, color='r', fontsize=8)
+
+plt.xlabel('PC1')
+plt.ylabel('PC2')
+plt.title('Biplot of the two biggest principal components')
+plt.grid(True)
+plt.legend()
 plt.show()
 ```
