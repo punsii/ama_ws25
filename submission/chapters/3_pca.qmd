@@ -112,7 +112,7 @@ column_concatinator.print_results()
 ```
 
 Based on these values we get a weight values for the first PC column of around 0.25 to 0.4, which roughly makes sense. Most of them ringe around the value of ```0.33``` which should make sense for correlated variables.
-Secondly we also get an explained variance of 69.48% for the first column. Which is high showing a strong correlation between each column.
+Secondly we also get an explained variance of 89% for the first column. Which is high showing a strong correlation between each column.
 However not high enough to where you could safely concat them with no pratical dataloss.
 
 In our case since we aren't as much intrested in the which deceases are the biggest contributors to life expecency. We decided to concat the columns, perhaps with the ability to do further analysis on which vaccine is best for life expectancy.
@@ -124,17 +124,17 @@ Other columns concatination candiates are way more clear cut when it came to whe
 #| label: pca-babydeath
 #| fig-cap: "Coefficients for Baby Deaths"
 
-column_concatinator3.print_results()
+column_concatinator2.print_results()
 ```
 and
 ```{python}
 #| label: pca-thinness
 #| fig-cap: "Coefficients for Thinness"
 
-column_concatinator2.print_results()
+column_concatinator3.print_results()
 ```
 
-The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.83% that they might aswell mean the same thing.
+The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.8% that they might aswell mean the same thing.
 A second easy candidate for concatination is "thinnness 1-19 years" and "thinness 5-9 years" since one is a subset of the other concatinating them makes sense from a data reduction perspective, the explained variance of 97%.
 
 ## General Principle Component Analysis
@@ -174,9 +174,3 @@ PC2 has a significantly smaller explained variance of 17% and weighs Immunisatio
 
 PC3 has similar variance as PC2 with a variance of 10% and weighs HIV/AIDS deaths, adult mortality, alcohol highly and weighs population and income composition neutrally, this PC doesn't have strong negative weights except for our **life expectency** with a significant negative weight of (-0.25)
 
-
-
-
-
-
-TODO: describe PC from broad PCA
