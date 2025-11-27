@@ -5,6 +5,78 @@ format:
     toc: true
 ---
 
+```{python}
+#| label: init
+#| fig-cap: "A line plot on a polar axis"
+#| include: false
+
+from pathlib import Path
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+
+# LOAD ALL PROCESSING CLASSES
+from ama_tlbx.data import LifeExpectancyDataset, LECol
+
+from ama_tlbx.analysis import (
+    IQROutlierDetector,
+    IsolationForestOutlierDetector,
+    ZScoreOutlierDetector,
+)
+from ama_tlbx.plotting import (
+    plot_correlation_heatmap,
+    plot_explained_variance,
+    plot_loadings_heatmap,
+    plot_target_correlations,
+    plot_top_correlated_pairs,
+)
+
+
+
+dataset = LifeExpectancyDataset.from_csv(
+    "../../_data/life_expectancy_data.csv"
+)
+
+dataset.df
+
+
+from ama_tlbx.analysis import (
+    ColumnConcatenator,
+)
+
+column_concatinator = ColumnConcatenator(dataset)
+dataset2 = column_concatinator.concatenate(
+    columns=[
+    LECol.HEPATITIS_B,
+    LECol.POLIO,
+    LECol.DIPHTHERIA,
+    ],
+    new_column_name="Immunisation"
+)
+
+column_concatinator2 = ColumnConcatenator(dataset2)
+dataset3 = column_concatinator2.concatenate(
+    columns=[
+    LECol.THINNESS_1_19_YEARS,
+    LECol.THINNESS_5_9_YEARS,
+    ],
+    new_column_name="Child Thinness"
+)
+
+column_concatinator3 = ColumnConcatenator(dataset3)
+dataset4 = column_concatinator3.concatenate(
+    columns=[
+    LECol.INFANT_DEATHS,
+    LECol.UNDER_FIVE_DEATHS,
+    ],
+    new_column_name="Baby Deaths"
+)
+```
+
+
 ## Dimensionality reduction
 
 Performing analysis on large invaried data often leads to significant noise, unwanted or unneeded data in further analysis.
@@ -31,12 +103,12 @@ One candidates that stood out were the columns 'Hepatitis B' , 'Polio' and 'Diph
 This means that there is a high likelyhood of this data is correlated.
 The meta-data gathered from concatinating these columns returns the values of:
 
-```
-The first principal component (PC1) explains 69.48% of the variance within these columns.
-       feature   loading
-0  Hepatitis B  0.263158
-1  Diphtheria   0.381350
-2        Polio  0.355491
+
+```{python}
+#| label: pca-immune
+#| fig-cap: "Immunisation Coefficients"
+
+column_concatinator.print_results()
 ```
 
 Based on these values we get a weight values for the first PC column of around 0.25 to 0.4, which roughly makes sense. Most of them ringe around the value of ```0.33``` which should make sense for correlated variables.
@@ -48,20 +120,18 @@ The reason for ommiting this analysis point is that the variance between them is
 
 Other columns concatination candiates are way more clear cut when it came to whether or not to concatinate them:
 
-```
-The first principal component (PC1) explains 99.83% of the variance within these columns.
-PCA loadings, weighted (squared for component contribution):
-              feature  loading
-0  under-five deaths       0.5
-1       infant deaths      0.5
+```{python}
+#| label: pca-babydeath
+#| fig-cap: "Coefficients for Baby Deaths"
+
+column_concatinator3.print_results()
 ```
 and
-```
-The first principal component (PC1) explains 97.00% of the variance within these columns.
-PCA loadings, weighted (squared for component contribution):
-                 feature  loading
-0   thinness  1-19 years      0.5
-1     thinness 5-9 years      0.5
+```{python}
+#| label: pca-thinness
+#| fig-cap: "Coefficients for Thinness"
+
+column_concatinator2.print_results()
 ```
 
 The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.83% that they might aswell mean the same thing.

@@ -1,8 +1,9 @@
 """Column Concatenation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
+from ama_tlbx.data.base_dataset import BaseDataset
 import pandas as pd
 from sklearn.decomposition import PCA
 
@@ -13,21 +14,30 @@ from ama_tlbx.data.views import DatasetView
 class ColumnConcatenator:
     """Utility for concatenating multiple columns into a single column."""
 
-    view: DatasetView
+    dataset: BaseDataset
+    explained_variance: float = 0.0
+    loadings: pd.DataFrame = field(default_factory=pd.DataFrame)
 
-    def __init__(self, view: DatasetView):
+    def __init__(self, dataset: BaseDataset):
         """Initialize the Column Concatenator."""
-        self.view = view
+        self.dataset = dataset
+
+    def print_results(self) -> None:
+        """Print the explained variance of the last PCA operation."""
+        print(f"The first principal component  explains {self.explained_variance:.2f}% of the variance within these columns.")
+
+        print("PCA loadings, weighted (squared for component contribution):")
+        print(self.loadings)
 
     def concatenate(
         self,
         columns: list[str],
         new_column_name: str,
-    ) -> pd.DataFrame:
+    ) -> BaseDataset:
         # copy the underlying DataFrame from the provided view and return after
         # concatenation. Use `self.view` (the dataclass field) rather than
         # an underscore-prefixed attribute which doesn't exist.
-        df = self.view.data.copy()
+        df = self.dataset.df.copy()
 
         # Separate the columns to be concatenated and those to remain
         only_columns = df[columns]
@@ -48,10 +58,13 @@ class ColumnConcatenator:
 
         # raise loadings to the power of 2 to get normalised importance
         loadings["loading"] **= 2
+        self.loadings = loadings
 
         # Construct a weighted sum using the squared loadings.
         # - `loadings` has columns ['feature', 'loading']
         weights = loadings.set_index("feature")["loading"]
+
+        self.explained_variance = pc.explained_variance_ratio_[0] * 100 # Convert to percentage
 
         available = [f for f in weights.index if f in only_columns.columns]
         if len(available) == 0:
@@ -63,6 +76,9 @@ class ColumnConcatenator:
 
         # Perform weighted sum
         weighted_series = selected.mul(weights.loc[available], axis=1).sum(axis=1)
-
         only_not_columns[new_column_name] = weighted_series
-        return only_not_columns
+
+        # Return a new dataset instance containing the modified DataFrame. We avoid
+        # mutating the original dataset and instead use BaseDataset.with_df which by
+        # default constructs a new instance of the same concrete class.
+        return self.dataset.with_df(only_not_columns)
