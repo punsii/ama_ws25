@@ -94,7 +94,58 @@ So the process we went with for data concatination was as follows:
 
 ### Implementation
 
-TODO: write when final solution is made !!!
+The implementation for the PCA concatination follows the methodology outlined in the Section above. It operates by taking a dataframe, a list of columns and returns a modified Dataset with the old columns removed 
+```{python}
+def concatenate(
+        self,
+        columns: list[str],
+        new_column_name: str,
+    ) -> BaseDataset:
+```
+
+The function starts with getting the columns and performing a PCA to get the loadings. 
+```{python}
+        df = self.dataset.df.copy()
+
+        only_columns = df[columns]
+        only_not_columns = df.drop(columns=columns)
+
+        pca = PCA(n_components=1)
+        pc = pca.fit(only_columns)
+
+        loadings = (
+            pd.DataFrame(pc.components_.T, index=only_columns.columns, columns=["loading"]) 
+            .reset_index()
+            .rename(columns={"index": "feature"})
+        )
+```
+
+The way PCA loadings work is that the sum of all loadings squared add up to 1. We can use this advantagously to get each columns contributon to the principle component. For this analysis we opted to keep only one Principle Component, mostly due to explainability.
+
+$$ w_i = l_i^2 $$
+
+Then at the end you can merge the new cell that has the loadings into the datafram that has the old cells removed. 
+```{python}
+
+        loadings["loading"] **= 2
+        self.loadings = loadings
+
+        weights = loadings.set_index("feature")["loading"]
+
+        self.explained_variance = pc.explained_variance_ratio_[0] * 100
+
+        available = [f for f in weights.index if f in only_columns.columns]
+        if len(available) == 0:
+            raise ValueError("None of the PCA features are present in the DataFrame columns")
+
+        selected = only_columns[available].fillna(0)
+
+        weighted_series = selected.mul(weights.loc[available], axis=1).sum(axis=1)
+        only_not_columns[new_column_name] = weighted_series
+
+        return self.dataset.with_df(only_not_columns)
+
+```
 
 ### Findings
 
