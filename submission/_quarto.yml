@@ -23,6 +23,8 @@ website:
             text: Principal Component Analysis
           - href: chapters/4_clustering.qmd
             text: Clustering
+          - href: chapters/5_regression.qmd
+            text: Regression Analysis
 
 # Python configuration - use the ama_tlbx virtual environment
 # set QUARTO_PYTHON environment variable to e.g. "../ama_tlbx/.venv/bin/python"
