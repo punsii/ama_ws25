@@ -33,7 +33,7 @@ import ama_tlbx.analysis as analysis
 #| label: fig-test
 #| fig-cap: "A line plot on a polar axis"
 
-dataset = data.LifeExpectancyDataset.from_csv("../../_data/life_expectancy_data.csv")
+dataset = data.LifeExpectancyDataset.from_csv(csv_path="../../_data/life_expectancy_data.csv")
 df = dataset.df_standardized
 print(df)
 
