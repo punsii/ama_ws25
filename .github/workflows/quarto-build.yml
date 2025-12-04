@@ -23,7 +23,7 @@ jobs:
       - name: Setup Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:
-          version: 'latest'
+          version: 'release'
 
       - name: Verify Quarto
         run: quarto --version
@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           export QUARTO_PYTHON=$(python -c 'import sys; print(sys.executable)')
-          quarto render ./submission/
+          quarto render ./submission/ --execute
 
       - name: Deploy to GitHub Pages
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -67,4 +67,4 @@ jobs:
         run: |
           $env:QUARTO_PYTHON = (python -c "import sys; print(sys.executable)")
           Set-Location ${{ github.workspace }}
-          quarto render .\submission\
+          quarto render .\submission\ --execute
