@@ -91,8 +91,8 @@ class LifeExpectancyDataset(BaseDataset):
                 agg_by=2007 if aggregate_by_country is True else aggregate_by_country,
             )
             le_df.index.name = Col.COUNTRY
-        else:
-            le_df = cls._resolve_missing_predictors(le_df, strategy=resolve_nand_pred)
+
+        le_df = cls._resolve_missing_predictors(le_df, strategy=resolve_nand_pred)
 
         return cls(df=le_df)
 
