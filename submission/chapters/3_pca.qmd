@@ -37,7 +37,7 @@ from ama_tlbx.plotting import (
 
 
 dataset = LifeExpectancyDataset.from_csv(
-    "../../_data/life_expectancy_data.csv"
+    csv_path="../../_data/life_expectancy_data.csv"
 )
 
 dataset.df
