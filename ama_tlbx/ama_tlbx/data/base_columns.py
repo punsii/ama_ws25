@@ -1,7 +1,15 @@
 """Base column definitions and metadata structures."""
 
+from __future__ import annotations
+
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from pandas import Series
 
 
 @dataclass(frozen=True)
@@ -12,6 +20,7 @@ class ColumnMetadata:
         cleaned_name: Standardized column name used in DataFrames.
         dtype: Expected Python/pandas data type as a string.
         pretty_name: Human-readable name for use in plots and visualizations.
+        transform: Optional callable to transform the raw Series (e.g., log1p).
     """
 
     original_name: str
@@ -19,6 +28,7 @@ class ColumnMetadata:
     cleaned_name: str
     dtype: str
     pretty_name: str
+    transform: Callable[[Series], Series] | None = None
 
 
 class BaseColumn(StrEnum):
@@ -99,3 +109,8 @@ class BaseColumn(StrEnum):
     def dtype_name(self) -> str:
         """Get the expected data type as a string."""
         return self.metadata().dtype
+
+    @property
+    def transform(self) -> Callable[[Series], Series] | None:
+        """Get the optional transformation function for this column."""
+        return self.metadata().transform

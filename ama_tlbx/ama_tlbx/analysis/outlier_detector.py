@@ -1,25 +1,34 @@
-"""Outlier detection strategies operating."""
+"""Outlier detection strategies following the analyzer pattern."""
 
-from abc import ABC, abstractmethod
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
+from ama_tlbx.data.views import DatasetView
 
-class OutlierDetector(ABC):
-    """Abstract base class for vectorized outlier detection strategies."""
-
-    @abstractmethod
-    def detect(self, data: pd.DataFrame, columns: Iterable[str] | None = None) -> pd.DataFrame:
-        """Return boolean mask highlighting outliers."""
+from .base_analyser import BaseAnalyser
 
 
-# TODO: all outlier detector datasets must return multi index dfs that contain the naked boolean values per entrie and also relevant statistics that have been computed along the way!
-@dataclass
-class IQROutlierDetector(OutlierDetector):
+@dataclass(frozen=True)
+class OutlierDetectionResult:
+    """Container for outlier detection results.
+
+    Attributes:
+        outlier_mask: Boolean DataFrame; rows = dataset index, columns = analyzed numeric features.
+        n_outliers_per_column: Series counting True values per feature (index = feature).
+        n_outliers_per_row: Series counting True values per row (index = dataset index).
+        pretty_names: Optional mapping of column names to display labels.
+    """
+
+    outlier_mask: pd.DataFrame
+    n_outliers_per_column: pd.Series
+    n_outliers_per_row: pd.Series
+    pretty_names: dict[str, str] | None = None
+
+
+class IQROutlierDetector(BaseAnalyser):
     r"""Detect outliers via the interquartile range rule.
 
     Points outside :math:`[Q_1 - k\cdot IQR,\, Q_3 + k\cdot IQR]` are considered outliers. :math:`IQR=Q3.-Q1`
@@ -32,23 +41,65 @@ class IQROutlierDetector(OutlierDetector):
 
     Attributes:
         threshold: Multiplier ``k`` applied to the IQR when computing the fences.
+            Default is 1.5 according to Tukey's rule. 5-10% of data points are typically flagged as outliers.
+
+    Example:
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> ds = LifeExpectancyDataset.from_csv()
+        >>> detector = ds.make_iqr_outlier_detector(threshold=1.5)
+        >>> result = detector.fit().result()
+        >>> result.outlier_mask.head()
     """
 
-    threshold: float = 1.5
-    """default is 1.5 according to Tukey's rule. 5-10% of data points are typically flagged as outliers [[Wiki]](https://en.wikipedia.org/wiki/Outlier)."""
+    def __init__(self, view: DatasetView, threshold: float = 1.5) -> None:
+        """Initialize IQR outlier detector.
 
-    def detect(self, data: pd.DataFrame, columns: Iterable[str] | None = None) -> pd.DataFrame:
-        selected = data.loc[:, list(columns) if columns is not None else data.columns]
+        Args:
+            view: Immutable dataset view to analyze
+            threshold: IQR multiplier for fence calculation (default: 1.5)
+        """
+        self._view = view
+        self.threshold = threshold
+        self._fitted = False
+        self._outlier_mask: pd.DataFrame | None = None
+
+    def fit(self) -> "IQROutlierDetector":
+        """Detect outliers using IQR method.
+
+        Returns:
+            Self for method chaining.
+        """
+        selected = self._view.df.loc[:, self._view.numeric_cols]
         q1 = selected.quantile(0.25)
         q3 = selected.quantile(0.75)
         iqr = q3 - q1
         lower = q1 - self.threshold * iqr
         upper = q3 + self.threshold * iqr
-        return selected.lt(lower) | selected.gt(upper)
+        self._outlier_mask = selected.lt(lower) | selected.gt(upper)
+        self._fitted = True
+        return self
+
+    def result(self) -> OutlierDetectionResult:
+        """Return outlier detection results.
+
+        Returns:
+            OutlierDetectionResult containing outlier mask and statistics.
+
+        Raises:
+            ValueError: If fit() has not been called yet.
+        """
+        if not self._fitted or self._outlier_mask is None:
+            raise ValueError("Must call fit() before result()")
+
+        return OutlierDetectionResult(
+            outlier_mask=self._outlier_mask,
+            n_outliers_per_column=self._outlier_mask.sum(),
+            n_outliers_per_row=self._outlier_mask.sum(axis=1),
+            pretty_names=dict(self._view.pretty_by_col),
+        )
 
 
-@dataclass
-class ZScoreOutlierDetector(OutlierDetector):
+class ZScoreOutlierDetector(BaseAnalyser):
     r"""Detect outliers using Z-scores.
 
     Values whose standardized score exceeds ``threshold`` are considered outliers.
@@ -60,24 +111,63 @@ class ZScoreOutlierDetector(OutlierDetector):
         See [Wikipedia :: Standard score](https://en.wikipedia.org/wiki/Standard_score) for details.
 
     Attributes:
-        threshold: Absolute z-score limit used to flag observations.
+        threshold: Absolute z-score limit used to flag observations (default: 3.0).
+
+    Example:
+        >>> from ama_tlbx.data.life_expectancy_dataset import LifeExpectancyDataset
+        >>> ds = LifeExpectancyDataset.from_csv()
+        >>> detector = ds.make_zscore_outlier_detector(threshold=3.0)
+        >>> result = detector.fit().result()
+        >>> result.n_outliers_per_column.sort_values(ascending=False).head()
     """
 
-    threshold: float = 3.0
+    def __init__(self, view: DatasetView, threshold: float = 3.0) -> None:
+        """Initialize Z-score outlier detector.
 
-    def detect(self, data: pd.DataFrame, columns: Iterable[str] | None = None) -> pd.DataFrame:
-        r"""Detect outliers in the specified columns of the input DataFrame. Resulting dataframe will contain boolean values indicating outliers. A data point is considered an outlier if its absolute z-score exceeds the defined threshold.
+        Args:
+            view: Immutable dataset view to analyze
+            threshold: Z-score threshold for outlier detection (default: 3.0)
+        """
+        self._view = view
+        self.threshold = threshold
+        self._fitted = False
+        self._outlier_mask: pd.DataFrame | None = None
+
+    def fit(self) -> "ZScoreOutlierDetector":
+        r"""Detect outliers using Z-score method.
+
+        A data point is considered an outlier if its absolute z-score exceeds the threshold:
+        :math:`\mathbb{1}(|X - \mu| / \sigma > k)`
 
         Returns:
-            pd.DataFrame(dtypes: bool): df with same shape as data[selected], where df.loc[...] = True if :math`\mathbb{1}(df |X - E[X]| / SD(X) > k)`
+            Self for method chaining.
         """
-        selected = data.loc[:, list(columns) if columns is not None else data.columns]
+        selected = self._view.df.loc[:, self._view.numeric_cols]
+        self._outlier_mask = selected.sub(selected.mean()).div(selected.std()).abs().gt(self.threshold)
+        self._fitted = True
+        return self
 
-        return selected.sub(selected.mean()).div(selected.std()).abs().gt(self.threshold)
+    def result(self) -> OutlierDetectionResult:
+        """Return outlier detection results.
+
+        Returns:
+            OutlierDetectionResult containing outlier mask and statistics.
+
+        Raises:
+            ValueError: If fit() has not been called yet.
+        """
+        if not self._fitted or self._outlier_mask is None:
+            raise ValueError("Must call fit() before result()")
+
+        return OutlierDetectionResult(
+            outlier_mask=self._outlier_mask,
+            n_outliers_per_column=self._outlier_mask.sum(),
+            n_outliers_per_row=self._outlier_mask.sum(axis=1),
+            pretty_names=dict(self._view.pretty_by_col),
+        )
 
 
-@dataclass
-class IsolationForestOutlierDetector(OutlierDetector):
+class IsolationForestOutlierDetector(BaseAnalyser):
     """Detect row-wise outliers (=: anomalies) using scikit-learn's IsolationForest.
 
     Theory:
@@ -93,19 +183,48 @@ class IsolationForestOutlierDetector(OutlierDetector):
         -  Assumes anomalies are rare and differ markedly from normal data; such points can be isolated with fewer random splits.
         - Effective for large, multivariate datasets without strong priors.
 
-
     Attributes:
-        contamination: Expected proportion of outliers in the dataset.
+        contamination: Expected proportion of outliers in the dataset (default: "auto").
         random_state: Optional random seed for reproducible tree ensembles.
-        n_estimators: Number of isolation trees fitted in the ensemble.
+        n_estimators: Number of isolation trees fitted in the ensemble (default: 100).
+
+    Example:
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> ds = LifeExpectancyDataset.from_csv()
+        >>> detector = ds.make_isolation_forest_outlier_detector(contamination=0.05, random_state=42)
+        >>> result = detector.fit().result()
+        >>> result.n_outliers_per_row.head()
     """
 
-    contamination: float | str = "auto"
-    random_state: int | None = None
-    n_estimators: int = 100
+    def __init__(
+        self,
+        view: DatasetView,
+        contamination: float | str = "auto",
+        random_state: int | None = None,
+        n_estimators: int = 100,
+    ) -> None:
+        """Initialize Isolation Forest outlier detector.
 
-    def detect(self, data: pd.DataFrame, columns: Iterable[str] | None = None) -> pd.DataFrame:
-        selected = data.loc[:, list(columns) if columns is not None else data.columns]
+        Args:
+            view: Immutable dataset view to analyze
+            contamination: Expected proportion of outliers (default: "auto")
+            random_state: Random seed for reproducibility (default: None)
+            n_estimators: Number of trees in the forest (default: 100)
+        """
+        self._view = view
+        self.contamination = contamination
+        self.random_state = random_state
+        self.n_estimators = n_estimators
+        self._fitted = False
+        self._outlier_mask: pd.DataFrame | None = None
+
+    def fit(self) -> "IsolationForestOutlierDetector":
+        """Detect outliers using Isolation Forest method.
+
+        Returns:
+            Self for method chaining.
+        """
+        selected = self._view.df.loc[:, self._view.numeric_cols]
         model = IsolationForest(
             contamination=self.contamination,
             random_state=self.random_state,
@@ -114,4 +233,25 @@ class IsolationForestOutlierDetector(OutlierDetector):
         model.fit(selected)
         row_outliers = pd.Series(model.predict(selected) == -1, index=selected.index)
         mask = np.repeat(row_outliers.to_numpy()[:, None], selected.shape[1], axis=1)
-        return pd.DataFrame(mask, index=selected.index, columns=selected.columns)
+        self._outlier_mask = pd.DataFrame(mask, index=selected.index, columns=selected.columns)
+        self._fitted = True
+        return self
+
+    def result(self) -> OutlierDetectionResult:
+        """Return outlier detection results.
+
+        Returns:
+            OutlierDetectionResult containing outlier mask and statistics.
+
+        Raises:
+            ValueError: If fit() has not been called yet.
+        """
+        if not self._fitted or self._outlier_mask is None:
+            raise ValueError("Must call fit() before result()")
+
+        return OutlierDetectionResult(
+            outlier_mask=self._outlier_mask,
+            n_outliers_per_column=self._outlier_mask.sum(),
+            n_outliers_per_row=self._outlier_mask.sum(axis=1),
+            pretty_names=dict(self._view.pretty_by_col),
+        )

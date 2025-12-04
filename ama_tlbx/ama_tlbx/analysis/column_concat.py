@@ -1,18 +1,26 @@
 """Column Concatenation."""
 
-from dataclasses import dataclass, field
-from typing import Literal
+from dataclasses import dataclass
 
-from ama_tlbx.data.base_dataset import BaseDataset
 import pandas as pd
 from sklearn.decomposition import PCA
 
+from ama_tlbx.data.base_dataset import BaseDataset
 from ama_tlbx.data.views import DatasetView
 
 
 @dataclass
 class ColumnConcatenator:
-    """Utility for concatenating multiple columns into a single column."""
+    """Utility for concatenating multiple columns into a single column.
+
+    Example:
+        >>> from ama_tlbx.data import LifeExpectancyDataset
+        >>> from ama_tlbx.analysis.column_concat import ColumnConcatenator
+        >>> dataset = LifeExpectancyDataset.from_csv()
+        >>> view = dataset.analyzer_view(standardized=False)
+        >>> cc = ColumnConcatenator(view)
+        >>> combined_view = cc.concatenate(["polio", "diphtheria"], new_column_name="immunization_mean")
+    """
 
     dataset: BaseDataset
     explained_variance: float = 0.0
@@ -24,7 +32,9 @@ class ColumnConcatenator:
 
     def print_results(self) -> None:
         """Print the explained variance of the last PCA operation."""
-        print(f"The first principal component  explains {self.explained_variance:.2f}% of the variance within these columns.")
+        print(
+            f"The first principal component  explains {self.explained_variance:.2f}% of the variance within these columns."
+        )
 
         print("PCA loadings, weighted (squared for component contribution):")
         print(self.loadings)
@@ -64,7 +74,7 @@ class ColumnConcatenator:
         # - `loadings` has columns ['feature', 'loading']
         weights = loadings.set_index("feature")["loading"]
 
-        self.explained_variance = pc.explained_variance_ratio_[0] * 100 # Convert to percentage
+        self.explained_variance = pc.explained_variance_ratio_[0] * 100  # Convert to percentage
 
         available = [f for f in weights.index if f in only_columns.columns]
         if len(available) == 0:

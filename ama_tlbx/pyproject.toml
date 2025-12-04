@@ -6,13 +6,15 @@ readme = "README.md"
 authors = [{ name = "Jan Duchscherer", email = "duchsche@hm.edu" }]
 requires-python = ">=3.13"
 dependencies = [
-    "matplotlib>=3.10.5",
-    "numpy>=2.3.3",
-    "pandas>=2.3.1",
-    "pytest>=8.4.2",
-    "scikit-learn>=1.7.1",
-    "scipy>=1.16.2",
+    "devtools>=0.12.2",
+    "matplotlib>=3.10.7",
+    "numpy>=2.3.5",
+    "pandas>=2.3.3",
+    "plotly>=6.5.0",
+    "scikit-learn>=1.7.2",
+    "scipy>=1.16.3",
     "seaborn>=0.13.2",
+    "statsmodels>=0.14.5",
     "sympy>=1.14.0",
 ]
 
@@ -23,7 +25,7 @@ dependencies = [
         "mypy>=1.5.0",
         "pandas-stubs>=2.0.0",
         "types-seaborn>=0.12.0",
-        "ruff>=0.8.0",
+        "ruff>=0.14.3",
     ]
     docs = ["pdoc>=15.0.4", "nbformat>=5.10.0"]
     notebook = [
@@ -147,6 +149,8 @@ packages = ["ama_tlbx"]
             "PGH003",  # allow non-descriptive type ignore
             "FBT001",
             "FBT002",
+            "FIX002",  # Allow TODO comments in code (with proper author and issue links)
+            "C417",    # Allow usage of map and filter instead of comprehensions
         ]
 
         # Allow autofix for all enabled rules
@@ -179,3 +183,10 @@ packages = ["ama_tlbx"]
                 "E402",    # Allow imports not at top of file (lazy imports for circular dependency)
                 "PLC0415", # same as above
             ]
+            # Allow additional rules in life_expectancy_dataset
+            "ama_tlbx/data/life_expectancy_dataset.py" = [
+                "PLC0415", # Allow lazy imports for circular dependency
+            ]
+
+[dependency-groups]
+dev = ["sphinx>=8.2.3", "sphinx-autodoc-typehints>=3.5.2"]
