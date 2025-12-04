@@ -6,14 +6,17 @@ python.pkgs.buildPythonPackage {
   src = ../../ama_tlbx;
   # depenencies = [];
   propagatedBuildInputs = with python.pkgs; [
+    devtools
     hatchling
     matplotlib
     numpy
     pandas
+    plotly
     pytest
     scikit-learn
     scipy
     seaborn
+    statsmodels
     sympy
   ];
 }
