@@ -1,6 +1,6 @@
 """Column Concatenation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -33,7 +33,7 @@ class ColumnConcatenator:
     def print_results(self) -> None:
         """Print the explained variance of the last PCA operation."""
         print(
-            f"The first principal component  explains {self.explained_variance:.2f}% of the variance within these columns."
+            f"The first principal component  explains {self.explained_variance:.2f}% of the variance within these columns.",
         )
 
         print("PCA loadings, weighted (squared for component contribution):")
