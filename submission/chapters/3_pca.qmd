@@ -34,7 +34,9 @@ from ama_tlbx.plotting import (
 )
 
 
-dataset = LifeExpectancyDataset.from_csv(aggregate_by_country="mean")
+dataset = LifeExpectancyDataset.from_csv(
+    csv_path="../../_data/life_expectancy_data.csv"    
+,aggregate_by_country="mean")
 
 dataset.df
 
