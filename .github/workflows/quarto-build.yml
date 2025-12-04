@@ -7,7 +7,9 @@ on:
     branches: [ main ]
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
   quarto-render:
@@ -54,12 +56,11 @@ jobs:
           export QUARTO_PYTHON=$(python -c 'import sys; print(sys.executable)')
           quarto render ./submission/ --execute
 
-      - name: Deploy to GitHub Pages
-        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Upload Pages artifact
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./submission/_site
+          path: submission/_site
 
       - name: Render submission folder (Windows)
         if: matrix.os == 'windows-latest'
@@ -68,3 +69,16 @@ jobs:
           $env:QUARTO_PYTHON = (python -c "import sys; print(sys.executable)")
           Set-Location ${{ github.workspace }}
           quarto render .\submission\ --execute
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: quarto-render
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
