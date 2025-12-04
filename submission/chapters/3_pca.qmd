@@ -100,7 +100,7 @@ def concatenate(
 ```
 
 The function starts with getting the columns and performing a PCA to get the loadings.
-```{python}
+```python
         df = self.dataset.df.copy()
 
         only_columns = df[columns]
@@ -121,8 +121,7 @@ The way PCA loadings work is that the sum of all loadings squared add up to 1. W
 $$ w_i = l_i^2 $$
 
 Then at the end you can merge the new cell that has the loadings into the datafram that has the old cells removed.
-```{python}
-
+```python
         loadings["loading"] **= 2
         self.loadings = loadings
 
