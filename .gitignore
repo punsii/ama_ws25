@@ -52,8 +52,6 @@ pdoc
 *.bak
 *copy.ipynb
 
-# Lecture materials (if not needed in version control)
-lecture-matrerial/
 
 # OS files
 Thumbs.db

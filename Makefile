@@ -111,31 +111,11 @@ _check_python:
 context-package: _check_python ## 🗺️ Summarize symbols per module (classes/functions/constants)
 	@$(PYTHON_INTERPRETER) ama_tlbx/scripts/get_context.py packages --root ama_tlbx/ama_tlbx
 
-context-classes: _check_python ## 🗺️ List classes with docstrings (first paragraph)
-	@$(PYTHON_INTERPRETER) ama_tlbx/scripts/get_context.py classes --root ama_tlbx/ama_tlbx --max-doc 400
-
-context-classes-full-doc: _check_python ## 🗺️ List classes with full docstrings
+context-classes: _check_python ## 🗺️ List classes with full docstrings
+	echo "# Mermaid UML Diagram of the ama_tlbx:\n\`\`\`{mermaid}"
+	@$(PYTHON_INTERPRETER) -m syrenka classdiagram ama_tlbx/ama_tlbx
+	echo "\`\`\`\n---\n"
 	@$(PYTHON_INTERPRETER) ama_tlbx/scripts/get_context.py classes --root ama_tlbx/ama_tlbx --full-doc
-
-context-uml-package: _check_python ## 🗺️ Generate package-level UML (pyreverse) and print to stdout
-	@echo "Generating package diagram (pyreverse -> packages_ama_tlbx.puml) ..."
-	@pyreverse -o puml -p ama_tlbx ama_tlbx/ama_tlbx >/dev/null 2>&1 || true
-	@if [ -f packages_ama_tlbx.puml ]; then \
-			cat packages_ama_tlbx.puml; \
-			rm -f packages_ama_tlbx.puml; \
-	else \
-		echo "(pyreverse did not produce packages_ama_tlbx.puml — ensure pylint/pyreverse is installed)"; \
-	fi
-
-context-uml-classes: _check_python ## 🗺️ Generate class-level UML (pyreverse) and print to stdout
-	@echo "Generating class diagram (pyreverse -> classes_ama_tlbx.puml) ..."
-	@pyreverse -o puml -p ama_tlbx ama_tlbx/ama_tlbx >/dev/null 2>&1 || true
-	@if [ -f classes_ama_tlbx.puml ]; then \
-			cat classes_ama_tlbx.puml; \
-			rm -f classes_ama_tlbx.puml; \
-	else \
-		echo "(pyreverse did not produce classes_ama_tlbx.puml — ensure pylint/pyreverse is installed)"; \
-	fi
 
 context-dir-tree: _check_python ## 🗺️ Print directory tree for `ama_tlbx/ama_tlbx/` (ignore __pycache__)
 	@echo "Directory tree for ama_tlbx/ama_tlbx/:"
