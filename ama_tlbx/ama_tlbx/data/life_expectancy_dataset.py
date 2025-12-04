@@ -60,6 +60,7 @@ class LifeExpectancyDataset(BaseDataset):
         csv_path: str | Path | None = None,
         aggregate_by_country: bool | Literal["mean", 2014] = True,
         drop_missing_target: bool = True,
+        resolve_nand_pred: Literal["drop", "median"] = "drop",
     ) -> "LifeExpectancyDataset":
         """Load and preprocess the Life Expectancy dataset from a CSV file.
 
@@ -70,6 +71,9 @@ class LifeExpectancyDataset(BaseDataset):
             csv_path: Path to the CSV file
             aggregate_by_country: aggregate data by country (mean over years, label for other agg fn, or selected year) defaults to selecting year 2014 based on previous analysis.
             drop_missing_target: If True, drop rows with missing life expectancy values
+            resolve_nand_pred: Strategy for remaining NaNs in predictors when no aggregation is performed.
+                - "drop": drop rows with any missing predictor/target
+                - "median": median-impute numeric predictors, then drop residual NaNs
 
         Returns:
             LifeExpectancyDataset instance with loaded and cleaned data
@@ -87,6 +91,8 @@ class LifeExpectancyDataset(BaseDataset):
                 agg_by=2007 if aggregate_by_country is True else aggregate_by_country,
             )
             le_df.index.name = Col.COUNTRY
+        else:
+            le_df = cls._resolve_missing_predictors(le_df, strategy=resolve_nand_pred)
 
         return cls(df=le_df)
 
@@ -151,6 +157,35 @@ class LifeExpectancyDataset(BaseDataset):
         means = aggregated.loc[:, numeric_cols].mean()
         aggregated.loc[:, numeric_cols] = aggregated.loc[:, numeric_cols].fillna(means)
         return aggregated
+
+    @staticmethod
+    def _resolve_missing_predictors(
+        df: pd.DataFrame,
+        *,
+        strategy: Literal["drop", "median"],
+    ) -> pd.DataFrame:
+        """Handle missing predictor values when no country aggregation is used.
+
+        Args:
+            df: Input DataFrame.
+            strategy: ``"drop"`` to drop rows with any missing predictor/target,
+                ``"median"`` to median-impute numeric predictors then drop remaining NaNs.
+
+        Returns:
+            Cleaned DataFrame according to the chosen strategy.
+        """
+        identifier_cols = {Col.COUNTRY, Col.YEAR}
+        pred_cols = df.columns.difference(list(identifier_cols))
+
+        if strategy == "drop":
+            return df.dropna(subset=pred_cols)
+
+        numeric_cols = df.select_dtypes(include=["number"]).columns.difference(list(identifier_cols))
+        medians = df[numeric_cols].median()
+        imputed = df.copy()
+        imputed.loc[:, numeric_cols] = imputed.loc[:, numeric_cols].fillna(medians)
+        # Drop any rows still carrying NaNs (e.g., non-numeric leftovers)
+        return imputed.dropna(subset=pred_cols)
 
     @property
     def numeric_cols(self) -> pd.Index:
