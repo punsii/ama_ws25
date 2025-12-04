@@ -31,7 +31,9 @@ from ama_tlbx.plotting import (
     plot_loadings_heatmap,
     plot_target_correlations,
     plot_top_correlated_pairs,
+    plot_biplot_plotly,
 )
+
 
 
 dataset = LifeExpectancyDataset.from_csv(
@@ -72,6 +74,7 @@ dataset4 = column_concatinator3.concatenate(
     ],
     new_column_name="Baby Deaths",
 )
+concat_dataset = dataset4
 ```
 
 
@@ -190,35 +193,51 @@ A second easy candidate for concatination is "thinnness 1-19 years" and "thinnes
 Performing a general principle component analysis on the reduced data signficantly reduces the amount of noise in our principle components aswell as our initial principle components, this eases the readability of PC analysis.
 Our underlying goal of performing a PCA is to figure out if there is some underlying correlation between the variables
 
-The full PCA for the dataset
+Looking at the PCA we can see we have a very high explained variance in the first 2 columns. This indicates that there is a lot of highly correlated data. Whilst not a bad thing it could mean redundant data.
+```{python}
+#| label: pca-explained-variance-no-dim
+#| fig-cap: "Graph over explained variance from the dataset without Dimensionality reduction"
+
+pca_result = (
+    dataset.make_pca_analyzer(standardized=True, exclude_target=True)
+    .fit(n_components=None)
+    .result()
+)
+fig = plot_explained_variance(pca_result)
+fig.show()
+
 ```
-	feature	PC1	PC2	PC3	PC4	PC5
-0	life_expectancy	0.361855	0.130614	-0.228990	0.023706	-0.007008
-1	adult_mortality	-0.309021	-0.179180	0.388777	0.001862	-0.167414
-2	alcohol	0.257201	0.039492	0.360851	0.243854	-0.042597	0.247928
-3	percentage_expenditure	0.281612	0.112948	0.322523	-0.452369	0.325435
-4	measles	-0.132957	0.442035	0.106486	0.104698	0.023987	0.656015
-5	bmi	0.329641	-0.034862	-0.096278	0.285799	-0.211092	-0.013664
-6	total_expenditure	0.172507	-0.096567	0.291616	0.562497	0.591793
-7	hiv/aids	-0.179048	-0.167945	0.599997	0.013996	-0.341367
-8	gdp	0.298375	0.120481	0.259397	-0.474694	0.198554	0.015851
-9	population	-0.090882	0.546238	0.048160	0.160008	-0.085112
-10	income_composition_of_resources	0.343011	0.134960	0.058061	-0.056920	-0.400266
-11	schooling	0.343628	0.094620	0.113897	0.051756	-0.376017
-12	Immunisation	-0.157956	0.557837	0.100588	0.145554	0.031030
-13	Child Thinness	-0.286315	0.226130	-0.021637	-0.219200	0.055522
 
-Explained variance
-  0.43486117 0.17509572 0.10366902 0.07807773 0.04615732
+When we run the dimensionality reduction we see that our data has been smoothed out and there is a lot less explained variance in a single column, indicating more uncorrelated datapoints which makes sense given that we've removed a couple of columns
+```{python}
+#| label: pca-explained-variance
+#| fig-cap: "Graph over explained variance from the dataset"
+
+pca_result = (
+    concat_dataset.make_pca_analyzer(standardized=True, exclude_target=True)
+    .fit(n_components=None)
+    .result()
+)
+fig = plot_explained_variance(pca_result)
+fig.show()
+
 ```
-NOTE: Only the top 5 PCs are included in this report for brevity.
 
-If we look at each of the significant PC we can see they explain certain concepts often found in developed countries.
+To get a larger insight into our data we can also make a Biplot, over the reduced data. Here we can see 3 consolidated directions appearing on our Biplot. With ``Baby Deaths`` and ```measles`` acting very similar. this is expected given that they both represent similar underlying concepts.
 
-For example PC1 weighs life_expectancy highly schooling, income_composition_of_resources and bmi highly and negative loading such as adult_mortality and Child Thinness.
-Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense. If we were to give this principle component a name we could call it **Development** and that it is relates significantly with **life expectancy**. It is the principle component with the highest life expectency weight (+0.36).
+In a 90 degree offset we see a ``adult mortality`` and ``hiv_aids`` which also represents similar negative. Except this time its for deceases that primarly target adults. 
 
-PC2 has a significantly smaller explained variance of 17% and weighs Immunisation, measels cases and population highly and adult mortality and AIDS deaths negatively. The columns does weigh things inversely to what you would expect. Immunisation is weighted highly and Measels cases are also weighed highly. This suggest the PC represent something like **Population and Decease surveylance** with tihs PC having a small positive weight (+0.13).
+The rest represent all the general positive things assoiated with high live expectency. Herein we see the ``Income disposition of resources`` which represents healthcare spending as a proportion of GDP. With ``Schooling`` and ``schooling`` being close seconds, which are also things assoiated with highly developed contries.
 
-PC3 has similar variance as PC2 with a variance of 10% and weighs HIV/AIDS deaths, adult mortality, alcohol highly and weighs population and income composition neutrally, this PC doesn't have strong negative weights except for our **life expectency** with a significant negative weight of (-0.25)
+```{python}
+#| label: pca-biplot1
+#| fig-cap: "Graph over Biplot for the dimensionality reduced data"
 
+fig = plot_biplot_plotly(
+    pca_result,
+    dims=2,
+    top_features=10,
+    color=concat_dataset.df[LECol.TARGET],
+)
+fig.show()
+```
