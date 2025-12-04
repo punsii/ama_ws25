@@ -223,6 +223,8 @@ fig.show()
 
 ```
 
+### Biplots
+
 To get a larger insight into our data we can also make a Biplot, over the reduced data. Here we can see 3 consolidated directions appearing on our Biplot. With ``Baby Deaths`` and ```measles`` acting very similar. this is expected given that they both represent similar underlying concepts.
 
 In a 90 degree offset we see a ``adult mortality`` and ``hiv_aids`` which also represents similar negative. Except this time its for deceases that primarly target adults. 
@@ -240,4 +242,15 @@ fig = plot_biplot_plotly(
     color=concat_dataset.df[LECol.TARGET],
 )
 fig.show()
+```
+
+The same data can also be visualised in 3D to further illustrate how the data points congregate, although when visualised in 3D some dimensions become less congregated. and we Get a U shaped dataplot wherein one end represents bad things and the other represents good things.
+```{python}
+fig = plot_biplot_plotly(
+    pca_result,
+    dims=3,
+    top_features=10,
+    color=concat_dataset.df[LECol.TARGET],
+)
+fig
 ```
