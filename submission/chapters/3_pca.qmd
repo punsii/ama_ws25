@@ -5,6 +5,78 @@ format:
     toc: true
 ---
 
+```{python}
+#| label: init
+#| fig-cap: "A line plot on a polar axis"
+#| include: false
+
+from pathlib import Path
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+
+# LOAD ALL PROCESSING CLASSES
+from ama_tlbx.data import LifeExpectancyDataset, LECol
+
+from ama_tlbx.analysis import (
+    IQROutlierDetector,
+    IsolationForestOutlierDetector,
+    ZScoreOutlierDetector,
+)
+from ama_tlbx.plotting import (
+    plot_correlation_heatmap,
+    plot_explained_variance,
+    plot_loadings_heatmap,
+    plot_target_correlations,
+    plot_top_correlated_pairs,
+)
+
+
+
+dataset = LifeExpectancyDataset.from_csv(
+    "../../_data/life_expectancy_data.csv"
+)
+
+dataset.df
+
+
+from ama_tlbx.analysis import (
+    ColumnConcatenator,
+)
+
+column_concatinator = ColumnConcatenator(dataset)
+dataset2 = column_concatinator.concatenate(
+    columns=[
+    LECol.HEPATITIS_B,
+    LECol.POLIO,
+    LECol.DIPHTHERIA,
+    ],
+    new_column_name="Immunisation"
+)
+
+column_concatinator2 = ColumnConcatenator(dataset2)
+dataset3 = column_concatinator2.concatenate(
+    columns=[
+    LECol.THINNESS_1_19_YEARS,
+    LECol.THINNESS_5_9_YEARS,
+    ],
+    new_column_name="Child Thinness"
+)
+
+column_concatinator3 = ColumnConcatenator(dataset3)
+dataset4 = column_concatinator3.concatenate(
+    columns=[
+    LECol.INFANT_DEATHS,
+    LECol.UNDER_FIVE_DEATHS,
+    ],
+    new_column_name="Baby Deaths"
+)
+```
+
+
 ## Dimensionality reduction
 
 Performing analysis on large invaried data often leads to significant noise, unwanted or unneeded data in further analysis.
@@ -22,7 +94,58 @@ So the process we went with for data concatination was as follows:
 
 ### Implementation
 
+The implementation for the PCA concatination follows the methodology outlined in the Section above. It operates by taking a dataframe, a list of columns and returns a modified Dataset with the old columns removed 
+```{python}
+def concatenate(
+        self,
+        columns: list[str],
+        new_column_name: str,
+    ) -> BaseDataset:
+```
 
+The function starts with getting the columns and performing a PCA to get the loadings. 
+```{python}
+        df = self.dataset.df.copy()
+
+        only_columns = df[columns]
+        only_not_columns = df.drop(columns=columns)
+
+        pca = PCA(n_components=1)
+        pc = pca.fit(only_columns)
+
+        loadings = (
+            pd.DataFrame(pc.components_.T, index=only_columns.columns, columns=["loading"]) 
+            .reset_index()
+            .rename(columns={"index": "feature"})
+        )
+```
+
+The way PCA loadings work is that the sum of all loadings squared add up to 1. We can use this advantagously to get each columns contributon to the principle component. For this analysis we opted to keep only one Principle Component, mostly due to explainability.
+
+$$ w_i = l_i^2 $$
+
+Then at the end you can merge the new cell that has the loadings into the datafram that has the old cells removed. 
+```{python}
+
+        loadings["loading"] **= 2
+        self.loadings = loadings
+
+        weights = loadings.set_index("feature")["loading"]
+
+        self.explained_variance = pc.explained_variance_ratio_[0] * 100
+
+        available = [f for f in weights.index if f in only_columns.columns]
+        if len(available) == 0:
+            raise ValueError("None of the PCA features are present in the DataFrame columns")
+
+        selected = only_columns[available].fillna(0)
+
+        weighted_series = selected.mul(weights.loc[available], axis=1).sum(axis=1)
+        only_not_columns[new_column_name] = weighted_series
+
+        return self.dataset.with_df(only_not_columns)
+
+```
 
 ### Findings
 
@@ -31,16 +154,16 @@ One candidates that stood out were the columns 'Hepatitis B' , 'Polio' and 'Diph
 This means that there is a high likelyhood of this data is correlated.
 The meta-data gathered from concatinating these columns returns the values of:
 
-```
-The first principal component (PC1) explains 69.48% of the variance within these columns.
-       feature   loading
-0  Hepatitis B  0.263158
-1  Diphtheria   0.381350
-2        Polio  0.355491
+
+```{python}
+#| label: pca-immune
+#| fig-cap: "Immunisation Coefficients"
+
+column_concatinator.print_results()
 ```
 
 Based on these values we get a weight values for the first PC column of around 0.25 to 0.4, which roughly makes sense. Most of them ringe around the value of ```0.33``` which should make sense for correlated variables.
-Secondly we also get an explained variance of 69.48% for the first column. Which is high showing a strong correlation between each column.
+Secondly we also get an explained variance of 89% for the first column. Which is high showing a strong correlation between each column.
 However not high enough to where you could safely concat them with no pratical dataloss.
 
 In our case since we aren't as much intrested in the which deceases are the biggest contributors to life expecency. We decided to concat the columns, perhaps with the ability to do further analysis on which vaccine is best for life expectancy.
@@ -48,23 +171,21 @@ The reason for ommiting this analysis point is that the variance between them is
 
 Other columns concatination candiates are way more clear cut when it came to whether or not to concatinate them:
 
-```
-The first principal component (PC1) explains 99.83% of the variance within these columns.
-PCA loadings, weighted (squared for component contribution):
-              feature  loading
-0  under-five deaths       0.5
-1       infant deaths      0.5
+```{python}
+#| label: pca-babydeath
+#| fig-cap: "Coefficients for Baby Deaths"
+
+column_concatinator2.print_results()
 ```
 and
-```
-The first principal component (PC1) explains 97.00% of the variance within these columns.
-PCA loadings, weighted (squared for component contribution):
-                 feature  loading
-0   thinness  1-19 years      0.5
-1     thinness 5-9 years      0.5
+```{python}
+#| label: pca-thinness
+#| fig-cap: "Coefficients for Thinness"
+
+column_concatinator3.print_results()
 ```
 
-The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.83% that they might aswell mean the same thing.
+The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.8% that they might aswell mean the same thing.
 A second easy candidate for concatination is "thinnness 1-19 years" and "thinness 5-9 years" since one is a subset of the other concatinating them makes sense from a data reduction perspective, the explained variance of 97%.
 
 ## General Principle Component Analysis
@@ -85,7 +206,7 @@ The full PCA for the dataset
 7	hiv/aids	-0.179048	-0.167945	0.599997	0.013996	-0.341367
 8	gdp	0.298375	0.120481	0.259397	-0.474694	0.198554	0.015851
 9	population	-0.090882	0.546238	0.048160	0.160008	-0.085112
-10	income_composition_of_resources	0.343011	0.134960	0.058061
+10	income_composition_of_resources	0.343011	0.134960	0.058061	-0.056920	-0.400266
 11	schooling	0.343628	0.094620	0.113897	0.051756	-0.376017
 12	Immunisation	-0.157956	0.557837	0.100588	0.145554	0.031030
 13	Child Thinness	-0.286315	0.226130	-0.021637	-0.219200	0.055522
@@ -97,12 +218,10 @@ NOTE: Only the top 5 PCs are included in this report for brevity.
 
 If we look at each of the significant PC we can see they explain certain concepts often found in developed countries.
 
-For example PC1 weighs life_expectancy, schooling, income_composition_of_resources and bmi highly and negative loadins such as adult_mortality and Child Thinness.
-Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense.
+For example PC1 weighs life_expectancy highly schooling, income_composition_of_resources and bmi highly and negative loading such as adult_mortality and Child Thinness.
+Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense. If we were to give this principle component a name we could call it **Development** and that it is relates significantly with **life expectancy**. It is the principle component with the highest life expectency weight (+0.36). 
 
+PC2 has a significantly smaller explained variance of 17% and weighs Immunisation, measels cases and population highly and adult mortality and AIDS deaths negatively. The columns does weigh things inversely to what you would expect. Immunisation is weighted highly and Measels cases are also weighed highly. This suggest the PC represent something like **Population and Decease surveylance** with tihs PC having a small positive weight (+0.13).
 
+PC3 has similar variance as PC2 with a variance of 10% and weighs HIV/AIDS deaths, adult mortality, alcohol highly and weighs population and income composition neutrally, this PC doesn't have strong negative weights except for our **life expectency** with a significant negative weight of (-0.25)
 
-
-
-
-TODO: describe PC from broad PCA

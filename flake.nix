@@ -95,7 +95,12 @@
         buildPhase = ''
           cd submission
           export HOME=$(mktemp -d)
-          ${pkgs.quarto}/bin/quarto render --output-dir  $out/var/www/ama/
+          export QUARTO_PYTHON="${pythonEnv}/bin/python"
+
+          mkdir -p $out/var/www/ama/
+          ${pkgs.quarto}/bin/quarto render .
+          mv _site $out/var/www/ama/
+          find $out/var/www/ama/
         '';
       };
     in
@@ -124,6 +129,7 @@
           pythonEnv
           quarto
         ];
+        QUARTO_PYTHON = "${pythonEnv}/bin/python";
       };
 
       formatter.${system} = treefmtEval.config.build.wrapper;

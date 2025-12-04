@@ -397,3 +397,21 @@ class BaseDataset(ABC):
             random_state=random_state,
             n_estimators=n_estimators,
         )
+
+    def with_df(self, df: pd.DataFrame) -> "BaseDataset":
+        """Return a new dataset instance of the same concrete class using the provided DataFrame.
+
+        Default implementation constructs a new instance via the concrete class' constructor
+        and passes ``df`` as the initial dataframe. Subclasses that need to preserve
+        additional internal state should override this method.
+
+        Args:
+            df: DataFrame to use for the new dataset instance.
+
+        Returns:
+            New instance of the same concrete dataset class containing ``df``.
+        """
+        # Create a new instance of the same concrete class. BaseDataset.__init__ accepts
+        # an optional `df` argument so this works for subclasses that follow the same
+        # convention. Subclasses may override to copy more state if needed.
+        return self.__class__(df=df)
