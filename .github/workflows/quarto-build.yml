@@ -21,9 +21,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Quarto
-        uses: quarto-dev/quarto-action@v2
+        uses: quarto-dev/quarto-actions/setup@v2
         with:
-          quarto-version: 'latest'
+          version: 'latest'
 
       - name: Verify Quarto
         run: quarto --version
