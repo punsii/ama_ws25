@@ -6,10 +6,9 @@ format:
 ---
 
 ```{python}
-#| label: init
-#| fig-cap: "A line plot on a polar axis"
-#| include: false
-
+# | label: init
+# | fig-cap: "A line plot on a polar axis"
+# | include: false
 from pathlib import Path
 
 import pandas as pd
@@ -35,10 +34,7 @@ from ama_tlbx.plotting import (
 )
 
 
-
-dataset = LifeExpectancyDataset.from_csv(
-    "../../_data/life_expectancy_data.csv"
-)
+dataset = LifeExpectancyDataset.from_csv(aggregate_by_country="mean")
 
 dataset.df
 
@@ -50,29 +46,29 @@ from ama_tlbx.analysis import (
 column_concatinator = ColumnConcatenator(dataset)
 dataset2 = column_concatinator.concatenate(
     columns=[
-    LECol.HEPATITIS_B,
-    LECol.POLIO,
-    LECol.DIPHTHERIA,
+        LECol.HEPATITIS_B,
+        LECol.POLIO,
+        LECol.DIPHTHERIA,
     ],
-    new_column_name="Immunisation"
+    new_column_name="Immunisation",
 )
 
 column_concatinator2 = ColumnConcatenator(dataset2)
 dataset3 = column_concatinator2.concatenate(
     columns=[
-    LECol.THINNESS_1_19_YEARS,
-    LECol.THINNESS_5_9_YEARS,
+        LECol.THINNESS_1_19_YEARS,
+        LECol.THINNESS_5_9_YEARS,
     ],
-    new_column_name="Child Thinness"
+    new_column_name="Child Thinness",
 )
 
 column_concatinator3 = ColumnConcatenator(dataset3)
 dataset4 = column_concatinator3.concatenate(
     columns=[
-    LECol.INFANT_DEATHS,
-    LECol.UNDER_FIVE_DEATHS,
+        LECol.INFANT_DEATHS,
+        LECol.UNDER_FIVE_DEATHS,
     ],
-    new_column_name="Baby Deaths"
+    new_column_name="Baby Deaths",
 )
 ```
 
@@ -94,8 +90,8 @@ So the process we went with for data concatination was as follows:
 
 ### Implementation
 
-The implementation for the PCA concatination follows the methodology outlined in the Section above. It operates by taking a dataframe, a list of columns and returns a modified Dataset with the old columns removed 
-```{python}
+The implementation for the PCA concatination follows the methodology outlined in the Section above. It operates by taking a dataframe, a list of columns and returns a modified Dataset with the old columns removed
+```python
 def concatenate(
         self,
         columns: list[str],
@@ -103,7 +99,7 @@ def concatenate(
     ) -> BaseDataset:
 ```
 
-The function starts with getting the columns and performing a PCA to get the loadings. 
+The function starts with getting the columns and performing a PCA to get the loadings.
 ```{python}
         df = self.dataset.df.copy()
 
@@ -114,7 +110,7 @@ The function starts with getting the columns and performing a PCA to get the loa
         pc = pca.fit(only_columns)
 
         loadings = (
-            pd.DataFrame(pc.components_.T, index=only_columns.columns, columns=["loading"]) 
+            pd.DataFrame(pc.components_.T, index=only_columns.columns, columns=["loading"])
             .reset_index()
             .rename(columns={"index": "feature"})
         )
@@ -124,7 +120,7 @@ The way PCA loadings work is that the sum of all loadings squared add up to 1. W
 
 $$ w_i = l_i^2 $$
 
-Then at the end you can merge the new cell that has the loadings into the datafram that has the old cells removed. 
+Then at the end you can merge the new cell that has the loadings into the datafram that has the old cells removed.
 ```{python}
 
         loadings["loading"] **= 2
@@ -214,12 +210,12 @@ The full PCA for the dataset
 Explained variance
   0.43486117 0.17509572 0.10366902 0.07807773 0.04615732
 ```
-NOTE: Only the top 5 PCs are included in this report for brevity. 
+NOTE: Only the top 5 PCs are included in this report for brevity.
 
 If we look at each of the significant PC we can see they explain certain concepts often found in developed countries.
 
 For example PC1 weighs life_expectancy highly schooling, income_composition_of_resources and bmi highly and negative loading such as adult_mortality and Child Thinness.
-Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense. If we were to give this principle component a name we could call it **Development** and that it is relates significantly with **life expectancy**. It is the principle component with the highest life expectency weight (+0.36). 
+Indicating that this PC represents overall development and health infrastructure with an explained variance of 43% which would make sense. If we were to give this principle component a name we could call it **Development** and that it is relates significantly with **life expectancy**. It is the principle component with the highest life expectency weight (+0.36).
 
 PC2 has a significantly smaller explained variance of 17% and weighs Immunisation, measels cases and population highly and adult mortality and AIDS deaths negatively. The columns does weigh things inversely to what you would expect. Immunisation is weighted highly and Measels cases are also weighed highly. This suggest the PC represent something like **Population and Decease surveylance** with tihs PC having a small positive weight (+0.13).
 
