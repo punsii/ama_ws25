@@ -15,6 +15,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import scipy.stats as stats
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
@@ -83,4 +84,32 @@ plt.title('Multivariate Regression: Actual vs Predicted')
 plt.tight_layout()
 plt.show()
 
+```
+
+### Residual Analysis
+
+```{python}
+# | label: residual analysis
+# | fig-cap: "Residual Analysis"
+
+residuals = y_test - y_pred
+
+# Plot-Setup
+fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+
+# --- Plot 1: Residuals vs. Test --
+sns.scatterplot(x=y_pred, y=residuals, ax=axes[0], alpha=0.6)
+axes[0].axhline(0, color='red', linestyle='--')
+axes[0].set_xlabel('Predicted Life expectency')
+axes[0].set_ylabel('Residuals')
+axes[0].set_title('Residuals for the Fitted Values\n')
+
+# --- Plot 2: Q-Q Plot ---
+stats.probplot(residuals, dist="norm", plot=axes[1])
+axes[1].set_title('Q-Q Plot\n')
+axes[1].get_lines()[0].set_markerfacecolor('C0')
+axes[1].get_lines()[0].set_markeredgewidth(0)
+
+plt.tight_layout()
+plt.show()
 ```
