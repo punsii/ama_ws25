@@ -40,7 +40,7 @@ dataset = LifeExpectancyDataset.from_csv(
     csv_path="../../_data/life_expectancy_data.csv"    
 ,aggregate_by_country="mean")
 
-dataset.df
+assert(not dataset.df.empty)
 
 
 from ama_tlbx.analysis import (
@@ -75,6 +75,8 @@ dataset4 = column_concatinator3.concatenate(
     new_column_name="Baby Deaths",
 )
 concat_dataset = dataset4
+
+assert(not concat_dataset.df.empty)
 ```
 
 

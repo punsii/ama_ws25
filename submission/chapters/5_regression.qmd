@@ -5,5 +5,82 @@ format:
     toc: true
 ---
 
+```{python}
+# | label: init
+# | fig-cap: "Dataset loading function hidden"
+# | include: false
+from pathlib import Path
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+
+from ama_tlbx.data import LifeExpectancyDataset, LECol
+
+dataset = LifeExpectancyDataset.from_csv(
+    csv_path="../../_data/life_expectancy_data.csv"    
+    ,aggregate_by_country="mean")
+
+assert(not dataset.df.empty)
+
+df = dataset.df
+```
+
 # Regression Analysis
 
+Performing regression on data is a common analysis method often used in attempt to derive and predict the life expectency using similar yet unknown data. Since the project primarely focuses on finding information as it pertains to life expectency, our regression analysis will fucus on predicting life expectency.
+
+## Liniar Regression Analyis
+
+Liniar regession is a common analysis performed on liniar data. Since life expectency is "mostly" liniar data, it is very fitting to use it to predict life expectency
+
+```{python}
+# | label: liniar-reg
+# | fig-cap: "Process for regression"
+
+# 1: Drop rows where target is missing
+target_col = LECol.LIFE_EXPECTANCY
+reg_df = df.dropna(subset=[target_col])
+
+# 2: Select features (numeric only, excluding target)
+X = reg_df.select_dtypes(include=['number']).drop(columns=[target_col])
+y = reg_df[target_col]
+
+
+# 3: Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 4: Train model
+model = LinearRegression()
+model.fit(X_train, y_train)
+
+# 5: Predict
+y_pred = model.predict(X_test)
+
+# 6: Evaluate
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+```
+
+Our regression method follows the 6 steps above .... TODO
+
+```{python}
+# | label: liniar-reg-fig
+# | echo: false
+# | fig-cap: "Plot of how accurate our coefifients are on test data"
+
+
+plt.figure(figsize=(10, 6))
+plt.scatter(y_test, y_pred, alpha=0.5)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+plt.xlabel('Actual Life Expectancy')
+plt.ylabel('Predicted Life Expectancy')
+plt.title('Multivariate Regression: Actual vs Predicted')
+plt.tight_layout()
+plt.show()
+
+```
