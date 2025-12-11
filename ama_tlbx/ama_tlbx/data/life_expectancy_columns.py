@@ -4,16 +4,30 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from patsy import bs
 
 from .base_columns import BaseColumn, ColumnMetadata
 
 
-def _log1p_nonnegative(series: pd.Series) -> pd.Series:
-    return np.log1p(series.clip(lower=0))
-
-
 def _log1p_under_coverage(series: pd.Series) -> pd.Series:
     return np.log1p(100 - series)
+
+
+def _status_dummies(series: pd.Series) -> pd.DataFrame:
+    """One-hot encode binary status (developing/developed)."""
+    return pd.get_dummies(series.astype(int), prefix="status", prefix_sep="=", drop_first=False)
+
+
+def _bmi_spline(series: pd.Series, df: int = 2, degree: int = 2) -> pd.DataFrame:
+    """Return spline basis for BMI; keeps column names stable for downstream models."""
+    # Handle missing by median-imputing locally to avoid all-NaN basis
+    s = series.fillna(series.median())
+    basis = bs(s, df=df, degree=degree, include_intercept=False)
+    return pd.DataFrame(
+        basis,
+        index=series.index,
+        columns=[f"bmi_bs{i + 1}" for i in range(basis.shape[1])],
+    )
 
 
 class LifeExpectancyColumn(BaseColumn):
@@ -169,21 +183,21 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="adult_mortality",
         dtype="float64",
         pretty_name="Adult Mortality (per 1000)",
-        transform=_log1p_nonnegative,
+        transform=None,
     ),
     LifeExpectancyColumn.INFANT_DEATHS: ColumnMetadata(
         original_name="infant deaths",
         cleaned_name="infant_deaths",
         dtype="float64",
         pretty_name="Infant Deaths (per 1000)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     LifeExpectancyColumn.UNDER_FIVE_DEATHS: ColumnMetadata(
         original_name="under-five deaths ",
         cleaned_name="under_five_deaths",
         dtype="float64",
         pretty_name="Under-5 Deaths (per 1000)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     # Disease and health indicators
     LifeExpectancyColumn.HIV_AIDS: ColumnMetadata(
@@ -191,14 +205,14 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="hiv_aids",
         dtype="float64",
         pretty_name="HIV/AIDS Deaths (per 1000 births)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     LifeExpectancyColumn.MEASLES: ColumnMetadata(
         original_name="Measles ",
         cleaned_name="measles",
         dtype="float64",
         pretty_name="Measles Cases (per 1000)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     # Immunization coverage (%)
     LifeExpectancyColumn.HEPATITIS_B: ColumnMetadata(
@@ -235,14 +249,14 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="thinness_1_19_years",
         dtype="float64",
         pretty_name="Thinness 10-19 Years (%)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     LifeExpectancyColumn.THINNESS_5_9_YEARS: ColumnMetadata(
         original_name=" thinness 5-9 years",
         cleaned_name="thinness_5_9_years",
         dtype="float64",
         pretty_name="Thinness 5-9 Years (%)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     # Economic indicators
     LifeExpectancyColumn.GDP: ColumnMetadata(
@@ -250,14 +264,14 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="gdp",
         dtype="float64",
         pretty_name="GDP per Capita (USD)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     LifeExpectancyColumn.PERCENTAGE_EXPENDITURE: ColumnMetadata(
         original_name="percentage expenditure",
         cleaned_name="percentage_expenditure",
         dtype="float64",
         pretty_name="Health Expenditure (% of GDP per capita)",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
     LifeExpectancyColumn.TOTAL_EXPENDITURE: ColumnMetadata(
         original_name="Total expenditure",
@@ -286,7 +300,7 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="alcohol",
         dtype="float64",
         pretty_name="Alcohol Consumption (liters per capita)",
-        transform=None,
+        transform=np.log1p,
     ),
     # Population
     LifeExpectancyColumn.POPULATION: ColumnMetadata(
@@ -294,6 +308,6 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="population",
         dtype="float64",
         pretty_name="Population",
-        transform=_log1p_nonnegative,
+        transform=np.log1p,
     ),
 }
