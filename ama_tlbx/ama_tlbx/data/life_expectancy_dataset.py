@@ -1,6 +1,6 @@
 """Refactored dataset class focused on data loading and preprocessing only."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal
 
@@ -191,6 +191,18 @@ class LifeExpectancyDataset(BaseDataset):
     def numeric_cols(self) -> pd.Index:
         return super().numeric_cols.difference([Col.YEAR, Col.STATUS])
 
+    def feature_columns(
+        self,
+        include_target: bool = False,
+        extra_exclude: Iterable[str] | None = [Col.YEAR],
+        extra_include: Iterable[str] | None = [Col.STATUS],
+    ) -> list[str]:
+        return super().feature_columns(
+            include_target=include_target,
+            extra_exclude=extra_exclude,
+            extra_include=extra_include,
+        )
+
     def tf_and_norm(self, tf_map: dict[Col, Callable] | None = None) -> pd.DataFrame:
         """Apply per-column transformations then z-score numeric columns.
 
@@ -221,11 +233,25 @@ class LifeExpectancyDataset(BaseDataset):
 
         for col, transform in transforms.items():
             if col in df.columns:
-                df[col] = transform(df[col])
+                transformed = transform(df[col])
+                if isinstance(transformed, pd.DataFrame):
+                    # drop original and join expanded columns (e.g., dummies, splines)
+                    df = df.drop(columns=[col]).join(transformed)
+                else:
+                    df[col] = transformed
 
-        # Standardize numeric columns (status excluded by numeric_cols property)
-        numeric_cols = self.numeric_cols
-        if len(numeric_cols) > 0:
-            df.loc[:, numeric_cols] = self.standardize(df)
+        # Recompute numeric columns after transformations (status/year excluded)
+        numeric_cols = (
+            df.select_dtypes(include=["number"])
+            .columns.difference([self.Col.STATUS, self.Col.YEAR])
+            .tolist()
+        )
+        if self.Col.TARGET in numeric_cols:
+            numeric_cols.remove(self.Col.TARGET)
+
+        if numeric_cols:
+            # Median-impute numeric cols to avoid NaNs breaking StandardScaler
+            df.loc[:, numeric_cols] = df.loc[:, numeric_cols].apply(lambda s: s.fillna(s.median()))
+            df.loc[:, numeric_cols] = self.standardize(df)[numeric_cols]
 
         return df

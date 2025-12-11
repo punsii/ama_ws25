@@ -160,6 +160,7 @@ class PCADimReductionAnalyzer(BaseAnalyser):
         view: DatasetView,
         feature_groups: list[FeatureGroup],
         min_var_explained: float | list[float] = 0.8,
+        target_col: str | None = None,  # TODO
     ):
         """Dimensionality reduction via PCA on correlated feature groups.
 
@@ -172,6 +173,7 @@ class PCADimReductionAnalyzer(BaseAnalyser):
                 - float: Same threshold for all groups (default: 0.8)
                 - list[float]: Specific threshold for each group (must match length)
                 Values must be between 0 and 1.
+            target_col: (Optional) If specified, weight PCA features by their association with the target variable.
 
         Raises:
             ValueError: If feature groups are empty, contain invalid columns, or min_var_explained specification is invalid
@@ -181,7 +183,7 @@ class PCADimReductionAnalyzer(BaseAnalyser):
         self._fitted = False
 
         if not self._view.is_standardized:
-            raise ValueError("DatasetView must contain standardized features for PCA dimensionality reduction.")
+            print("DatasetView should contain standardized features for PCA dimensionality reduction.")
 
         if not feature_groups:
             raise ValueError("At least one feature group is required")

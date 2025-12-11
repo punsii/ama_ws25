@@ -82,7 +82,6 @@ class BaseDataset(ABC):
         """Get numeric column names.
 
         Default implementation filters columns by numeric dtypes.
-        Subclasses can override for custom behavior.
 
         Returns:
             Index of numeric column names
@@ -105,23 +104,25 @@ class BaseDataset(ABC):
     def standardize(self, df: pd.DataFrame | None = None) -> pd.DataFrame:
         """Compute standardized version of the dataset using [sklearn's StandardScaler](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html).
 
-        Default implementation uses StandardScaler on numeric columns.
-        Subclasses can override for custom behavior.
+        Default implementation uses StandardScaler on numeric columns and returns
+        a DataFrame that still contains all original (non-numeric) columns unchanged.
 
         Returns:
-            Standardized DataFrame with numeric columns scaled to mean=0, std=1
+            Standardized DataFrame with numeric columns scaled to mean=0, std=1 and
+            non-numeric columns preserved.
         """
         if df is None:
             df = self.df
 
-        self._scaler = StandardScaler()
-        scaled_data = self._scaler.fit_transform(df[self.numeric_cols])
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
-        return pd.DataFrame(
-            scaled_data,
-            columns=self.numeric_cols,
-            index=df.index,
-        )
+        self._scaler = StandardScaler()
+        scaled_data = self._scaler.fit_transform(df[numeric_cols])
+        scaled_df = pd.DataFrame(scaled_data, columns=numeric_cols, index=df.index)
+
+        result = df.copy()
+        result[numeric_cols] = scaled_df
+        return result
 
     def get_pretty_names(self, column_names: list[str] | None = None) -> list[str]:
         """Convert multiple column names to pretty names.
@@ -168,6 +169,17 @@ class BaseDataset(ABC):
             )
 
         selected_cols = list(columns or frame.columns.to_list())
+        # Normalize enum columns (BaseColumn) to their string values to match DataFrame labels
+        selected_cols = [c.value if isinstance(c, BaseColumn) else c for c in selected_cols]
+
+        # Drop columns that are not present; but keep target if requested
+        missing = [c for c in selected_cols if c not in frame.columns]
+        if missing:
+            if target_col and target_col in missing:
+                raise KeyError(f"Target column '{target_col}' not found in data.")
+            print(f"[view] Dropping missing columns: {missing}")
+        selected_cols = [c for c in selected_cols if c in frame.columns]
+
         frame = frame.loc[:, selected_cols]
 
         if missing_strategy == "drop":
@@ -186,6 +198,7 @@ class BaseDataset(ABC):
         self,
         include_target: bool = False,
         extra_exclude: Iterable[str] | None = None,
+        extra_include: Iterable[str] | None = None,
     ) -> list[str]:
         """Return numeric feature columns, optionally excluding identifiers and target."""
         exclude = set(self.Col.identifier_columns())
@@ -193,7 +206,12 @@ class BaseDataset(ABC):
             exclude.update(extra_exclude)
         if not include_target and self.Col.TARGET:
             exclude.add(self.Col.TARGET)
-        return [col for col in self.numeric_cols if col not in exclude]
+        cols = [col for col in self.numeric_cols if col not in exclude]
+        if extra_include:
+            for col in extra_include:
+                if col not in cols:
+                    cols.append(col)
+        return cols
 
     def analyzer_view(
         self,
