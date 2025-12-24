@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
+from matplotlib.figure import Figure
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
@@ -24,7 +25,7 @@ from .base_columns import BaseColumn
 from .views import DatasetView
 
 
-class BaseDataset(ABC):
+class BaseDataset(ABC):  # noqa: PLR0904
     """Abstract base class for dataset handlers used throughout the AMA module."""
 
     identifier_columns: Sequence[str] = ()
@@ -66,7 +67,8 @@ class BaseDataset(ABC):
         """
         if self._df is None:
             raise ValueError("Dataset not loaded. Use from_csv() to load data.")
-        return self._df
+        # Always hand out a defensive copy to prevent external mutation of cached state.
+        return self._df.copy(deep=True)
 
     @property
     def df_pretty(self) -> pd.DataFrame:
@@ -99,7 +101,8 @@ class BaseDataset(ABC):
         """
         if self._df_standardized is None:
             self._df_standardized = self.standardize()
-        return self._df_standardized
+        # Return a defensive copy so callers cannot mutate the cached version.
+        return self._df_standardized.copy(deep=True)
 
     def standardize(self, df: pd.DataFrame | None = None) -> pd.DataFrame:
         """Compute standardized version of the dataset using [sklearn's StandardScaler](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html).
@@ -111,18 +114,26 @@ class BaseDataset(ABC):
             Standardized DataFrame with numeric columns scaled to mean=0, std=1 and
             non-numeric columns preserved.
         """
+        cache_result = False
         if df is None:
-            df = self.df
+            if self._df is None:
+                raise ValueError("Dataset not loaded. Use from_csv() to load data.")
+            df_ref = self._df
+            cache_result = True
+        else:
+            df_ref = df
 
-        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        numeric_cols = df_ref.select_dtypes(include=["number"]).columns.tolist()
 
         self._scaler = StandardScaler()
-        scaled_data = self._scaler.fit_transform(df[numeric_cols])
-        scaled_df = pd.DataFrame(scaled_data, columns=numeric_cols, index=df.index)
+        scaled_data = self._scaler.fit_transform(df_ref[numeric_cols])
+        scaled_df = pd.DataFrame(scaled_data, columns=numeric_cols, index=df_ref.index)
 
-        result = df.copy()
+        result = df_ref.copy()
         result[numeric_cols] = scaled_df
-        return result
+        if cache_result:
+            self._df_standardized = result.copy(deep=True)
+        return result.copy(deep=True)
 
     def get_pretty_names(self, column_names: list[str] | None = None) -> list[str]:
         """Convert multiple column names to pretty names.
@@ -153,13 +164,13 @@ class BaseDataset(ABC):
         Returns:
             DatasetView containing selected data and metadata
         """
-        frame = self.df_standardized if standardized else self.df
+        frame = (self.df_standardized if standardized else self.df).copy()
 
         if missing_strategy == "global_impute":
             # Impute numeric columns globally (column-wise median)
-            numeric_cols = filter(lambda c: c in frame.columns, numeric_cols)
+            numeric_cols = frame.select_dtypes(include=["number"]).columns.tolist()
             if numeric_cols:
-                frame[numeric_cols] = SimpleImputer(strategy="median").fit_transform(frame[numeric_cols])
+                frame.loc[:, numeric_cols] = SimpleImputer(strategy="median").fit_transform(frame[numeric_cols])
         elif missing_strategy == "drop":
             # Drop rows after selecting the relevant columns
             pass
@@ -432,4 +443,27 @@ class BaseDataset(ABC):
         # Create a new instance of the same concrete class. BaseDataset.__init__ accepts
         # an optional `df` argument so this works for subclasses that follow the same
         # convention. Subclasses may override to copy more state if needed.
-        return self.__class__(df=df)
+        instance = self.__class__(df=df.copy(deep=True))
+        instance._df_standardized = None
+        instance._scaler = None
+        return instance
+
+    def plot_standardization_comparison(
+        self,
+        figsize: tuple[int, int] = (20, 10),
+    ) -> Figure:
+        from ama_tlbx.plotting.dataset_plots import plot_standardization_comparison
+
+        return plot_standardization_comparison(dataset=self, figsize=figsize)
+
+    def plot_histograms(
+        self,
+        columns: Iterable[str] | None = None,
+        bins: int = 30,
+        kde: bool = False,
+        figsize: tuple[int, int] = (15, 10),
+    ) -> Figure:
+        from ama_tlbx.plotting.dataset_plots import plot_histograms
+
+        cols = list(columns or self.numeric_cols)
+        return plot_histograms(self.df, columns=cols, bins=bins, kde=kde, figsize=figsize)

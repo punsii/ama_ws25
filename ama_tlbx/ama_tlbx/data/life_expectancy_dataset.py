@@ -18,11 +18,6 @@ class LifeExpectancyDataset(BaseDataset):
     **Example workflows**:
     >>> from ama_tlbx.data import LifeExpectancyDataset, LECol
     >>> from ama_tlbx.analysis import FeatureGroup
-    >>> from ama_tlbx.plotting.correlation_plots import (
-    ...     plot_correlation_heatmap,
-    ...     plot_top_correlated_pairs,
-    ...     plot_target_correlations,
-    ... )
     >>> ds = LifeExpectancyDataset.from_csv()
     >>> corr = ds.make_correlation_analyzer(standardized=True, include_target=False).fit().result()
     >>> pca = ds.make_pca_analyzer(standardized=True, exclude_target=True).fit().result()
@@ -46,9 +41,9 @@ class LifeExpectancyDataset(BaseDataset):
     ...     .fit()
     ...     .result()
     ... )
-    >>> _ = plot_correlation_heatmap(corr_result, figsize=(16, 16))
-    >>> _ = plot_top_correlated_pairs(corr_result, n=15, threshold=0.7)
-    >>> _ = plot_target_correlations(result=corr_result)
+    >>> _ = corr_result.plot_heatmap(figsize=(16, 16))
+    >>> _ = corr_result.plot_top_pairs(n=15, threshold=0.7)
+    >>> _ = corr_result.plot_target_correlations()
     """
 
     Col = Col
@@ -58,9 +53,9 @@ class LifeExpectancyDataset(BaseDataset):
         cls,
         *,
         csv_path: str | Path | None = None,
-        aggregate_by_country: bool | Literal["mean", 2014] = True,
+        aggregate_by_country: bool | str | int | Callable | None = True,
         drop_missing_target: bool = True,
-        resolve_nand_pred: Literal["drop", "median"] = "drop",
+        resolve_nand_pred: Literal["drop", "median", "carry_forward"] | bool = "carry_forward",
     ) -> "LifeExpectancyDataset":
         """Load and preprocess the Life Expectancy dataset from a CSV file.
 
@@ -69,9 +64,11 @@ class LifeExpectancyDataset(BaseDataset):
 
         Args:
             csv_path: Path to the CSV file
-            aggregate_by_country: aggregate data by country (mean over years, label for other agg fn, or selected year) defaults to selecting year 2014 based on previous analysis.
+            aggregate_by_country: aggregate data by country (mean over years, label for other agg fn, or selected year).
+                When ``True`` (default), the most recent valid year in the dataset is used.
             drop_missing_target: If True, drop rows with missing life expectancy values
             resolve_nand_pred: Strategy for remaining NaNs in predictors when no aggregation is performed.
+                - "carry_forward": forward-fill missing values per country using last valid observation
                 - "drop": drop rows with any missing predictor/target
                 - "median": median-impute numeric predictors, then drop residual NaNs
 
@@ -79,6 +76,7 @@ class LifeExpectancyDataset(BaseDataset):
             LifeExpectancyDataset instance with loaded and cleaned data
         """
         csv_path = get_dataset_path("life_expectancy") if csv_path is None else Path(csv_path)
+        assert csv_path.exists(), f"CSV file not found at: {csv_path}"
 
         le_df = pd.read_csv(csv_path).pipe(cls._normalize_col_names).pipe(cls._convert_data_types)
 
@@ -86,13 +84,22 @@ class LifeExpectancyDataset(BaseDataset):
             le_df = le_df.dropna(subset=[Col.TARGET])
 
         if aggregate_by_country:
+            agg_by = (
+                cls._latest_valid_year(
+                    le_df,
+                    target_col=Col.TARGET if drop_missing_target else None,
+                )
+                if isinstance(aggregate_by_country, bool)
+                else aggregate_by_country
+            )
             le_df = cls._aggregate_by_country(
                 le_df,
-                agg_by=2007 if aggregate_by_country is True else aggregate_by_country,
+                agg_by=agg_by,
             )
             le_df.index.name = Col.COUNTRY
 
-        le_df = cls._resolve_missing_predictors(le_df, strategy=resolve_nand_pred)
+        if resolve_nand_pred:
+            le_df = cls._resolve_missing_predictors(le_df, strategy=resolve_nand_pred)
 
         return cls(df=le_df)
 
@@ -140,7 +147,11 @@ class LifeExpectancyDataset(BaseDataset):
             Country-aggregated DataFrame with imputed missing values
         """
         if isinstance(agg_by, int):
-            return df.assign(year=lambda d: d[Col.YEAR].dt.year).query("year == @agg_by").set_index(Col.COUNTRY)
+            filtered = df.assign(year=lambda d: d[Col.YEAR].dt.year).query("year == @agg_by").copy()
+            numeric_cols = filtered.select_dtypes(include=["number"]).columns.difference([Col.COUNTRY])
+            means = filtered.loc[:, numeric_cols].mean()
+            filtered.loc[:, numeric_cols] = filtered.loc[:, numeric_cols].fillna(means)
+            return filtered.set_index(Col.COUNTRY)
 
         agg_by = agg_by or "mean"
 
@@ -159,23 +170,71 @@ class LifeExpectancyDataset(BaseDataset):
         return aggregated
 
     @staticmethod
+    def _latest_valid_year(df: pd.DataFrame, *, target_col: str | None = None) -> int:
+        """Return the most recent year present in the dataset.
+
+        If ``target_col`` is provided, only rows with a non-null target are
+        considered when inferring the latest year. Raises ``ValueError`` when
+        no valid year values are available.
+        """
+        years = df[Col.YEAR].dt.year
+        if target_col is not None and target_col in df.columns:
+            years = years[df[target_col].notna()]
+
+        years = years.dropna()
+        if years.empty:
+            raise ValueError("Cannot infer latest year: no valid year values found.")
+
+        return int(years.max())
+
+    @staticmethod
     def _resolve_missing_predictors(
         df: pd.DataFrame,
         *,
-        strategy: Literal["drop", "median"],
+        strategy: Literal["drop", "median", "carry_forward"] = "carry_forward",
     ) -> pd.DataFrame:
         """Handle missing predictor values when no country aggregation is used.
 
         Args:
             df: Input DataFrame.
-            strategy: ``"drop"`` to drop rows with any missing predictor/target,
-                ``"median"`` to median-impute numeric predictors then drop remaining NaNs.
+            strategy:
+                - ``carry_forward`` to forward-fill missing values using the last valid observation per country (default),
+                - ``"drop"`` to drop rows with any missing predictor/target,
+                - ``"median"`` to median-impute numeric predictors then drop remaining NaNs.
 
         Returns:
             Cleaned DataFrame according to the chosen strategy.
         """
         identifier_cols = {Col.COUNTRY, Col.YEAR}
         pred_cols = df.columns.difference(list(identifier_cols))
+
+        if strategy == "carry_forward":
+            if pred_cols.empty:
+                return df
+
+            filled = df.copy()
+
+            # Forward fill within each country in chronological order.
+            if Col.COUNTRY in filled.columns:
+                # Avoid pandas ambiguity when index name equals country column.
+                if filled.index.name == Col.COUNTRY:
+                    filled = filled.reset_index(drop=True)
+                sort_cols: list[str] = [Col.COUNTRY]
+                if Col.YEAR in filled.columns:
+                    sort_cols.append(Col.YEAR)
+                filled = filled.sort_values(sort_cols)
+                filled.loc[:, pred_cols] = filled.groupby(Col.COUNTRY, sort=False)[pred_cols].ffill()
+                return filled.dropna(subset=pred_cols)
+
+            if filled.index.name == Col.COUNTRY:
+                if Col.YEAR in filled.columns:
+                    filled = filled.sort_values(Col.YEAR)
+                filled.loc[:, pred_cols] = filled.groupby(level=0, sort=False)[pred_cols].ffill()
+                return filled.dropna(subset=pred_cols)
+
+            raise ValueError(
+                "carry_forward strategy requires a country column or an index named 'country'.",
+            )
 
         if strategy == "drop":
             return df.dropna(subset=pred_cols)
@@ -194,13 +253,13 @@ class LifeExpectancyDataset(BaseDataset):
     def feature_columns(
         self,
         include_target: bool = False,
-        extra_exclude: Iterable[str] | None = [Col.YEAR],
-        extra_include: Iterable[str] | None = [Col.STATUS],
+        extra_exclude: Iterable[str] | None = None,
+        extra_include: Iterable[str] | None = None,
     ) -> list[str]:
         return super().feature_columns(
             include_target=include_target,
-            extra_exclude=extra_exclude,
-            extra_include=extra_include,
+            extra_exclude=extra_exclude or [Col.YEAR],
+            extra_include=extra_include or [Col.STATUS],
         )
 
     def tf_and_norm(self, tf_map: dict[Col, Callable] | None = None) -> pd.DataFrame:
@@ -217,6 +276,41 @@ class LifeExpectancyDataset(BaseDataset):
         Returns:
             DataFrame with transforms applied and numeric columns standardized
             (mean=0, std=1) except for ``year`` and ``status``.
+        """
+        df = self.tf_only(tf_map=tf_map)
+
+        # Recompute numeric columns after transformations (status/year excluded)
+        numeric_cols = (
+            df.select_dtypes(include=["number"]).columns.difference([self.Col.STATUS, self.Col.YEAR]).tolist()
+        )
+        if self.Col.TARGET in numeric_cols:
+            numeric_cols.remove(self.Col.TARGET)
+
+        if numeric_cols:
+            # Median-impute numeric cols to avoid NaNs breaking StandardScaler
+            df.loc[:, numeric_cols] = df.loc[:, numeric_cols].apply(lambda s: s.fillna(s.median()))
+            df.loc[:, numeric_cols] = self.standardize(df)[numeric_cols]
+
+        return df
+
+    def tf_only(self, tf_map: dict[Col, Callable] | None = None) -> pd.DataFrame:
+        """Apply per-column transformations without standardization.
+
+        This is a "transform-only" counterpart to :meth:`tf_and_norm`. It is
+        useful when you need to:
+
+        - fit scaling parameters on a reference split/year and apply them to a
+          different dataset, or
+        - keep variables on their transformed but original scale (e.g., log1p
+          counts) for interpretability.
+
+        Args:
+            tf_map: Optional mapping from ``LifeExpectancyColumn`` to a callable that
+                accepts and returns a ``pd.Series``. Custom entries override defaults.
+                Set a value to ``None`` to drop a default transform.
+
+        Returns:
+            DataFrame with transforms applied. No z-scoring is performed.
         """
         df = self.df.copy()
 
@@ -239,19 +333,5 @@ class LifeExpectancyDataset(BaseDataset):
                     df = df.drop(columns=[col]).join(transformed)
                 else:
                     df[col] = transformed
-
-        # Recompute numeric columns after transformations (status/year excluded)
-        numeric_cols = (
-            df.select_dtypes(include=["number"])
-            .columns.difference([self.Col.STATUS, self.Col.YEAR])
-            .tolist()
-        )
-        if self.Col.TARGET in numeric_cols:
-            numeric_cols.remove(self.Col.TARGET)
-
-        if numeric_cols:
-            # Median-impute numeric cols to avoid NaNs breaking StandardScaler
-            df.loc[:, numeric_cols] = df.loc[:, numeric_cols].apply(lambda s: s.fillna(s.median()))
-            df.loc[:, numeric_cols] = self.standardize(df)[numeric_cols]
 
         return df
