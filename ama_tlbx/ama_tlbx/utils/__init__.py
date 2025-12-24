@@ -1,4 +1,9 @@
 from .paths import get_data_dir, get_dataset_path
+from .plotting_config import PlottingConfig
 
 
-__all__ = ["get_data_dir", "get_dataset_path"]
+__all__ = [
+    "PlottingConfig",
+    "get_data_dir",
+    "get_dataset_path",
+]
