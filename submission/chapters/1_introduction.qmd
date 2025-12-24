@@ -1,9 +1,38 @@
 ---
-title: "Intro"
+title: "Introduction"
 format:
   html:
     toc: true
 ---
 
-# Lifetime expectancy analysis
+# Life expectancy: motivation and scope
 
+We analyze the WHO “Life Expectancy” dataset (Kaggle) with 1 649 country‑year records (193 countries, 2000–2015). The core analyses use the 2014 cross‑section (n = 131) to avoid longitudinal dependence while retaining global coverage.
+
+- **Outcome and predictors.** The target is `life_expectancy` (years). Predictors span:
+
+  1. **Demography & mortality:** adult mortality, infant/under‑five deaths, HIV/AIDS.
+  2. **Immunization & burden:** HepB, Polio, Diphtheria coverage; measles cases.
+  3. **Socio‑economic & investment:** GDP per capita, health expenditure (% of GDP and % of government budget), income composition (HDI component), schooling.
+  4. **Nutrition & status:** BMI, thinness indicators, development status (0/1).
+
+- **Descriptive signal (2014 cross‑section, standardized):** life expectancy mean 70.5 years (SD 8.6; range 48.1–89.0). Strongest positive correlations with the target are income composition (r$\approx$0.89), schooling (r$\approx$0.80), BMI (r$\approx$0.56), alcohol (r$\approx$0.53), and status (r$\approx$0.50). Strongest negatives are adult mortality (r$\approx$−0.77), HIV/AIDS (r$\approx$−0.62), thinness 5–9y (r$\approx$−0.46), thinness 10–19y (r$\approx$−0.44), and under‑five deaths (r$\approx$−0.23). Multicollinearity hotspots include infant_deaths–under_five_deaths (r$\approx$0.995), GDP–percentage_expenditure (r$\approx$0.95), thinness pair (r$\approx$0.94), and income_composition–schooling (r$\approx$0.92).
+
+- **Outlier screening (2014, z‑scores):** 25 of 131 rows exceed |z|>3 on at least one predictor, concentrated in immunization rates (HepB, Diphtheria, Polio) and expenditure/GDP. We therefore report both IQR- and Z‑based checks before final models.
+
+- **Research questions.**
+
+  1. Which predictors have the most significant explanatory power for cross‑country life expectancy in 2014?
+  2. What interactions and nonlinearities exist in the cross-sectional data?
+  3. How do parsimonious vs. richer linear models compare on train vs. 5‑fold CV error?
+  4. Do key assumptions (linearity, normality, homoscedasticity, independence, leverage) hold, and how should violations be addressed?
+  5. How sensitive are results to outlier handling (IQR vs. Z‑score) and to multicollinearity among correlated blocks (HDI vs. schooling; immunization rates)?
+
+- **Analytical flow.**
+
+  1.  **Preprocessing:** header normalization, type conversion, 2014 aggregation, log transforms for skewed counts, z‑scoring of numeric predictors; documented missing‑value and outlier handling.
+  2. **Exploration:** correlation structure and grouped PCA to quantify redundancy and dominant dimensions.
+  3. **Modelling:** baseline univariate OLS, core multivariate OLS, assumption diagnostics, CV; supervised PCA + regression as an alternative to mitigate multicollinearity.
+  4. **Interpretation:** effect sizes with uncertainty, practical relevance, and stated limitations.
+
+- **Roadmap.** Preprocessing (Ch. 2) → PCA (Ch. 3) → Clustering (Ch. 4) → Regression (Ch. 5). Each chapter cites the generating notebook(s) for figures/tables to keep provenance explicit.
