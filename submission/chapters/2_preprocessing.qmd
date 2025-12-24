@@ -5,6 +5,75 @@ format:
     toc: true
 ---
 
-# Plot Data
+# Data Cleaning & Preprocessing
 
-# Remove outliers
+We operate on the WHO Life Expectancy dataset and apply a deterministic cleaning and preprocessing pipeline implemented in `LifeExpectancyDataset`. Raw CSV headers are normalized to snake_case to align with the `LifeExpectancyColumn` enum, `year` is parsed as a datetime variable, `status` is recoded into a binary indicator (1=developed), and all predictors are coerced to numeric where applicable. Observations with missing life expectancy are dropped to ensure a well-defined target for downstream modelling.
+
+Unless stated otherwise, the report focuses on a single cross-section (year 2014) to avoid longitudinal dependence. The choice of year is justified in the year selection chapter (`2_preproc_year_selection.qmd`). When aggregating to a single year, we average numeric predictors per country and impute residual gaps using country-level means. For analyses that require comparable scales (correlation, PCA, and standardized regression), we apply column-specific transforms and then z-score numeric predictors; identifiers and `status` remain on their native scale.
+
+The goal of this chapter is to document the preprocessing artifacts that are used consistently across subsequent analysis pages and notebooks.
+
+## Dataset snapshots
+
+```{python}
+# | label: tbl-dataset-snapshots
+# | tbl-cap: "Dataset snapshots after cleaning"
+import pandas as pd
+from ama_tlbx.data import LifeExpectancyDataset, LECol
+from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+
+DEFAULT_PLOT_CFG.apply_global()
+
+snapshots = {
+    "agg_2014": LifeExpectancyDataset.from_csv(aggregate_by_country=2014).df,
+    "agg_default_2007": LifeExpectancyDataset.from_csv().df,
+    "longitudinal": LifeExpectancyDataset.from_csv(aggregate_by_country=False).df,
+}
+
+rows = {name: len(df) for name, df in snapshots.items()}
+years = snapshots["longitudinal"][LECol.YEAR].dt.year
+
+pd.DataFrame(
+    {
+        "rows": rows,
+        "year_min": {
+            "longitudinal": years.min(),
+            "agg_2014": 2014,
+            "agg_default_2007": 2007,
+        },
+        "year_max": {
+            "longitudinal": years.max(),
+            "agg_2014": 2014,
+            "agg_default_2007": 2007,
+        },
+    }
+).astype({"rows": int})
+```
+
+## Column transformations (tf_and_norm)
+
+```{python}
+# | label: tbl-transforms
+# | tbl-cap: "Per-column transforms applied before standardization"
+from ama_tlbx.data.life_expectancy_columns import LifeExpectancyColumn as Col
+
+rows = []
+for col in Col:
+    tf = col.transform
+    tf_name = tf.__name__ if tf is not None else "none"
+    rows.append(
+        {
+            "column": col.value,
+            "pretty": col.pretty_name,
+            "transform": tf_name,
+        }
+    )
+
+pd.DataFrame(rows).sort_values("column")
+```
+
+Notes:
+
+Skewed count and intensity variables are transformed using `log1p` (for example GDP, child mortality counts, measles cases, HIV/AIDS prevalence, thinness indicators, alcohol consumption, population, and expenditure measures). For immunization rates, we emphasize shortfall rather than saturation by transforming `log1p(100 - coverage)`. Variables that are already well-behaved on their native scale (for example BMI, schooling, income composition, and status) are left untransformed. After transformation, numeric predictors are imputed if needed (median-based) and standardized; the target is not standardized.
+
+Correlation analysis and outlier diagnostics are treated as dedicated analysis chapters because they motivate PCA and inform regression model specification. For details, see `3_correlation.qmd` (correlation structure and multicollinearity) and `2_outlier_detection.qmd` (outlier detection methods and sensitivity).

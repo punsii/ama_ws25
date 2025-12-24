@@ -1,0 +1,280 @@
+---
+title: "Year Selection"
+format:
+  html:
+    toc: true
+---
+
+# Selecting a representative cross-sectional year
+
+The WHO Life Expectancy dataset is a longitudinal country-year panel. Most multivariate procedures used later in this report (correlations, PCA, clustering, and regression) are treated as cross-sectional analyses. To avoid within-country temporal dependence while retaining global coverage and representativeness, we select a single representative year that is both recent and of high data quality. The selection combines two complementary diagnostics: data completeness across predictors, and a
+    proxy for longitudinal typicality based on the number of multivariate anomalies per year as identified by Isolation Forest.
+
+
+```{python}
+# | label: setup-year-selection
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+
+DEFAULT_PLOT_CFG.apply_global()
+np.random.seed(42)
+```
+
+## Load the longitudinal panel
+
+```{python}
+# | label: load-longitudinal
+le_ds = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=False,
+    drop_missing_target=False,
+    resolve_nand_pred=False,
+)
+
+df = le_ds.df
+
+print(f"Total observations: {len(df):,}")
+print(f"Countries: {df[LECol.COUNTRY].nunique()}")
+print(f"Years: {df[LECol.YEAR].nunique()}")
+print(
+    f"Year range: {df[LECol.YEAR].dt.year.min():.0f} - {df[LECol.YEAR].dt.year.max():.0f}"
+)
+```
+
+The panel spans 2000 to 2015 and covers 193 countries. The year selection problem is therefore primarily a question of completeness: which year retains the largest number of usable countries and predictors, while staying close to the present end of the panel.
+
+## Data completeness by year
+
+For each year $y$, we summarize country coverage, target availability, and average predictor missingness. To fuse these aspects into a single indicator, we define a completeness score
+
+$$
+CS_y = \frac{n^{(t)}_y}{n_y}\,(100 - m_y),
+$$
+
+where $n_y$ is the number of available country records in year $y$, $n^{(t)}_y$ is the number of countries with observed life expectancy, and $m_y$ is the mean percentage of missing values across numeric predictors in that year. Higher values indicate broader coverage and fewer missing predictors.
+
+```{python}
+# | label: tbl-year-completeness
+# | tbl-cap: "Data completeness metrics by year."
+numeric_cols = le_ds.numeric_cols
+
+year_stats = (
+    df.groupby(LECol.YEAR)
+    .agg(
+        n_countries=(LECol.COUNTRY, "count"),
+        n_countries_with_target=(LECol.TARGET, lambda x: x.notna().sum()),
+        pct_missing_target=(LECol.TARGET, lambda x: x.isna().mean() * 100),
+        pct_missing_all=(
+            numeric_cols[0],
+            lambda x: df.loc[x.index, numeric_cols].isna().mean().mean() * 100,
+        ),
+    )
+    .reset_index()
+    .assign(
+        completeness_score=lambda d: d["n_countries_with_target"]
+        * (100 - d["pct_missing_all"])
+        / d["n_countries"]
+    )
+    .sort_values(by="completeness_score", ascending=False)
+)
+
+year_stats
+```
+
+```{python}
+# | label: fig-completeness-over-time
+# | fig-cap: "Completeness score and missingness over time."
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+year_stats_time = year_stats.sort_values(LECol.YEAR).assign(
+    year=lambda d: d[LECol.YEAR].dt.year,
+    completeness_rank=lambda d: d["completeness_score"]
+    .rank(ascending=False)
+    .astype(int),
+)
+
+sns.barplot(
+    data=year_stats_time,
+    x="year",
+    y="completeness_score",
+    hue="completeness_rank",
+    alpha=0.7,
+    ax=ax1,
+    palette="coolwarm",
+)
+ax1.legend()
+ax1.set_xlabel("Year")
+ax1.set_ylabel("Completeness Score")
+ax1.set_title("Data Quality Score by Year")
+ax1.tick_params(axis="x", rotation=45)
+ax1.set_yscale("log")
+
+sns.lineplot(
+    data=year_stats_time.melt(
+        id_vars="year",
+        value_vars=["pct_missing_all", "pct_missing_target"],
+        var_name="Category",
+        value_name="Missing %",
+    ).replace({"pct_missing_all": "All Features", "pct_missing_target": "Life Expectancy"}),
+    x="year",
+    y="Missing %",
+    hue="Category",
+    markers=True,
+    dashes=False,
+    linewidth=2,
+    ax=ax2,
+)
+ax2.set_xlabel("Year")
+ax2.set_ylabel("Missing Data (%)")
+ax2.set_title("Missing Data Over Time")
+ax2.legend(title=None)
+
+plt.tight_layout()
+plt.show()
+```
+
+The completeness diagnostics indicate a clear improvement over time, with the most recent years generally exhibiting fewer missing predictors. Two exceptions are important for selection. First, 2013 includes all 193 countries but has missing life expectancy for a subset, so target completeness is worse than in adjacent years. Second, 2015 has a markedly worse overall completeness score, consistent with increased predictor missingness and the interpretation that the final year may be incompletely integrated in the published dataset. For cross-sectional modelling, this makes 2015 a poor representative year despite its recency.
+
+## Multivariate anomaly burden in candidate years
+
+Completeness does not guarantee that a year is structurally typical. To complement the missingness screen, we compute a multivariate anomaly proxy using Isolation Forest. For each candidate year, we summarize the mean number of flagged feature-level anomalies per country. Lower values indicate that country profiles are more coherent in multivariate space.
+
+```{python}
+# | label: fig-outliers-by-year
+# | fig-cap: "Mean Isolation Forest outlier counts per row for candidate years."
+candidate_years = list(range(2007, 2015))
+candidate_years.remove(2013)
+
+ds = LifeExpectancyDataset(
+    df=df[df[LECol.YEAR].dt.year.isin(candidate_years)].set_index(LECol.YEAR)
+)
+print(ds.df.index.year.unique())
+
+iso_forest_results = (
+    ds.make_isolation_forest_outlier_detector(n_estimators=100, random_state=42)
+    .fit()
+    .result()
+)
+
+df_mean_outliers = (
+    iso_forest_results.n_outliers_per_row.reset_index()
+    .groupby(LECol.YEAR)
+    .mean()
+    .reset_index()
+    .assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .rename(columns={0: "mean_outliers"})
+    .sort_values("mean_outliers")
+)
+
+sns.barplot(
+    df_mean_outliers,
+    x=LECol.YEAR,
+    y="mean_outliers",
+    hue="mean_outliers",
+    palette="coolwarm",
+)
+plt.ylabel("Mean # outlier features")
+plt.show()
+```
+
+The anomaly burden is comparatively stable across the modern candidate window, with modest variation in mean outlier counts. This suggests that, once the most incomplete years are excluded, the remaining candidates differ primarily in completeness rather than in extreme multivariate irregularity.
+
+## Combined quality score and final recommendation
+
+To balance completeness with anomaly burden, we normalize both criteria within the candidate window to a common 0--100 scale. Completeness is normalized linearly, while anomaly burden is turned into an outlier quality score by inverting and scaling mean outliers. The combined score
+
+$$
+Q_y = 0.6\,CS^{\star}_y + 0.4\,O^{\star}_y
+$$
+
+prioritizes completeness, while still penalizing years with unusually many outliers.
+
+```{python}
+# | label: fig-combined-year-score
+# | fig-cap: "Normalized completeness, outlier quality, and the combined score."
+comparison_df = (
+    year_stats[year_stats[LECol.YEAR].dt.year.isin(candidate_years)]
+    .assign(year=lambda d: d[LECol.YEAR].dt.year)[["year", "completeness_score"]]
+    .merge(
+        iso_forest_results.n_outliers_per_row.reset_index()
+        .assign(year=lambda d: d[LECol.YEAR].dt.year)
+        .groupby("year", as_index=False)
+        .agg(mean_outliers=(0, "mean")),
+        on="year",
+    )
+    .assign(
+        completeness_norm=lambda d: (
+            d["completeness_score"] - d["completeness_score"].min()
+        )
+        / (d["completeness_score"].max() - d["completeness_score"].min())
+        * 100,
+        outlier_quality_norm=lambda d: (1 - d["mean_outliers"] / d["mean_outliers"].max())
+        * 100,
+        combined_score=lambda d: d["completeness_norm"] * 0.6
+        + d["outlier_quality_norm"] * 0.4,
+    )
+)
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+sns.barplot(
+    data=comparison_df.melt(
+        id_vars="year",
+        value_vars=["completeness_norm", "outlier_quality_norm"],
+        var_name="Metric",
+        value_name="Score",
+    ).replace(
+        {
+            "completeness_norm": "Data completeness",
+            "outlier_quality_norm": "Outlier quality",
+        }
+    ),
+    x="year",
+    y="Score",
+    hue="Metric",
+    ax=ax1,
+)
+ax1.set(
+    xlabel="Year",
+    ylabel="Normalized score (0--100)",
+    title="Completeness vs outlier quality",
+)
+ax1.legend(title=None)
+ax1.grid(True, alpha=0.3, axis="y")
+
+sns.barplot(
+    data=comparison_df,
+    x="year",
+    y="combined_score",
+    color="darkgreen",
+    alpha=0.7,
+    ax=ax2,
+)
+
+best_idx = comparison_df["combined_score"].idxmax()
+best_year = comparison_df.loc[best_idx, "year"]
+
+ax2.set(
+    xlabel="Year",
+    ylabel="Combined score",
+    title="Combined quality score\n(60% completeness + 40% low outliers)",
+)
+ax2.grid(True, alpha=0.3, axis="y")
+sns.despine(fig=fig)
+plt.tight_layout()
+plt.show()
+
+print(f"\n{'=' * 70}\nFINAL YEAR RECOMMENDATION\n{'=' * 70}")
+print(f"  Best year: {int(best_year)}")
+print(f"   Combined score: {comparison_df.loc[best_idx, 'combined_score']:.1f}/100")
+print(f"   Completeness: {comparison_df.loc[best_idx, 'completeness_score']:.1f}")
+print(f"   Mean outliers: {comparison_df.loc[best_idx, 'mean_outliers']:.2f}")
+print("=" * 70)
+```
+
+The combined score selects 2014 as the representative cross-section. With a fixed Isolation Forest seed for reproducibility ($random\_state = 42$), the 2014 snapshot achieves the maximum normalized completeness and a low anomaly burden relative to other recent years. This year is therefore used as the default cross-section in the subsequent chapters. The resulting preprocessing pipeline is documented in `2_preprocessing.qmd`, and outlier handling is discussed in `2_outlier_detection.qmd`.
+
