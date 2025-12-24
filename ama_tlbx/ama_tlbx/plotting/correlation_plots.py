@@ -160,3 +160,52 @@ def plot_target_correlations(
     fig_neg.tight_layout()
 
     return fig_pos, fig_neg
+
+
+def plot_scatter_vs_target(
+    df: pd.DataFrame,
+    features: list[str],
+    target: str,
+    hue: str | None = None,
+    wrap: int = 4,
+):
+    target = str(target)
+    hue = str(hue) if hue else None
+
+    # remove target/hue from features to avoid duplicates
+    drop_set = {target} | ({hue} if hue else set())
+    features = [str(f) for f in features if str(f) not in drop_set]
+
+    id_vars = [target] + ([hue] if hue else [])
+    long = df[features + id_vars].melt(
+        id_vars=id_vars,
+        value_vars=features,
+        var_name="feature",
+        value_name="value",
+    )
+
+    height = max(2.5, min(4.0, 14 / wrap))
+    g = sns.FacetGrid(
+        long,
+        col="feature",
+        col_wrap=wrap,
+        sharex=False,
+        sharey=False,
+        height=height,
+        hue=hue,
+        palette="Set2" if hue else None,
+    )
+    g.map_dataframe(
+        sns.scatterplot,
+        x="value",
+        y=target,
+        alpha=0.7,
+        s=30,
+        edgecolor=None,
+    )
+    g.set_titles("{col_name}")
+    g.set_axis_labels("feature value", target)
+    if hue:
+        g.add_legend()
+    plt.tight_layout()
+    return g
