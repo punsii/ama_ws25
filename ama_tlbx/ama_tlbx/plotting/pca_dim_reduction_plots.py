@@ -86,8 +86,8 @@ def plot_group_variance_summary(
         )
         ax.legend(loc="lower right")
 
-    fig.tight_layout()
-    return fig
+        fig.tight_layout()
+        return fig
 
 
 def plot_group_compression(
@@ -179,20 +179,13 @@ def plot_group_loadings(
     for idx, gr in enumerate(result.group_results):
         ax = axes[idx]
 
-        # Get ALL loadings from explained_variance (not just retained ones)
-        # We need to reconstruct full loadings from the PCA result
-        # The gr.loadings only contains retained PCs, but we want to show all
         all_loadings = gr.loadings.copy()
-
-        # Use pretty names from result for row index (features)
         all_loadings.index = [result.pretty_by_col.get(f, f) for f in all_loadings.index]
 
-        # Create custom y-axis labels to mark retained PCs
         n_retained = gr.n_components
         n_total = len(all_loadings.columns)
         y_labels = [f"{col} (y)" if i < n_retained else f"{col} (n)" for i, col in enumerate(all_loadings.columns)]
 
-        # Heatmap (transpose so PCs are rows, features are columns)
         sns.heatmap(
             all_loadings.T,
             annot=True,
@@ -206,7 +199,6 @@ def plot_group_loadings(
             yticklabels=y_labels,
         )
 
-        # Highlight retained PCs with background color
         for i in range(n_retained, n_total):
             ax.axhspan(i, i + 1, facecolor="lightgray", alpha=0.2, zorder=0)
 

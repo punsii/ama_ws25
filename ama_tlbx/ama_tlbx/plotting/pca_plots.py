@@ -1,5 +1,6 @@
 """PCA visualization functions."""
 
+from collections.abc import Sequence
 from typing import Literal
 
 import matplotlib.pyplot as plt
@@ -10,6 +11,71 @@ import seaborn as sns
 from matplotlib.figure import Figure
 
 from ama_tlbx.analysis.pca_analyzer import PCAResult
+from ama_tlbx.analysis.pca_dim_reduction import GroupPCAResult
+
+
+def _ensure_loadings_df(loadings: pd.DataFrame | pd.Series) -> pd.DataFrame:
+    """Guarantee a DataFrame of loadings."""
+    if isinstance(loadings, pd.Series):
+        return loadings.to_frame(name=loadings.name or "PC1")
+    return loadings
+
+
+def _compute_top_features(loadings: pd.DataFrame) -> pd.Index:
+    """Rank features by L2 norm across PCs."""
+    return (loadings.pow(2).sum(axis=1) ** 0.5).sort_values(ascending=False).index
+
+
+def _standardize_pca_result(
+    result: PCAResult | GroupPCAResult,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Index]:
+    """Return (scores, loadings, explained, top_features_global) with unified column names."""
+    if isinstance(result, GroupPCAResult):
+        loadings = _ensure_loadings_df(result.loadings.copy())
+        scores = result.pc_scores.copy()
+        prefix = f"{result.group.name}_"
+        scores = scores.rename(columns=lambda c: c.removeprefix(prefix))
+        explained = result.explained_variance
+        top_features_global = _compute_top_features(loadings)
+    elif isinstance(result, PCAResult):
+        loadings = _ensure_loadings_df(result.loadings.copy())
+        scores = result.scores.copy()
+        explained = result.explained_variance
+        top_features_global = getattr(result, "top_features_global", _compute_top_features(loadings))
+    else:
+        raise TypeError("result must be PCAResult or GroupPCAResult")
+
+    return scores, loadings, explained, top_features_global
+
+
+def _normalize_pc_name(pc: str | int) -> str:
+    """Convert component identifiers to canonical 'PCk' strings."""
+    if isinstance(pc, int):
+        return f"PC{pc}"
+    pc_str = str(pc)
+    return pc_str if pc_str.upper().startswith("PC") else f"PC{pc_str}"
+
+
+def _select_pc_columns(
+    available: pd.Index,
+    n_components: int,
+    pc_subset: Sequence[str | int] | None = None,
+    required_len: int | None = None,
+) -> list[str]:
+    """Resolve which PC columns to use, validating availability and length."""
+    if pc_subset is None:
+        pc_cols = [f"PC{i}" for i in range(1, n_components + 1)]
+    else:
+        pc_cols = [_normalize_pc_name(pc) for pc in pc_subset]
+
+    if required_len is not None and len(pc_cols) != required_len:
+        raise ValueError(f"Expected {required_len} components, got {len(pc_cols)}")
+
+    missing = [pc for pc in pc_cols if pc not in available]
+    if missing:
+        raise ValueError(f"Requested components {missing} not available. Available: {list(available)}")
+
+    return pc_cols
 
 
 def plot_explained_variance(
@@ -17,7 +83,12 @@ def plot_explained_variance(
     figsize: tuple[int, int] = (10, 6),
     bar: Literal["explained_ratio", "variance"] = "variance",
 ) -> Figure:
-    """Plot explained variance (or explained ratio) with cumulative curve."""
+    """Plot explained variance (or explained ratio) with cumulative curve.
+
+    Combines [:func:`seaborn.barplot`](https://seaborn.pydata.org/generated/seaborn.barplot.html) and
+    [:func:`seaborn.lineplot`](https://seaborn.pydata.org/generated/seaborn.lineplot.html) to mirror the
+    classic PCA scree plot.
+    """
     fig, ax1 = plt.subplots(figsize=figsize)
     x = np.arange(len(result.explained_variance))
     sns.barplot(x=x, y=result.explained_variance[bar], ax=ax1, color="skyblue")
@@ -40,17 +111,27 @@ def plot_explained_variance(
 
 
 def plot_loadings_heatmap(
-    result: PCAResult,
+    result: PCAResult | GroupPCAResult,
     n_components: int = 3,
     top_n_features: int | None = None,
     figsize: tuple[int, int] = (12, 6),
+    pc_subset: Sequence[str | int] | None = None,
 ) -> Figure:
-    """Heatmap of loadings ordered by precomputed ranking."""
-    loadings = result.loadings
-    if isinstance(loadings, pd.Series):
-        loadings = loadings.to_frame(name="PC1")
-    pc_cols = list(loadings.columns[:n_components])
-    ranked = result.top_features_global
+    """Heatmap of loadings ordered by feature importance.
+
+    Displays component loadings via [:func:`seaborn.heatmap`](https://seaborn.pydata.org/generated/seaborn.heatmap.html), optionally
+    restricted to the strongest features.
+
+    Args:
+        result: PCAResult or GroupPCAResult to visualize.
+        n_components: Number of leading PCs to show (ignored when pc_subset is provided).
+        top_n_features: Limit to the top-N features by loading magnitude across the selected PCs.
+        figsize: Figure size.
+        pc_subset: Explicit list of PC names or indices to plot (e.g., ["PC1", "PC3"] or [1, 3]).
+    """
+    _, loadings, _, top_features_global = _standardize_pca_result(result)
+    pc_cols = _select_pc_columns(loadings.columns, n_components, pc_subset)
+    ranked = top_features_global
     if top_n_features is not None:
         ranked = ranked[:top_n_features]
     loadings = loadings.loc[ranked, pc_cols]
@@ -63,9 +144,10 @@ def plot_loadings_heatmap(
 
 
 def plot_biplot_plotly(
-    result: PCAResult,
+    result: PCAResult | GroupPCAResult,
     *,
     dims: int = 2,
+    pc_axes: Sequence[str | int] | None = None,
     top_features: int | None = 8,
     color: pd.Series | np.ndarray | None = None,
     color_palette: str | list | None = "orrd",
@@ -74,18 +156,21 @@ def plot_biplot_plotly(
     height: int = 700,
     width: int = 900,
 ) -> go.Figure:
-    """Interactive biplot (2D/3D) with optional hover metadata."""
+    """Interactive biplot (2D/3D) with optional hover metadata.
+
+    Implemented with Plotly's [:class:`plotly.graph_objects.Scatter`](https://plotly.com/python/line-and-scatter/) /
+    [:class:`plotly.graph_objects.Scatter3d`](https://plotly.com/python/line-and-scatter/) for scores and loadings.
+    """
     if dims not in (2, 3):
         raise ValueError("dims must be 2 or 3")
 
-    scores = result.scores.copy()
-    loadings = result.loadings.copy()
-    pc_cols = [f"PC{i}" for i in range(1, dims + 1)]
-    if any(pc not in scores.columns or pc not in loadings.columns for pc in pc_cols):
-        raise ValueError(f"Requested {dims}D biplot but only found columns {list(scores.columns)}")
+    scores, loadings, _, top_features_global = _standardize_pca_result(result)
+    pc_cols = _select_pc_columns(loadings.columns, dims, pc_subset=pc_axes, required_len=dims)
+    if any(pc not in scores.columns for pc in pc_cols):
+        raise ValueError(f"Requested {dims}D biplot but only found score columns {list(scores.columns)}")
 
-    if top_features is not None and hasattr(result, "top_features_global"):
-        loadings = loadings.loc[result.top_features_global[:top_features]]
+    if top_features is not None:
+        loadings = loadings.loc[top_features_global[:top_features]]
 
     score_span = float(np.abs(scores[pc_cols].to_numpy()).max() or 1.0)
     loading_span = float(np.abs(loadings[pc_cols].to_numpy()).max() or 1.0)
@@ -125,7 +210,13 @@ def plot_biplot_plotly(
         for feat, row in loadings.iterrows():
             lx, ly = row[pc_cols[0]] * scale, row[pc_cols[1]] * scale
             fig.add_trace(
-                go.Scatter(x=[0, lx], y=[0, ly], mode="lines", line=dict(color="firebrick", width=2), showlegend=False),
+                go.Scatter(
+                    x=[0, lx],
+                    y=[0, ly],
+                    mode="lines",
+                    line=dict(color="firebrick", width=2),
+                    showlegend=False,
+                ),
             )
             fig.add_trace(
                 go.Scatter(
@@ -186,7 +277,7 @@ def plot_biplot_plotly(
         fig.update_layout(scene=dict(xaxis_title=pc_cols[0], yaxis_title=pc_cols[1], zaxis_title=pc_cols[2]))
 
     fig.update_layout(
-        title="PCA Biplot",
+        title=f"{getattr(result, 'group', None).name if isinstance(result, GroupPCAResult) else 'PCA'} Biplot",
         width=width,
         height=height,
         template="plotly_white",
