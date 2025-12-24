@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Self
 
 import pandas as pd
+from sklearn.decomposition import PCA
 
 from ama_tlbx.data.base_columns import BaseColumn
 from ama_tlbx.data.views import DatasetView
@@ -17,7 +18,7 @@ class FeatureGroup:
     """A group of correlated features to be reduced via PCA.
 
     Attributes:
-        name: Interpretable name for this group (e.g., "Immunization", "Mortality")
+        name: Name for this group (e.g., "Immunization", "Mortality")
         features: List of feature names in this group - i.e. the columns in the original data.
     """
 
@@ -40,6 +41,7 @@ class GroupPCAResult:
         n_features: Number of original features in the group
         n_components: Number of principal components retained
         min_var_explained: Minimum variance threshold used to determine n_components
+        pca_model: Fitted scikit-learn PCA model for transforming new data.
     """
 
     group: FeatureGroup
@@ -49,6 +51,7 @@ class GroupPCAResult:
     n_features: int
     n_components: int
     min_var_explained: float
+    pca_model: PCA
 
     @property
     def explained_variance_retained(self) -> pd.Series:
@@ -93,6 +96,55 @@ class PCADimReductionResult:
     reduced_n_features: int
     pretty_by_col: dict[str, str]
     min_var_explained_per_group: list[float]
+
+    # ------------------------------------------------------------------ plotting shortcuts
+    def plot_group_variance_summary(self, **kwargs: object):
+        """Plot cumulative explained variance per group via helper function."""
+        from ama_tlbx.plotting.pca_dim_reduction_plots import plot_group_variance_summary  # noqa: PLC0415
+
+        return plot_group_variance_summary(self, **kwargs)
+
+    def plot_group_compression(self, **kwargs: object):
+        """Plot original vs reduced dimensionality per feature group."""
+        from ama_tlbx.plotting.pca_dim_reduction_plots import plot_group_compression  # noqa: PLC0415
+
+        return plot_group_compression(self, **kwargs)
+
+    def plot_group_loadings(self, **kwargs: object):
+        """Plot feature loadings on retained PCs for each group."""
+        from ama_tlbx.plotting.pca_dim_reduction_plots import plot_group_loadings  # noqa: PLC0415
+
+        return plot_group_loadings(self, **kwargs)
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Transform new data into the retained group PC scores.
+
+        Args:
+            df: DataFrame containing the original feature columns for every
+                feature group in this result.
+
+        Returns:
+            DataFrame with the same columns as ``reduced_df`` (group PC scores),
+            index aligned to the provided ``df``.
+        """
+        frames: list[pd.DataFrame] = []
+        for gr in self.group_results:
+            missing = set(gr.group.features) - set(df.columns)
+            if missing:
+                raise KeyError(f"Missing columns for group '{gr.group.name}': {sorted(missing)}")
+
+            x = df.loc[:, gr.group.features]
+            transformed = gr.pca_model.transform(x)[:, : gr.n_components]
+            frames.append(
+                pd.DataFrame(
+                    transformed,
+                    index=df.index,
+                    columns=[f"{gr.group.name}_PC{j + 1}" for j in range(gr.n_components)],
+                ),
+            )
+        reduced = pd.concat(frames, axis=1)
+        reduced.index = df.index
+        return reduced
 
     @property
     def compression_ratio(self) -> float:
@@ -160,7 +212,6 @@ class PCADimReductionAnalyzer(BaseAnalyser):
         view: DatasetView,
         feature_groups: list[FeatureGroup],
         min_var_explained: float | list[float] = 0.8,
-        target_col: str | None = None,  # TODO
     ):
         """Dimensionality reduction via PCA on correlated feature groups.
 
@@ -173,7 +224,6 @@ class PCADimReductionAnalyzer(BaseAnalyser):
                 - float: Same threshold for all groups (default: 0.8)
                 - list[float]: Specific threshold for each group (must match length)
                 Values must be between 0 and 1.
-            target_col: (Optional) If specified, weight PCA features by their association with the target variable.
 
         Raises:
             ValueError: If feature groups are empty, contain invalid columns, or min_var_explained specification is invalid
@@ -276,6 +326,7 @@ class PCADimReductionAnalyzer(BaseAnalyser):
                 n_features=len(group.features),
                 n_components=n_comp,
                 min_var_explained=threshold,
+                pca_model=pca_analyzer.model,
             )
             self._group_results.append(group_result)
 

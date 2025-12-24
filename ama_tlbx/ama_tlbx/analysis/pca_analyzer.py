@@ -1,7 +1,7 @@
 """PCA analysis for dimensionality reduction and feature interpretation."""
 
 from dataclasses import dataclass
-from typing import Dict, Literal
+from typing import Literal
 
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -26,7 +26,26 @@ class PCAResult:
     loadings: pd.DataFrame
     explained_variance: pd.DataFrame
     top_features_global: pd.Index
-    top_features_per_pc: Dict[str, pd.Index]
+    top_features_per_pc: dict[str, pd.Index]
+
+    # ------------------------------------------------------------------ plotting shortcuts
+    def plot_explained_variance(self, **kwargs: object):
+        """Plot explained variance using shared plotting helper."""
+        from ama_tlbx.plotting.pca_plots import plot_explained_variance  # noqa: PLC0415
+
+        return plot_explained_variance(self, **kwargs)
+
+    def plot_loadings_heatmap(self, **kwargs: object):
+        """Plot loadings heatmap (optionally top-N features)."""
+        from ama_tlbx.plotting.pca_plots import plot_loadings_heatmap  # noqa: PLC0415
+
+        return plot_loadings_heatmap(self, **kwargs)
+
+    def plot_biplot(self, **kwargs: object):
+        """Plot 2D/3D biplot."""
+        from ama_tlbx.plotting.pca_plots import plot_biplot_plotly  # noqa: PLC0415
+
+        return plot_biplot_plotly(self, **kwargs)
 
 
 class PCAAnalyzer:
@@ -114,6 +133,13 @@ class PCAAnalyzer:
             },
         )
 
+    @property
+    def model(self) -> PCA:
+        """Return the fitted scikit-learn PCA model."""
+        if self._pca_model is None:
+            raise ValueError("PCA model not fitted. Call fit() first.")
+        return self._pca_model
+
     def get_loading_vectors(
         self,
         component: int | None = None,
@@ -180,7 +206,7 @@ class PCAAnalyzer:
             loadings = loadings.to_frame(name="PC1")
         explained = self.get_explained_variance()
         top_global = self.get_top_loading_features(n_components=loadings.shape[1])
-        top_per_pc: Dict[str, pd.Index] = {
+        top_per_pc: dict[str, pd.Index] = {
             pc: loadings[pc].abs().sort_values(ascending=False).index for pc in loadings.columns
         }
         return PCAResult(

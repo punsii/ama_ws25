@@ -29,6 +29,25 @@ class CorrelationResult:
     feature_pairs: pd.DataFrame
     target_correlations: pd.DataFrame | None = None
 
+    # ------------------------------------------------------------------ plotting shortcuts
+    def plot_heatmap(self, **kwargs: object):
+        """Plot correlation heatmap using the plotting helper."""
+        from ama_tlbx.plotting.correlation_plots import plot_correlation_heatmap  # noqa: PLC0415
+
+        return plot_correlation_heatmap(self, **kwargs)
+
+    def plot_top_pairs(self, **kwargs: object):
+        """Plot top positive/negative correlated pairs."""
+        from ama_tlbx.plotting.correlation_plots import plot_top_correlated_pairs  # noqa: PLC0415
+
+        return plot_top_correlated_pairs(self, **kwargs)
+
+    def plot_target_correlations(self, **kwargs: object):
+        """Plot correlations with the target variable."""
+        from ama_tlbx.plotting.correlation_plots import plot_target_correlations  # noqa: PLC0415
+
+        return plot_target_correlations(self, **kwargs)
+
 
 class CorrelationAnalyzer(BaseAnalyser):
     """Analyzer for computing feature correlations.
