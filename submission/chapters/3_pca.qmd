@@ -82,22 +82,25 @@ assert(not concat_dataset.df.empty)
 
 ## Dimensionality reduction
 
-Performing analysis on large invaried data often leads to significant noise, unwanted or unneeded data in further analysis.
-To combat this a dimensionality reduction can be performed on the dataset using a PCA.
-The goal here is to make sure that unneeded columns are merged together if they share variance, thus reducing our column size.
+Performing analysis on large data sets often leads to significant noise, unwanted or unneeded data in further analysis.
+To combat this dimensionality reduction can be performed on the data set using principal component analysis (PCA).
+The goal is to reduce the number of features by merging columns that have high covariance, thus reducing our column size.
 
 ### Methodology
 
-So the process we went with for data concatination was as follows:
-- Extract columns you want to remove from original dataframe (DF) and put them into their own dataframe (DF-A) and make a dataframe containing the removed columns (DF-B)
-- Perform a PCA with dimensionality of 1 on the columns (DF-A).
-- Extract the loadings from the PCA.
-- Take the loadings and lift them to the power of 2 effectively normalising them.
-- Row by Row create new row based in (DF-B) based on weighted sum of the analysed columns row.
+Our process for merging columns was as follows:
+
+1. Extract the columns that should be merged to a separate dataframe (DF-A).
+2. Add all other columns to a second dataframe (DF-B).
+3. Perform a PCA with dimensionality of 1 on the columns (DF-A).
+4. Extract the loadings from the PCA.
+5. Take the loadings and raise them to the power of 2 in order to normalize them.
+6. Add a new column in (DF-B) based on the weighted sum of the analyzed columns.
 
 ### Implementation
 
-The implementation for the PCA concatination follows the methodology outlined in the Section above. It operates by taking a dataframe, a list of columns and returns a modified Dataset with the old columns removed
+The implementation for the PCA concatenation follows the methodology outlined in the section above.
+It takes a dataframe and a list of column names as inputs and returns a reduced dataframe.
 ```python
 def concatenate(
         self,
@@ -123,11 +126,13 @@ The function starts with getting the columns and performing a PCA to get the loa
         )
 ```
 
-The way PCA loadings work is that the sum of all loadings squared add up to 1. We can use this advantagously to get each columns contributon to the principle component. For this analysis we opted to keep only one Principle Component, mostly due to explainability.
+In PCA, the loadings are normalized such that the sum of their squared values equals one.
+We can use this to get each columns contribution to the principle component.
+For this analysis we opted to keep only one principle component in order to be able to interpret the result.
 
 $$ w_i = l_i^2 $$
 
-Then at the end you can merge the new cell that has the loadings into the datafram that has the old cells removed.
+In the end we add the resulting column into the dataframe DF-B.
 ```python
         loadings["loading"] **= 2
         self.loadings = loadings
@@ -138,7 +143,7 @@ Then at the end you can merge the new cell that has the loadings into the datafr
 
         available = [f for f in weights.index if f in only_columns.columns]
         if len(available) == 0:
-            raise ValueError("None of the PCA features are present in the DataFrame columns")
+            raise ValueError("None of the PCA features are present in the dataframe columns")
 
         selected = only_columns[available].fillna(0)
 
@@ -146,15 +151,14 @@ Then at the end you can merge the new cell that has the loadings into the datafr
         only_not_columns[new_column_name] = weighted_series
 
         return self.dataset.with_df(only_not_columns)
-
 ```
 
 ### Findings
 
-Finding candidates for column concatinations originally involved looking at the descriptions of the columns.
-One candidates that stood out were the columns 'Hepatitis B' , 'Polio' and 'Diphtheria' all having a minimum value of around 1-3 and a maximum value of 99.
-This means that there is a high likelyhood of this data is correlated.
-The meta-data gathered from concatinating these columns returns the values of:
+Finding candidates for column concatenations originally involved looking at the descriptions of the columns.
+One group of candidates that stood out were the columns 'Hepatitis B', 'Polio' and 'Diphtheria',
+which alle have a pairwise correlation value between 0.48 and 0.67.
+The meta-data gathered from concatenating these columns returns the values of:
 
 
 ```{python}
@@ -164,36 +168,36 @@ The meta-data gathered from concatinating these columns returns the values of:
 column_concatinator.print_results()
 ```
 
-Based on these values we get a weight values for the first PC column of around 0.25 to 0.4, which roughly makes sense. Most of them ringe around the value of ```0.33``` which should make sense for correlated variables.
-Secondly we also get an explained variance of 89% for the first column. Which is high showing a strong correlation between each column.
-However not high enough to where you could safely concat them with no pratical dataloss.
+The explained variance of 89% shows a strong correlation between these columns, however 
+not high enough to safely merge them with no practical data loss.
 
-In our case since we aren't as much intrested in the which deceases are the biggest contributors to life expecency. We decided to concat the columns, perhaps with the ability to do further analysis on which vaccine is best for life expectancy.
-The reason for ommiting this analysis point is that the variance between them is to similar in this dataset so we dont belive the time is at the given moment best spent there.
+Since "Immunization rate" is an easy to interpret variable and we are not interested in analyzing the different deceases,
+we decided to merge the columns, leaving the room for further analysis of the contribution of different vaccines on life expectancy.
 
-Other columns concatination candiates are way more clear cut when it came to whether or not to concatinate them:
-
+For other groups of columns the question of whether or not to merge them was more clear cut:
 ```{python}
 #| label: pca-babydeath
-#| fig-cap: "Coefficients for Baby Deaths"
+#| fig-cap: "Coefficients for thinness in adolescents"
 
 column_concatinator2.print_results()
 ```
 and
 ```{python}
 #| label: pca-thinness
-#| fig-cap: "Coefficients for Thinness"
+#| fig-cap: "Coefficients for deaths at young age"
 
 column_concatinator3.print_results()
 ```
 
-The first easy candidate to concatinate were the "under-five deaths" and "infant dealths" since they explain the same underlying thing, only difference is what you define as a infant. Regardless of the definition of an infant the correlation and explained variance of PC1 is so high at 99.8% that they might aswell mean the same thing.
-A second easy candidate for concatination is "thinnness 1-19 years" and "thinness 5-9 years" since one is a subset of the other concatinating them makes sense from a data reduction perspective, the explained variance of 97%.
+In both cases the columns contain high overlap in their data:
+"under-five deaths" contains "infant dealths" and "thinnness 1-19 years" contains "thinness 5-9 years".
+The explained variance of PC1 is 99.8%, which means that they might aswell mean the same thing.
+A second easy candidate for concatination is "thinnness 1-19 years" and "thinness 5-9 years" since one is a subset of the other concatinating them makes sense from a data reduction perspective, the explained variance of the PC1 is 97%.
 
 ## General Principle Component Analysis
 
 Performing a general principle component analysis on the reduced data signficantly reduces the amount of noise in our principle components aswell as our initial principle components, this eases the readability of PC analysis.
-Our underlying goal of performing a PCA is to figure out if there is some underlying correlation between the variables
+Our underlying goal of performing a PCA is to figure out if there is some correlation between the variables
 
 Looking at the PCA we can see we have a very high explained variance in the first 2 columns. This indicates that there is a lot of highly correlated data. Whilst not a bad thing it could mean redundant data.
 ```{python}
@@ -210,7 +214,7 @@ fig.show()
 
 ```
 
-When we run the dimensionality reduction we see that our data has been smoothed out and there is a lot less explained variance in a single column, indicating more uncorrelated datapoints which makes sense given that we've removed a couple of columns
+When we run the dimensionality reduction we see that our data has been smoothed out and there is a lot less explained variance in a single column, indicating more uncorrelated data points which makes sense given that we've removed a couple of columns.
 ```{python}
 #| label: pca-explained-variance
 #| fig-cap: "Graph over explained variance from the dataset"
@@ -227,11 +231,11 @@ fig.show()
 
 ### Biplots
 
-To get a larger insight into our data we can also make a Biplot, over the reduced data. Here we can see 3 consolidated directions appearing on our Biplot. With ``Baby Deaths`` and ```measles`` acting very similar. this is expected given that they both represent similar underlying concepts.
+To get better insight into our data we can also make a Biplot with the reduced data. Here we can see 3 consolidated directions appearing on our Biplot. With ``Baby Deaths`` and ``measles`` acting very similar. This is expected given that they both represent similar underlying concepts.
 
-In a 90 degree offset we see a ``adult mortality`` and ``hiv_aids`` which also represents similar negative. Except this time its for deceases that primarly target adults. 
+In a 90 degree offset we see a ``adult mortality`` and ``hiv_aids`` which also represents similar negative. Except this time its for deceases that primary target adults. 
 
-The rest represent all the general positive things assoiated with high live expectency. Herein we see the ``Income disposition of resources`` which represents healthcare spending as a proportion of GDP. With ``Schooling`` and ``schooling`` being close seconds, which are also things assoiated with highly developed contries.
+The rest represent all the general positive things associated with high live expectancy. We see the ``Income disposition of resources`` which represents healthcare spending as a proportion of GDP and ``Schooling`` being close second, which is also commonly associated with highly developed countries.
 
 ```{python}
 #| label: pca-biplot1
@@ -246,7 +250,8 @@ fig = plot_biplot_plotly(
 fig.show()
 ```
 
-The same data can also be visualised in 3D to further illustrate how the data points congregate, although when visualised in 3D some dimensions become less congregated. and we Get a U shaped dataplot wherein one end represents bad things and the other represents good things.
+The same data can also be visualized in 3D to further illustrate how the data points congregate.
+When visualized this way, some dimensions become less congregated and we get a U-shaped plot wherein one end contains categories that correlate negatively with life expectancy, while the other other end correlates positively.
 ```{python}
 fig = plot_biplot_plotly(
     pca_result,
