@@ -19,6 +19,7 @@ import scipy.stats as stats
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
+import statsmodels.api as sm
 
 from ama_tlbx.data import LifeExpectancyDataset, LECol
 
@@ -37,7 +38,7 @@ Performing regression on data is a common analysis method often used in attempt 
 
 ## Liniar Regression Analyis
 
-Liniar regession is a common analysis performed on liniar data. Since life expectency is "mostly" liniar data, it is very fitting to use it to predict life expectency
+Liniar regession is a common analysis performed on liniar data. Since life expectency is "mostly" liniar data, it is very fitting to use it to predict life expectency. The regression analysis has 5 parts each described in the figure below. 
 
 ```{python}
 # | label: liniar-reg
@@ -61,13 +62,29 @@ model.fit(X_train, y_train)
 
 # 5: Predict
 y_pred = model.predict(X_test)
-
-# 6: Evaluate
-mse = mean_squared_error(y_test, y_pred)
-r2 = r2_score(y_test, y_pred)
 ```
 
-Our regression method follows the 6 steps above .... TODO
+The six step process for the regeression analysis is as follows:
+1. Defined the target variable we wish to estimate, here it is the Life expectency stored as an enum. We also drop all NA Columns since they cannot be used in a regression algorithm.
+2. We extract all numeric features from the dataset excluding the target column to ensure contamination of data.
+3. Split the dataset into train and test.
+4. Train the model
+5. Make predictions for analysis.
+
+Afterwards we can perform a summary analysis using the OLS libary to guage our model capabilities.
+
+```{python}
+# | label: regression-summary
+# | fig-cap: "Detailed Regression Summary"
+
+# Fit OLS model with statsmodels for detailed summary
+X_train_sm = sm.add_constant(X_train)
+ols_model = sm.OLS(y_train, X_train_sm).fit()
+
+print(ols_model.summary())
+```
+
+Based on our OLS Regression result we get an `R-Squared: 0.937` Which means that the model explains 93% of the variance of the dataset. `Adj. R-Squared: 0.927` Shows that if you adjust for the number of features the amount still remains high. Showing that the majority of features play a signficant part of the analysis.
 
 ```{python}
 # | label: liniar-reg-fig
@@ -85,6 +102,8 @@ plt.tight_layout()
 plt.show()
 
 ```
+
+The graph above tells a similar story showing a comparison between a countries predicted life expectency and it's actual expecetency on the test set, showing a strong fit given the data. The same strong fit that was shown previously.
 
 ### Residual Analysis
 
@@ -112,4 +131,47 @@ axes[1].get_lines()[0].set_markeredgewidth(0)
 
 plt.tight_layout()
 plt.show()
+```
+
+### Predictive capabilities
+
+```{python}
+# | label: pred-plot-function
+# | echo: false
+
+def pred_plot(model, feature_col, df):
+    """Plot actual vs predicted values for a single feature regression"""
+    feature_name = str(feature_col)
+    
+    # Get predictions
+    y_pred = model.predict(df)
+    
+    plt.figure(figsize=(10, 6))
+    plt.scatter(df[feature_name], df['life_expectancy'], alpha=0.6, label='Actual')
+    plt.scatter(df[feature_name], y_pred, alpha=0.6, color='red', label='Predicted')
+    
+    # Sort for line plot
+    sort_idx = df[feature_name].argsort()
+    plt.plot(df[feature_name].iloc[sort_idx], y_pred.iloc[sort_idx], 
+             color='red', linewidth=2, label='Regression Line')
+    
+    plt.xlabel(feature_name.replace('_', ' ').title())
+    plt.ylabel('Life Expectancy')
+    plt.title(f'Life Expectancy vs {feature_name.replace("_", " ").title()}')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+```
+
+```{python}
+# | label: Prediction Income Composition of Resources
+# | fig-cap: "icorpred"
+
+pred = f"{LECol.INCOME_COMPOSITION}"
+model = sm.formula.ols(f"life_expectancy ~ {pred}", data=df).fit()
+
+print(model.summary())
+pred_plot(model, LECol.INCOME_COMPOSITION, df)
+
 ```
