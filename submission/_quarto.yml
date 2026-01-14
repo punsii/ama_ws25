@@ -15,10 +15,18 @@ website:
         text: Overview
       - text: Chapters
         menu:
+          - href: index.qmd
+            text: Overview
           - href: chapters/1_introduction.qmd
             text: Intro
+          - href: chapters/2_preproc_year_selection.qmd
+            text: Year Selection
           - href: chapters/2_preprocessing.qmd
             text: Data Preprocessing
+          - href: chapters/2_outlier_detection.qmd
+            text: Outlier Detection
+          - href: chapters/3_correlation.qmd
+            text: Correlation Analysis
           - href: chapters/3_pca.qmd
             text: Principal Component Analysis
           - href: chapters/4_clustering.qmd
@@ -41,3 +49,9 @@ format:
     theme: cosmo
     toc: true
     number-sections: true
+  pdf:
+    include-in-header:
+      - text: |
+          % Enable line-wrapping for long code lines in PDF output
+          \usepackage{fvextra}
+          \DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\},breaklines,breakanywhere,breaksymbolleft={}}
