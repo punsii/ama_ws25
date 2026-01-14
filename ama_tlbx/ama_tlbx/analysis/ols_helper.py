@@ -13,8 +13,7 @@ and domain knowledge.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from operator import itemgetter
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,15 +21,14 @@ import pandas as pd
 import seaborn as sns
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from attr import asdict
 from patsy import build_design_matrices
 from scipy import stats
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import (
     mean_absolute_error,
     mean_absolute_percentage_error,
-    mean_squared_error,
     r2_score,
+    root_mean_squared_error,
 )
 from sklearn.model_selection import KFold, cross_val_score
 from statsmodels.graphics.regressionplots import influence_plot
@@ -45,9 +43,12 @@ if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
 
+    from ama_tlbx.analysis.outlier_detector import OutlierDetectionResult
+
 
 _INTERCEPT_COLS = ("Intercept", "const")
 _SHAPIRO_MAX_N = 5000
+_METRICS_FIT_FIELDS = ("r2", "adj_r2", "rmse", "mae", "mape", "aic", "bic", "aicc", "mdl")
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,8 @@ class MetricsResult:
     - :math:`\text{MAE} = \frac{1}{n}\sum_i |y_i - \hat{y}_i|`
     - :math:`\text{MAPE} = \frac{1}{n}\sum_i \left|\frac{y_i - \hat{y}_i}{y_i}\right|`
     - :math:`\text{AIC} = 2k - 2\log L`, :math:`\text{BIC} = k\log n - 2\log L`
+    - :math:`\text{AICc} = \text{AIC} + \frac{2k(k+1)}{n-k-1}`
+    - :math:`\text{MDL} = -\log L + \frac{k}{2}\log n`
 
     Information criteria are most meaningful for *relative* comparisons across
     models fit on the same response and dataset (lower is better).
@@ -115,6 +118,20 @@ class MetricsResult:
     AIC. Lower is preferred in model comparison.
     """
 
+    aicc: float | None
+    r"""Small-sample corrected AIC (AICc).
+
+    :math:`\text{AICc} = \text{AIC} + \frac{2k(k+1)}{n-k-1}`. Returns ``None``
+    when :math:`n \le k+1`.
+    """
+
+    mdl: float | None
+    r"""Minimum Description Length (MDL) criterion.
+
+    :math:`\text{MDL} = -\log L + \frac{k}{2}\log n`. Lower is preferred in
+    model comparison.
+    """
+
     loglik: float | None
     """Log-likelihood of the fitted model (at the MLE)."""
 
@@ -133,17 +150,9 @@ class MetricsResult:
                 return "nan"
             return f"{value:.{decimals}f}"
 
-        fit_block = (
-            "Fit["
-            f"r2={fmt(self.r2)}, "
-            f"adj_r2={fmt(self.adj_r2)}, "
-            f"rmse={fmt(self.rmse)}, "
-            f"mae={fmt(self.mae)}, "
-            f"mape={fmt(self.mape)}, "
-            f"aic={fmt(self.aic)}, "
-            f"bic={fmt(self.bic)}"
-            "]"
-        )
+        fit_fields = [name for name in _METRICS_FIT_FIELDS if hasattr(self, name)]
+        fit_parts = [f"{name}={fmt(getattr(self, name))}" for name in fit_fields]
+        fit_block = f"Fit[{', '.join(fit_parts)}]"
         cv_block = ""
         if self.cv_rmse is not None or self.cv_scores is not None:
             folds = len(self.cv_scores) if self.cv_scores is not None else 0
@@ -344,6 +353,42 @@ class RegressionResult:
         return self.metrics.rmse
 
     @property
+    def intercept(self) -> float:
+        """Intercept coefficient from the fitted model.
+
+        Uses the single intercept term present in the fitted design matrix
+        (e.g., ``Intercept`` for formula-based models or ``const`` for
+        design-matrix fits). Raises if no intercept or multiple intercept
+        columns are found.
+        """
+        params = self.model.params
+        intercept_cols = [col for col in _INTERCEPT_COLS if col in params.index]
+        if len(intercept_cols) != 1:
+            raise KeyError(
+                "Intercept term not found (or ambiguous) in fitted model parameters.",
+            )
+        return float(params[intercept_cols[0]])
+
+    def coef_and_intercept(self, term: str) -> tuple[float, float]:
+        """Return (coefficient, intercept) for a given term in the model."""
+        params = self.model.params
+        if term not in params.index:
+            raise KeyError(f"Unknown term '{term}' in fitted model parameters.")
+        return float(params[term]), self.intercept
+
+    def pearson_r(self, term: str) -> float:
+        """Compute Pearson correlation between a term and the target.
+
+        Uses the fitted design matrix column for ``term`` and the aligned target
+        values used in the regression.
+        """
+        if term not in self.design_matrix.columns:
+            raise KeyError(f"Unknown term '{term}' in design matrix.")
+        x = pd.Series(self.design_matrix[term], index=self.design_matrix.index, name=term)
+        y = pd.Series(self.y, index=self.design_matrix.index, name="y")
+        return float(x.corr(y))
+
+    @property
     def vif(self) -> pd.DataFrame:
         """Variance-inflation factors as a tidy DataFrame."""
         return self.assumptions.vif.rename_axis("feature").reset_index(name="vif")
@@ -444,6 +489,67 @@ class RegressionResult:
 
         return plot_influence(self, **kwargs)
 
+    def detect_residual_outliers(
+        self,
+        *,
+        method: Literal["zscore", "iqr"] = "zscore",
+        threshold: float = 3.0,
+        use_studentized: bool = True,
+    ) -> OutlierDetectionResult:
+        """Detect outliers in the residuals using existing univariate detectors.
+
+        This helper wraps the project's :class:`ZScoreOutlierDetector` and
+        :class:`IQROutlierDetector` by building a temporary one-column
+        :class:`DatasetView` from the residuals. By default it uses studentized
+        residuals, which scale residual magnitude by an estimate of their
+        variance and account for leverage.
+
+        Args:
+            method: Which detector to use ("zscore" or "iqr").
+            threshold: Z-score cutoff or IQR multiplier depending on `method`.
+            use_studentized: If True, use internally studentized residuals;
+                otherwise use raw residuals.
+
+        Returns:
+            OutlierDetectionResult with a single-column outlier mask.
+
+        Notes:
+            - These detectors are univariate; they flag large residuals but do
+              not diagnose multivariate leverage. Use Cook's distance alongside.
+            - Outlier flags are diagnostic and should not be treated as
+              automatic exclusions.
+        """
+        from ama_tlbx.analysis.outlier_detector import (  # noqa: PLC0415
+            IQROutlierDetector,
+            ZScoreOutlierDetector,
+        )
+        from ama_tlbx.data.views import DatasetView  # noqa: PLC0415
+
+        if use_studentized:
+            influence = self.model.get_influence()
+            residuals = pd.Series(influence.resid_studentized_internal, index=self.residuals.index, name="residual")
+            label = "Studentized residual"
+        else:
+            residuals = self.residuals.rename("residual")
+            label = "Residual"
+
+        view = DatasetView(
+            df=pd.DataFrame({"residual": residuals}),
+            pretty_by_col={"residual": label},
+            numeric_cols=["residual"],
+            target_col=None,
+            is_standardized=None,
+        )
+
+        if method == "zscore":
+            detector = ZScoreOutlierDetector(view, threshold=threshold)
+        elif method == "iqr":
+            detector = IQROutlierDetector(view, threshold=threshold)
+        else:
+            raise ValueError(f"Unknown outlier method '{method}'. Use 'zscore' or 'iqr'.")
+
+        return detector.fit().result()
+
     def plot_residual_diags(
         self,
         predictors: list[str] | None = None,
@@ -539,7 +645,57 @@ class RegressionResult:
                 target = getattr(self.model.model, "endog_names", None)
                 if target and target not in df.columns:
                     df[target] = self.y
+        from ama_tlbx.plotting.regression_plots import pred_plot
+
         return pred_plot(self.model, feature, df, **kwargs)
+
+
+def _prepare_design_matrix(
+    design_matrix_Xy: pd.DataFrame,
+    *,
+    target_col: str,
+    add_intercept: bool | None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    x_matrix = design_matrix_Xy.drop(columns=[target_col]).copy()
+    y = design_matrix_Xy[target_col].copy()
+    if add_intercept is None:
+        add_intercept = not any(col in x_matrix.columns for col in _INTERCEPT_COLS)
+    if add_intercept:
+        x_matrix = sm.add_constant(x_matrix, has_constant="add")
+    return x_matrix, y
+
+
+def fit_ols(
+    df: pd.DataFrame | None = None,
+    *,
+    rhs: str | None = None,
+    design_matrix_Xy: pd.DataFrame | None = None,
+    target_col: str = LECol.TARGET,
+    add_intercept: bool | None = None,
+    cv_folds: int | None = None,
+    shuffle_cv: bool = False,
+    random_state: int | None = None,
+) -> RegressionResult:
+    """Fit OLS via formula or design matrix and return diagnostics bundle."""
+    if rhs is not None:
+        if df is None:
+            raise ValueError("df is required when rhs is provided.")
+        model = smf.ols(f"{target_col} ~ {rhs}", data=df).fit()
+    else:
+        if design_matrix_Xy is None:
+            raise ValueError("design_matrix_Xy is required when rhs is None.")
+        x_matrix, y = _prepare_design_matrix(
+            design_matrix_Xy,
+            target_col=target_col,
+            add_intercept=add_intercept,
+        )
+        model = sm.OLS(y.astype(float), x_matrix.astype(float)).fit()
+    return diagnose_ols(
+        model,
+        cv_folds=cv_folds,
+        shuffle_cv=shuffle_cv,
+        random_state=random_state,
+    )
 
 
 def fit_ols_formula(
@@ -551,15 +707,11 @@ def fit_ols_formula(
     shuffle_cv: bool = False,
     random_state: int | None = None,
 ) -> RegressionResult:
-    """Fit OLS using a Patsy formula and return a full diagnostics bundle.
-
-    This uses ``statsmodels.formula.api.ols`` with a formula like
-    ``"{target} ~ {rhs}"``, allowing transformations and categorical encoding
-    via Patsy.
-    """
-    model = smf.ols(f"{target_col} ~ {rhs}", data=df).fit()
-    return diagnose_ols(
-        model,
+    """Fit OLS using a Patsy formula and return a full diagnostics bundle."""
+    return fit_ols(
+        df,
+        rhs=rhs,
+        target_col=target_col,
         cv_folds=cv_folds,
         shuffle_cv=shuffle_cv,
         random_state=random_state,
@@ -575,24 +727,11 @@ def fit_ols_design(
     shuffle_cv: bool = False,
     random_state: int | None = None,
 ) -> RegressionResult:
-    """Fit OLS on a design matrix (including target) and return diagnostics.
-
-    Args:
-        design_matrix_Xy: DataFrame containing predictors and the target column.
-        target_col: Name of the target column contained in ``design_matrix_Xy``.
-        add_intercept: Whether to add an intercept column. If ``None``, the
-            function adds one only when no intercept column is present.
-    """
-    x_matrix = design_matrix_Xy.drop(columns=[target_col]).copy()
-    y = design_matrix_Xy[target_col].copy()
-    if add_intercept is None:
-        add_intercept = not any(col in x_matrix.columns for col in _INTERCEPT_COLS)
-    if add_intercept:
-        x_matrix = sm.add_constant(x_matrix, has_constant="add")
-
-    model = sm.OLS(y.astype(float), x_matrix.astype(float)).fit()
-    return diagnose_ols(
-        model,
+    """Fit OLS on a design matrix (including target) and return diagnostics."""
+    return fit_ols(
+        design_matrix_Xy=design_matrix_Xy,
+        target_col=target_col,
+        add_intercept=add_intercept,
         cv_folds=cv_folds,
         shuffle_cv=shuffle_cv,
         random_state=random_state,
@@ -651,6 +790,46 @@ def design_matrix_from_model(
     return pd.DataFrame(model.model.exog, columns=model.model.exog_names, index=index)
 
 
+def compute_mallows_cp(
+    full_model: sm.regression.linear_model.RegressionResultsWrapper,
+    model: sm.regression.linear_model.RegressionResultsWrapper,
+) -> float:
+    """Proxy to model_selection.compute_mallows_cp (kept for backwards compatibility)."""
+    from .model_selection import compute_mallows_cp as _compute_mallows_cp
+
+    return _compute_mallows_cp(full_model, model)
+
+
+def selection_path(  # noqa: PLR0913
+    data: pd.DataFrame,
+    *,
+    target_col: str,
+    base_terms: list[str] | None,
+    candidates: list[str],
+    direction: Literal["forward", "backward", "stepwise"] = "forward",
+    criterion: Literal["aic", "bic", "cp", "adj_r2", "cv_rmse"] = "aic",
+    threshold: float = 1.0,
+    cv_folds: int | None = None,
+    shuffle_cv: bool = False,
+    random_state: int | None = None,
+):
+    """Proxy to model_selection.selection_path (kept for backwards compatibility)."""
+    from .model_selection import selection_path as _selection_path
+
+    return _selection_path(
+        data=data,
+        target_col=target_col,
+        base_terms=base_terms,
+        candidates=candidates,
+        direction=direction,
+        criterion=criterion,
+        threshold=threshold,
+        cv_folds=cv_folds,
+        shuffle_cv=shuffle_cv,
+        random_state=random_state,
+    )
+
+
 def design_matrix_for_data(
     model: sm.regression.linear_model.RegressionResultsWrapper,
     df: pd.DataFrame,
@@ -662,9 +841,60 @@ def design_matrix_for_data(
     """
     design_info = getattr(getattr(model.model, "data", None), "design_info", None)
     if design_info is None:
-        return design_matrix_from_model(model)
+        exog_names = list(model.model.exog_names)
+        exog = pd.DataFrame(index=df.index)
+        for name in exog_names:
+            if name in _INTERCEPT_COLS:
+                exog[name] = 1.0
+            else:
+                if name not in df.columns:
+                    raise KeyError(f"Column '{name}' missing from evaluation data.")
+                exog[name] = df[name].astype(float)
+        return exog
     matrices = build_design_matrices([design_info], df, return_type="dataframe")
     return matrices[0]
+
+
+def poly_terms(feature: str, *, degree: int = 2) -> str:
+    r"""Return a Patsy formula snippet for polynomial terms.
+
+    This helper returns terms of the form ``x + I(x**2) + ...`` so that
+    non-linear effects can be modeled within the linear OLS framework.
+
+    Args:
+        feature: Base feature name.
+        degree: Polynomial degree (>= 1). Commonly 2 or 3.
+
+    Returns:
+        Patsy formula string for use on the RHS of a model formula.
+    """
+    if degree < 1:
+        raise ValueError("degree must be >= 1")
+    terms = [feature]
+    for power in range(2, degree + 1):
+        terms.append(f"I({feature}**{power})")
+    return " + ".join(terms)
+
+
+def spline_terms(feature: str, *, df: int = 4, degree: int = 3) -> str:
+    r"""Return a Patsy formula snippet for spline terms.
+
+    Uses ``bs()`` from patsy to construct a B-spline basis, which enables
+    flexible non-linear effects while preserving the linear model structure.
+
+    Args:
+        feature: Base feature name.
+        df: Degrees of freedom (number of spline basis functions).
+        degree: Polynomial degree of the spline basis (default cubic).
+
+    Returns:
+        Patsy formula string for use on the RHS of a model formula.
+    """
+    if df < 1:
+        raise ValueError("df must be >= 1")
+    if degree < 1:
+        raise ValueError("degree must be >= 1")
+    return f"bs({feature}, df={df}, degree={degree})"
 
 
 @dataclass
@@ -686,8 +916,12 @@ def evaluate_model(
     target_col: str = LECol.TARGET,
 ) -> EvalMetrics:
     """Evaluate a fitted model on a new dataset using aligned design matrices."""
-    exog = design_matrix_for_data(diag.model, df)
-    pred = pd.Series(diag.model.predict(exog), index=exog.index)
+    design_info = getattr(getattr(diag.model.model, "data", None), "design_info", None)
+    if design_info is not None:
+        pred = pd.Series(diag.model.predict(df), index=df.index)
+    else:
+        exog = design_matrix_for_data(diag.model, df)
+        pred = pd.Series(diag.model.predict(exog), index=exog.index)
     y = df[target_col].astype(float)
     mask = y.notna() & pred.notna()
     y = y.loc[mask]
@@ -714,6 +948,46 @@ def _linear_regression_for_design(design_matrix: pd.DataFrame) -> LinearRegressi
     return LinearRegression(fit_intercept=not has_intercept)
 
 
+def _compute_cv_rmse_scores(
+    design_matrix: pd.DataFrame,
+    y_true: pd.Series,
+    *,
+    cv_folds: int | None,
+    shuffle_cv: bool,
+    random_state: int | None,
+) -> tuple[list[float] | None, float | None]:
+    if not cv_folds or cv_folds <= 1:
+        return None, None
+    lr = _linear_regression_for_design(design_matrix)
+    splitter = KFold(
+        n_splits=cv_folds,
+        shuffle=shuffle_cv,
+        random_state=(random_state if shuffle_cv else None),
+    )
+    cv_scores = cross_val_score(
+        lr,
+        design_matrix,
+        y_true,
+        cv=splitter,
+        scoring="neg_root_mean_squared_error",
+        error_score="raise",
+    )
+    cv_scores = np.asarray(cv_scores, dtype=float).tolist()
+    cv_rmse = float(np.mean(cv_scores))
+    return cv_scores, cv_rmse
+
+
+def _extract_model_info(
+    model: sm.regression.linear_model.RegressionResultsWrapper,
+) -> tuple[float, float | None, float | None, float | None, float | None]:
+    n_obs = float(model.nobs)
+    loglik = float(model.llf)
+    aic = float(model.aic)
+    bic = float(model.bic)
+    k_params = float(len(model.params))
+    return n_obs, loglik, aic, bic, k_params
+
+
 def compute_vif(design_matrix: pd.DataFrame) -> pd.Series:
     r"""Compute VIF per regressor (intercept excluded).
 
@@ -732,34 +1006,6 @@ def compute_vif(design_matrix: pd.DataFrame) -> pd.Series:
     )
 
 
-def compute_cv_scores(
-    design_matrix: pd.DataFrame,
-    y: pd.Series,
-    *,
-    cv_folds: int,
-    shuffle: bool = False,
-    random_state: int | None = None,
-) -> list[float]:
-    """Compute cross-validation RMSE scores for a linear regression baseline."""
-    lr = _linear_regression_for_design(design_matrix)
-    splitter = KFold(
-        n_splits=cv_folds,
-        shuffle=shuffle,
-        random_state=(random_state if shuffle else None),
-    )
-    scores = list(
-        cross_val_score(
-            lr,
-            design_matrix,
-            y,
-            cv=splitter,
-            scoring="neg_root_mean_squared_error",
-            error_score="raise",
-        ),
-    )
-    return list(-np.asarray(scores))
-
-
 def compute_metrics(
     model: sm.regression.linear_model.RegressionResultsWrapper,
     y_true: pd.Series,
@@ -775,34 +1021,41 @@ def compute_metrics(
     Metrics are computed on in-sample residuals, with optional K-fold CV to
     estimate generalization (mean over folds).
     """
-    # Some sklearn versions lack `squared` kwarg; compute RMSE manually for compatibility.
-    rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
-    mae = float(mean_absolute_error(y_true, y_pred))
+    rmse = root_mean_squared_error(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    mape = mean_absolute_percentage_error(y_true, y_pred)
 
-    mape = None if (y_true == 0).any() else float(mean_absolute_percentage_error(y_true, y_pred))
+    cv_scores, cv_rmse = _compute_cv_rmse_scores(
+        design_matrix,
+        y_true,
+        cv_folds=cv_folds,
+        shuffle_cv=shuffle_cv,
+        random_state=random_state,
+    )
+    n_obs, loglik, aic, bic, k_params = _extract_model_info(model)
 
-    cv_scores: list[float] | None = None
-    cv_rmse: float | None = None
-    if cv_folds and cv_folds > 1:
-        cv_scores = compute_cv_scores(
-            design_matrix,
-            y_true,
-            cv_folds=cv_folds,
-            shuffle=shuffle_cv,
-            random_state=random_state,
-        )
-        cv_rmse = float(np.asarray(cv_scores).mean())
+    aicc: float | None = None
+    if aic is not None and k_params is not None:
+        denom = n_obs - k_params - 1
+        if denom > 0:
+            aicc = float(aic + (2 * k_params * (k_params + 1)) / denom)
+
+    mdl: float | None = None
+    if loglik is not None and k_params is not None and n_obs > 0:
+        mdl = float(-loglik + 0.5 * k_params * np.log(n_obs))
 
     return MetricsResult(
         r2=float(r2_score(y_true, y_pred)),
-        adj_r2=float(model.rsquared_adj) if hasattr(model, "rsquared_adj") else None,
+        adj_r2=float(model.rsquared_adj),
         rmse=rmse,
         mae=mae,
         mape=mape,
-        aic=float(model.aic) if hasattr(model, "aic") else None,
-        bic=float(model.bic) if hasattr(model, "bic") else None,
-        loglik=float(model.llf) if hasattr(model, "llf") else None,
-        n_obs=float(model.nobs) if hasattr(model, "nobs") else None,
+        aic=aic,
+        bic=bic,
+        aicc=aicc,
+        mdl=mdl,
+        loglik=loglik,
+        n_obs=n_obs,
         cv_scores=cv_scores,
         cv_rmse=cv_rmse,
     )
@@ -833,10 +1086,13 @@ def compute_assumptions(
         resid,
         design_matrix.values,
     )
-    white_stat, white_pvalue, _, _ = sm_diagnostic.het_white(
-        resid,
-        design_matrix.values,
-    )
+    try:
+        white_stat, white_pvalue, _, _ = sm_diagnostic.het_white(
+            resid,
+            design_matrix.values,
+        )
+    except (AssertionError, np.linalg.LinAlgError, ValueError):
+        white_stat, white_pvalue = float("nan"), float("nan")
 
     vif = compute_vif(design_matrix)
 
@@ -861,61 +1117,38 @@ def compute_assumptions(
     )
 
 
-def compare_models(models: dict[str, sm.regression.linear_model.RegressionResultsWrapper]) -> pd.DataFrame:
-    """Tabulate AIC/BIC, adj R², and RMSE for multiple fitted OLS models.
-
-    Information criteria are most meaningful for comparing models fit to the
-    same response on the same data; lower values indicate a better trade-off of
-    fit and complexity.
-    """
-    rows = []
-    for name, res in models.items():
-        rows.append(
-            {
-                "model": name,
-                "aic": float(res.aic),
-                "bic": float(res.bic),
-                "adj_r2": float(res.rsquared_adj),
-                "rmse": float(np.sqrt(res.mse_resid)),
-            },
-        )
-    return pd.DataFrame(rows).sort_values("aic").reset_index(drop=True)
-
-
-def stepwise_aic(
+def bootstrap_rmse(
     data: pd.DataFrame,
-    target_col: str,
-    base_terms: list[str],
-    candidates: list[str],
     *,
-    threshold: float = 1.0,
-) -> tuple[list[str], sm.regression.linear_model.RegressionResultsWrapper]:
-    """Forward stepwise search that keeps adding terms while AIC improves by ``threshold``.
+    rhs: str,
+    target_col: str,
+    n_bootstrap: int = 200,
+    random_state: int | None = None,
+) -> pd.Series:
+    r"""Estimate RMSE variability via simple bootstrap resampling.
 
-    This is a greedy heuristic: it evaluates candidate additions one at a time
-    and does not guarantee a global optimum. Use with caution due to multiple
-    testing and selection bias.
+    The model is refit on each bootstrap sample. When out-of-bag (OOB)
+    observations exist, RMSE is computed on OOB data; otherwise the bootstrap
+    sample is used as a fallback. This provides a rough uncertainty estimate of
+    predictive performance without requiring a separate holdout set and mirrors
+    the bootstrap workflow discussed in the lecture.
     """
-    current = base_terms.copy()
-    base_formula = f"{target_col} ~ " + (" + ".join(current) if current else "1")
-    best_res = smf.ols(base_formula, data=data).fit()
-    remaining = candidates.copy()
-    improved = True
-    while improved and remaining:
-        improved = False
-        scores: list[tuple[float, str, sm.regression.linear_model.RegressionResultsWrapper]] = []
-        for cand in remaining:
-            formula = f"{target_col} ~ " + " + ".join([*current, cand])
-            res = smf.ols(formula=formula, data=data).fit()
-            scores.append((res.aic, cand, res))
-        scores.sort(key=itemgetter(0))
-        best_aic, best_cand, best_candidate_res = scores[0]
-        if best_aic + threshold < best_res.aic:
-            current.append(best_cand)
-            remaining.remove(best_cand)
-            best_res = best_candidate_res
-            improved = True
-    return current, best_res
+    rng = np.random.default_rng(random_state)
+    n = data.shape[0]
+    rmses: list[float] = []
+    for _ in range(n_bootstrap):
+        idx = rng.integers(0, n, n)
+        boot = data.iloc[idx]
+        oob_mask = np.ones(n, dtype=bool)
+        oob_mask[idx] = False
+        oob = data.loc[oob_mask]
+        model = smf.ols(f"{target_col} ~ {rhs}", data=boot).fit()
+        eval_df = oob if not oob.empty else boot
+        pred = model.predict(eval_df)
+        y = eval_df[target_col]
+        rmse = float(np.sqrt(((y - pred) ** 2).mean()))
+        rmses.append(rmse)
+    return pd.Series(rmses, name="rmse")
 
 
 @overload

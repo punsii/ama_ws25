@@ -95,10 +95,12 @@ def suggest_groups_from_correlation(
         ... )
         >>> for group in groups:
         ...     print(f"{group.name}: {', '.join(group.features)}")
-        Group_10: life_expectancy, income_composition_of_resources, schooling
+        Group_10: life_expectancy, HDI, schooling
         Group_1: infant_deaths, under_five_deaths, population
         Group_8: percentage_expenditure, gdp
         Group_9: thinness_1_19_years, thinness_5_9_years
+
+    Here the index of each group corresponds to the order in which they were cut from the dendrogram.
 
     """  # noqa: D205
     # Convert to distance matrix
@@ -130,7 +132,7 @@ def suggest_groups_from_correlation(
             return (float("nan"), float("nan"))
         sub = corr_mat.loc[features, features].abs()
         mask = np.tril(np.ones(sub.shape, dtype=bool), k=-1)  # lower triangle excl diag
-        vals = sub.where(mask).stack()
+        vals = sub.where(mask).stack()  # noqa: PD013
         if vals.empty:
             return (float("nan"), float("nan"))
         return float(vals.mean()), float(vals.min())
