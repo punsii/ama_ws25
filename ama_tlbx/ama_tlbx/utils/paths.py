@@ -9,6 +9,7 @@ _DATASET_MAP: dict[str, str] = {
     "life_expectancy": "life_expectancy_data.csv",
     "milk": "milk.csv",
     "siebenkampf": "siebenkampf.csv",
+    "undp_hdr": "HDR25_Composite_indices_complete_time_series.csv",
 }
 
 
@@ -23,7 +24,9 @@ def get_data_dir() -> Path:
     return data_dir
 
 
-def get_dataset_path(filename: Literal["life_expectancy", "milk", "siebenkampf"] | str) -> Path:  # noqa: PYI051
+def get_dataset_path(
+    filename: Literal["life_expectancy", "milk", "siebenkampf", "undp_hdr"] | str,
+) -> Path:  # noqa: PYI051
     """Get the full path to a dataset file in the data directory.
 
     Args:

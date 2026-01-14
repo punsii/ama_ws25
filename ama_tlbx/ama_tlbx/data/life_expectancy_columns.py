@@ -13,20 +13,45 @@ def _log1p_under_coverage(series: pd.Series) -> pd.Series:
     return np.log1p(100 - series)
 
 
-def _status_dummies(series: pd.Series) -> pd.DataFrame:
-    """One-hot encode binary status (developing/developed)."""
-    return pd.get_dummies(series.astype(int), prefix="status", prefix_sep="=", drop_first=False)
+def _status_dummies(series: pd.Series, *, drop_first: bool = True) -> pd.DataFrame:
+    """One-hot encode development status with stable, formula-safe names.
+
+    Args:
+        series: Status values (0/1 or Developing/Developed).
+        drop_first: Drop the first category to avoid collinearity (default: True).
+
+    Returns:
+        DataFrame with columns ``status_developed`` (default) or both
+        ``status_developing`` and ``status_developed`` when ``drop_first=False``.
+    """
+    s = series
+    if pd.api.types.is_numeric_dtype(s):
+        s = s.astype("Int64")
+        if s.isna().any():
+            mode = s.mode(dropna=True)
+            fill_value = int(mode.iloc[0]) if not mode.empty else 0
+            s = s.fillna(fill_value)
+        labels = s.map({0: "developing", 1: "developed"}).astype("string")
+    else:
+        labels = s.astype("string").str.strip().str.lower()
+        labels = labels.replace({"developing": "developing", "developed": "developed"})
+
+    categories = ["developing", "developed"]
+    cat = pd.Categorical(labels, categories=categories, ordered=True)
+    cat_series = pd.Series(cat, index=series.index, name="status")
+    return pd.get_dummies(cat_series, prefix="status", prefix_sep="_", drop_first=drop_first).astype(int)
 
 
-def _bmi_spline(series: pd.Series, df: int = 2, degree: int = 2) -> pd.DataFrame:
-    """Return spline basis for BMI; keeps column names stable for downstream models."""
+def _spline(series: pd.Series, df: int = 2, degree: int = 2, prefix: str | None = None) -> pd.DataFrame:
+    """Return spline basis with stable, column-specific names."""
     # Handle missing by median-imputing locally to avoid all-NaN basis
     s = series.fillna(series.median())
     basis = bs(s, df=df, degree=degree, include_intercept=False)
+    name = prefix or (series.name if series.name is not None else "spline")
     return pd.DataFrame(
         basis,
         index=series.index,
-        columns=[f"bmi_bs{i + 1}" for i in range(basis.shape[1])],
+        columns=[f"{name}_bs{i + 1}" for i in range(basis.shape[1])],
     )
 
 
@@ -54,7 +79,7 @@ class LifeExpectancyColumn(BaseColumn):
     - ``population``: int - Population of the country
     - ``thinness_1_19_years``: float - Prevalence of thinness among children 10-19 years (%)
     - ``thinness_5_9_years``: float - Prevalence of thinness among children 5-9 years (%)
-    - ``income_composition_of_resources``: float - Human Development Index (0-1)
+    - ``human_development_index``: float - Human Development Index (HDI, UNDP composite; 0-1)
     - ``schooling``: float - Average years of schooling
     """
 
@@ -112,8 +137,13 @@ class LifeExpectancyColumn(BaseColumn):
     """Government health expenditure (% of total govt expenditure)."""
 
     # Social indicators
-    INCOME_COMPOSITION = "income_composition_of_resources"
-    """Human Development Index (0-1)."""
+    HDI = "human_development_index"
+    """Human Development Index (HDI, UNDP composite index; 0-1).
+
+    Note: HDI combines health (life expectancy), education, and standard of living components.
+    When using `life_expectancy` as the target, this variable can act as a proxy for the target itself;
+    interpret coefficients cautiously and consider excluding HDI in models focused on causal explanation.
+    """
     SCHOOLING = "schooling"
     """Average years of schooling."""
     ALCOHOL = "alcohol"
@@ -167,7 +197,7 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         cleaned_name="status",
         dtype="int64",
         pretty_name="Development Status (0=Developing, 1=Developed)",
-        transform=None,
+        transform=_status_dummies,
     ),
     # Target variable
     LifeExpectancyColumn.TARGET: ColumnMetadata(
@@ -281,11 +311,11 @@ _COLUMN_METADATA_LIFE_EXPECTANCY: dict[LifeExpectancyColumn, ColumnMetadata] = {
         transform=None,
     ),
     # Social indicators
-    LifeExpectancyColumn.INCOME_COMPOSITION: ColumnMetadata(
+    LifeExpectancyColumn.HDI: ColumnMetadata(
         original_name="Income composition of resources",
         cleaned_name="income_composition_of_resources",
         dtype="float64",
-        pretty_name="Income Composition (HDI)",
+        pretty_name="Human Development Index (HDI, 0-1)",
         transform=None,
     ),
     LifeExpectancyColumn.SCHOOLING: ColumnMetadata(

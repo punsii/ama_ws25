@@ -79,6 +79,46 @@ class BaseDataset(ABC):  # noqa: PLR0904
         """
         return self.df.rename(columns={col: self.get_pretty_name(col) for col in self.df.columns})
 
+    def add_iso3(
+        self,
+        *,
+        country_col: str | BaseColumn,
+        iso3_col: str = "iso3",
+        df: pd.DataFrame | None = None,
+        overwrite: bool = False,
+    ) -> pd.DataFrame:
+        """Add ISO3 country codes using pycountry lookups.
+
+        Args:
+            country_col: Column containing country names.
+            iso3_col: Column name to store ISO3 codes.
+            df: Optional DataFrame to enrich (defaults to this dataset's df).
+            overwrite: If True, overwrite existing ISO3 values.
+
+        Returns:
+            DataFrame with ISO3 codes added.
+        """
+        frame = self.df if df is None else df.copy(deep=True)
+        country_key = country_col.value if isinstance(country_col, BaseColumn) else str(country_col)
+        iso_key = iso3_col.value if isinstance(iso3_col, BaseColumn) else str(iso3_col)
+        if country_key not in frame.columns:
+            raise KeyError(f"Country column '{country_key}' not found in dataset.")
+        if iso_key in frame.columns and not overwrite:
+            return frame
+
+        import pycountry  # local import to avoid hard dependency on module import
+
+        def to_iso3(name: object) -> str | None:
+            if not isinstance(name, str) or not name.strip():
+                return None
+            try:
+                return pycountry.countries.lookup(name.strip()).alpha_3
+            except LookupError:
+                return None
+
+        frame = frame.assign(**{iso_key: frame[country_key].map(to_iso3)})
+        return frame
+
     @property
     def numeric_cols(self) -> pd.Index:
         """Get numeric column names.

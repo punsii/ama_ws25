@@ -6,4 +6,5 @@ __all__ = [
     "PlottingConfig",
     "get_data_dir",
     "get_dataset_path",
+    "set_global_rnd_seed",
 ]
