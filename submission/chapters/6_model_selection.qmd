@@ -1,0 +1,359 @@
+---
+title: "Model Selection"
+format:
+  html:
+    toc: true
+---
+
+# Motivation
+
+Model selection balances **fit** and **parsimony**: we want models that explain life expectancy well, but avoid overfitting by adding unnecessary predictors. In this project the candidate set is large and correlated (see [Correlation Analysis](3_correlation.qmd)), so transparent selection rules are essential before interpreting coefficients in [Regression Analysis](5_regression.qmd).
+
+# Criteria for model quality
+
+We summarize the criteria used in the lecture slides and in `ama_tlbx` for linear regression model choice. The key idea is to trade off goodness of fit against model complexity. Lower values are preferred for information criteria, while higher is better for adjusted $R^2$.
+
+## $R^2$ and adjusted $R^2$
+
+The coefficient of determination is
+
+$$
+R^2 = 1 - \frac{SS_{\mathrm{res}}}{SS_{\mathrm{tot}}}.
+$$
+
+Adjusted $R^2$ penalizes additional predictors (with $n$ observations and $p$ predictors):
+
+$$
+\bar{R}^2 = 1 - (1 - R^2)\frac{n - 1}{n - p - 1}.
+$$
+
+The lecture notes emphasize that $R^2$ and even adjusted $R^2$ can still favor overly complex models; $\bar{R}^2$ can increase even when the added predictor is only weakly related to the target, so it is **not recommended as the sole selection criterion**. @Menzel_MDA_09_ModelSelection_2025. For general background see [Wikipedia :: Adjusted R-squared](https://en.wikipedia.org/wiki/Coefficient_of_determination#Adjusted_R2).
+
+## Akaike and Bayesian information criteria (AIC/BIC)
+
+For a model with log-likelihood $\ell(\hat{\theta})$, $k$ estimated parameters (including the intercept), and $n$ observations, the lecture notes use:
+
+$$
+\mathrm{AIC} = 2k - 2\,\ell(\hat{\theta}),
+$$
+
+$$
+\mathrm{BIC} = k\ln(n) - 2\,\ell(\hat{\theta}).
+$$
+
+Both criteria are **lower-is-better** trade-offs between fit and complexity; BIC uses a stronger penalty that grows with $n$, so it tends to select smaller models than AIC. AIC is rooted in information theory, whereas BIC is related to Bayesian model comparison. @Menzel_MDA_09_ModelSelection_2025. For more context, see [Wikipedia :: Akaike information criterion](https://en.wikipedia.org/wiki/Akaike_information_criterion) and [Wikipedia :: Bayesian information criterion](https://en.wikipedia.org/wiki/Bayesian_information_criterion).
+
+## Mallows' $C_p$
+
+For OLS, Mallows' $C_p$ compares a candidate model to the full model via a variance estimate from the full model:
+
+$$
+C_p = \frac{\mathrm{RSS}}{\hat{\sigma}^2} + 2k - n.
+$$
+
+The lecture notes recommend choosing **small** $C_p$ values, with well-fitting models typically yielding $C_p \approx k$ (i.e., $p+1$) when underfitting is not severe. @Menzel_MDA_09_ModelSelection_2025. For background, see [Wikipedia :: Mallows's Cp](https://en.wikipedia.org/wiki/Mallows%27s_Cp).
+
+# Search strategies
+
+Given $K$ candidate predictors, exhaustive search evaluates all $2^K$ subsets, which is often infeasible for moderate $K$. The lecture slides therefore recommend **greedy** procedures:
+
+1. **Forward selection**: start with an intercept-only model, then add the predictor that yields the best improvement (e.g., lowest AIC). Stop when the criterion no longer improves or a test threshold is violated. @Menzel_MDA_09_ModelSelection_2025.
+2. **Backward selection**: start with the full model, then remove the predictor whose exclusion improves the criterion most. Stop when the criterion worsens or a test threshold is reached. @Menzel_MDA_09_ModelSelection_2025.
+3. **Stepwise selection**: combines forward and backward moves; at each iteration one can either add or drop a term based on the criterion. @Menzel_MDA_09_ModelSelection_2025.
+
+These strategies are instances of **stepwise regression** (see [Wikipedia :: Stepwise regression](https://en.wikipedia.org/wiki/Stepwise_regression)).
+
+# Workflow used in this project
+
+We implement selection paths in `ama_tlbx.analysis.model_selection` and store results via `ModelRegistry.fit_stepwise`. The selection path records each candidate model (terms + diagnostics) to make the trade-off transparent and reproducible:
+
+```python
+from ama_tlbx.analysis.model_selection import selection_path
+
+path = selection_path(
+    data=df,
+    target_col=LECol.TARGET,
+    base_terms=[...],
+    candidates=[...],
+    direction="stepwise",
+    criterion="aic",
+    threshold=1.0,
+)
+
+best_model_rhs = path.best_step().rhs
+```
+
+In the regression chapter, we **do not rely on a single criterion**. Instead, we compare AIC/BIC, adjusted $R^2$, and out-of-sample performance (year-based holdout and optional cross-validation) to balance interpretability with generalization. This is consistent with the lecture guidance to combine global criteria with predictive validation. @Menzel_MDA_09_ModelSelection_2025.
+
+# Empirical model selection on the 2014 cross-section
+
+We now run stepwise selection on the same training cross-section used in the regression chapter (2014, transformed and standardized). To reduce redundancy, we first compress correlated feature blocks via grouped PCA and then run selection on the reduced predictors.
+
+```{python}
+# | label: model-selection-setup
+# | include: false
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from ama_tlbx.analysis import FeatureGroup
+from ama_tlbx.analysis.model_registry import ModelRegistry
+from ama_tlbx.analysis.model_selection import collect_selection_paths, selection_path
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.plotting.regression_plots import plot_leverage_resid_cooks, plot_selection_path
+from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+
+np.random.seed(42)
+DEFAULT_PLOT_CFG.apply_global()
+
+TRAIN_YEAR = 2014
+HOLDOUT_YEAR = 2011
+STATUS_DUMMY = "status_developed"
+```
+
+```{python}
+# | label: model-selection-data
+feature_groups = [
+    FeatureGroup(
+        name="child_mortality",
+        features=[LECol.INFANT_DEATHS, LECol.UNDER_FIVE_DEATHS],
+    ),
+    FeatureGroup(
+        name="child_nutrition",
+        features=[LECol.THINNESS_5_9_YEARS, LECol.THINNESS_1_19_YEARS],
+    ),
+    FeatureGroup(
+        name="economic_development",
+        features=[LECol.GDP, LECol.PERCENTAGE_EXPENDITURE],
+    ),
+    FeatureGroup(
+        name="immunization",
+        features=[LECol.DIPHTHERIA, LECol.HEPATITIS_B, LECol.MEASLES],
+    ),
+    FeatureGroup(
+        name="hdi_education",
+        features=[LECol.HDI, LECol.SCHOOLING],
+    ),
+]
+
+reduced_columns = [feature for g in feature_groups for feature in g.features]
+
+train_ds_raw = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=TRAIN_YEAR,
+    resolve_nand_pred="carry_forward",
+)
+holdout_ds_raw = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=HOLDOUT_YEAR,
+    resolve_nand_pred="carry_forward",
+)
+
+df_train_raw = train_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
+df_holdout_raw = holdout_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
+
+pca_groups = (
+    LifeExpectancyDataset(df=df_train_raw)
+    .make_pca_dim_reduction_analyzer(
+        feature_groups,
+        columns=reduced_columns,
+        standardized=False,
+        min_var_explained=0.8,
+    )
+    .fit()
+    .result()
+)
+
+pc_train = pca_groups.reduced_df.copy()
+pc_holdout = pca_groups.transform(df_holdout_raw).copy()
+pc_cols = pc_train.columns.tolist()
+
+df_train = pc_train.assign(**df_train_raw.drop(columns=reduced_columns))
+df_holdout = pc_holdout.assign(**df_holdout_raw.drop(columns=reduced_columns))
+
+model_cols = [
+    LECol.TARGET,
+    STATUS_DUMMY,
+    LECol.ADULT_MORTALITY,
+    LECol.HIV_AIDS,
+    LECol.TOTAL_EXPENDITURE,
+    *pc_cols,
+]
+
+df_train_model = (
+    LifeExpectancyDataset(df=df_train).df.loc[:, model_cols].dropna()
+)
+df_holdout_model = (
+    LifeExpectancyDataset(df=df_holdout).df.loc[:, model_cols].dropna()
+)
+
+candidate_terms = [
+    str(LECol.ADULT_MORTALITY),
+    str(LECol.HIV_AIDS),
+    str(LECol.TOTAL_EXPENDITURE),
+    *pc_cols,
+]
+base_terms = [STATUS_DUMMY]
+
+cv_folds = 5 if len(df_train_model) >= 5 else None
+```
+
+We always include `status_developed` as a baseline control (base term) and treat the remaining standardized predictors and PCA components as candidates for selection.
+
+## Stepwise paths under different criteria
+
+We compare **forward**, **backward**, and **stepwise** searches under multiple criteria (AIC, BIC, Cp, adjusted $R^2$, and CV RMSE when available). Each path stores the full sequence of models and diagnostics.
+
+```{python}
+# | label: model-selection-paths
+criteria = ["aic", "bic", "cp", "adj_r2"]
+directions = ["forward", "backward", "stepwise"]
+thresholds = {"aic": 1.0, "bic": 1.0, "cp": 1.0, "adj_r2": 0.0, "cv_rmse": 0.0}
+
+paths: dict[str, object] = {}
+for direction in directions:
+    for criterion in criteria:
+        label = f"{direction.upper()}-{criterion.upper()}"
+        paths[label] = selection_path(
+            data=df_train_model,
+            target_col=str(LECol.TARGET),
+            base_terms=base_terms,
+            candidates=candidate_terms,
+            direction=direction,
+            criterion=criterion,
+            threshold=thresholds[criterion],
+            cv_folds=cv_folds,
+            shuffle_cv=True,
+            random_state=42,
+        )
+
+if cv_folds is not None and cv_folds > 1:
+    for direction in directions:
+        label = f"{direction.upper()}-CV_RMSE"
+        paths[label] = selection_path(
+            data=df_train_model,
+            target_col=str(LECol.TARGET),
+            base_terms=base_terms,
+            candidates=candidate_terms,
+            direction=direction,
+            criterion="cv_rmse",
+            threshold=thresholds["cv_rmse"],
+            cv_folds=cv_folds,
+            shuffle_cv=True,
+            random_state=42,
+        )
+
+paths.keys()
+```
+
+```{python}
+# | label: tbl-model-selection-best
+# | tbl-cap: "Best step per criterion (2014 training cross-section)."
+best_steps = collect_selection_paths(paths, best_only=True)
+best_steps.sort_values(["direction", "criterion", "step"])
+```
+
+```{python}
+# | label: fig-selection-path-aic
+# | fig-cap: "Stepwise selection paths for multiple criteria."
+stepwise_labels = [label for label in paths if label.startswith("STEPWISE-")]
+stepwise_metrics = {
+    "AIC": "aic",
+    "BIC": "bic",
+    "CP": "cp",
+    "ADJ_R2": "adj_r2",
+    "CV_RMSE": "cv_rmse",
+}
+
+fig, axes = plt.subplots(2, 3, figsize=(14, 7))
+axes = axes.flatten()
+idx = 0
+for label in stepwise_labels:
+    metric_key = label.split("-")[1]
+    metric = stepwise_metrics.get(metric_key)
+    if metric is None:
+        continue
+    plot_selection_path(paths[label], metric=metric, ax=axes[idx])
+    axes[idx].set_title(f"{label} ({metric})")
+    idx += 1
+
+for ax in axes[idx:]:
+    ax.axis("off")
+
+plt.tight_layout()
+plt.show()
+```
+
+## Holdout evaluation of selected models
+
+We refit the best step per criterion on the 2014 training data and evaluate on the 2011 holdout year to compare generalization.
+
+```{python}
+# | label: tbl-model-selection-holdout
+# | tbl-cap: "Holdout evaluation for best-per-criterion models (2011 holdout)."
+registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
+best_map = registry.register_best_paths(
+    df_train_model,
+    paths=paths,
+    target_col=str(LECol.TARGET),
+    name_prefix="best",
+    cv_folds=cv_folds,
+    shuffle_cv=True,
+    random_state=42,
+    refit=True,
+)
+
+registry.evaluate_all(
+    df_holdout_model,
+    label=f"year{HOLDOUT_YEAR}",
+    target_col=str(LECol.TARGET),
+)
+
+model_compare = (
+    registry.compare(sort_by="aic")
+    .reset_index()
+    .merge(
+        best_map.drop(columns=["aic", "bic", "adj_r2", "rmse", "cv_rmse", "cp"]),
+        on="model",
+        how="left",
+    )
+    .sort_values(["direction", "criterion", "aic"])
+)
+
+model_compare
+```
+
+## Diagnostics and statistical tests for selected models
+
+We report residual diagnostics and classical assumption tests for a subset of the best-performing models.
+
+```{python}
+# | label: tbl-model-selection-tests
+# | tbl-cap: "Assumption-test p-values and diagnostics for selected best models."
+diagnostic_labels = ["STEPWISE-AIC", "STEPWISE-BIC"]
+diagnostic_models = best_map.loc[
+    best_map["label"].isin(diagnostic_labels),
+    "model",
+].tolist()
+
+registry.assumptions_table(names=diagnostic_models)
+```
+
+```{python}
+# | label: fig-model-selection-diags
+# | fig-cap: "Diagnostics for the stepwise AIC and BIC models."
+fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+
+for row, model_name in enumerate(diagnostic_models):
+    diag = registry.get(model_name).diag
+    diag.plot_residuals_vs_fitted(ax=axes[row, 0])
+    diag.plot_qq(ax=axes[row, 1])
+    diag.plot_scale_location(ax=axes[row, 2])
+    plot_leverage_resid_cooks(diag, ax=axes[row, 3])
+    axes[row, 0].set_ylabel(f"{model_name}\\nResiduals vs fitted")
+
+plt.tight_layout()
+plt.show()
+```
+
+# Caveats and interpretation
+
+The lecture notes emphasize that **global criteria can yield models with non-significant coefficients**; these criteria minimize prediction error and are not equivalent to hypothesis tests. @Menzel_MDA_09_ModelSelection_2025. In addition, stepwise procedures can introduce selection bias, so uncertainty in the final model should be interpreted cautiously; see [Wikipedia :: Stepwise regression](https://en.wikipedia.org/wiki/Stepwise_regression). For this reason, we treat stepwise selection as **exploratory** and confirm decisions with holdout performance and diagnostic checks in the regression chapter.
