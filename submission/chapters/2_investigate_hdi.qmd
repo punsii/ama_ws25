@@ -7,18 +7,15 @@ format:
 
 # Goal and relevance
 
-The Life Expectancy dataset contains a feature called `income_composition_of_resources`. The Kaggle description states that it is a “Human Development Index … (index ranging from 0 to 1)” [@KumarRajarshi], but the column name itself suggests an income-only construct. This chapter resolves that ambiguity by testing whether `income_composition_of_resources` matches the UNDP Human Development Index (HDI) time series.
+The Life Expectancy dataset contains a feature called `income_composition_of_resources`. The Kaggle description states that it is a “Human Development Index in terms of income composition of resources (index ranging from 0 to 1)” [@KumarRajarshi], but the column name itself suggests an income-only construct. This chapter resolves that ambiguity by testing whether `income_composition_of_resources` matches the United Nations Development Programme (UNDP) Human Development Index (HDI) time series.
 
-This matters for two reasons:
+This matters for two reasons namely, because HDI as defined in @UNDP_HDR2025_TechNotes is mechanistically related to life expectancy, so treating HDI as a predictor of life expectancy would induce target leakage. Furthermore, correct identification of the feature is mandatory for labeling and interpretation.
 
-1. **Labeling and interpretation:** we want to name the feature correctly in figures and tables.
-2. **Modeling validity:** HDI is partly defined using life expectancy, so treating HDI as a predictor of life expectancy can induce target leakage. [@UNDP_HDR2025_TechNotes]
-
-Our verification strategy is a direct identity check on a shared key: map Kaggle countries to ISO3, align years (2000–2015), merge with UNDP HDR data, and quantify agreement (correlation, regression slope/intercept, and error distribution). [@UNDP_HDR25_CompositeTimeSeries]
+Our verification strategy is a direct identity check on a shared key: @UNDP_HDR25_CompositeTimeSeries provides [HDI time series](https://hdr.undp.org/data-center/documentation-and-downloads) by ISO3 country code from 2000 to 2021, overlapping with the Kaggle panel (2000–2015). We map Kaggle countries to ISO3 country codes, merge with UNDP HDR data, select the overlapping years, and quantify agreement (correlation, regression slope/intercept, and error distribution).
 
 # HDI definition (UNDP)
 
-Figure @fig-hdi-overview summarizes the HDI construction used by UNDP. [@UNDP_HDR2025_TechNotes]
+Figure @fig-hdi-overview summarizes the HDI construction used by UNDP.
 
 ::: {#fig-hdi-overview}
 
@@ -39,11 +36,11 @@ I_{\text{income}} &= \frac{\ln(\mathrm{GNIpc}) - \ln(100)}{\ln(75{,}000) - \ln(1
 \end{aligned}
 $$
 
-Here, $\mathrm{LE}$ is life expectancy at birth (years), $\mathrm{EYS}$ expected years of schooling, $\mathrm{MYS}$ mean years of schooling, and $\mathrm{GNIpc}$ gross national income per capita (PPP dollars^[PPP = purchasing power parity. “PPP dollars” (international dollars) adjust for cross-country price-level differences so that equal PPP amounts have comparable purchasing power across countries.]). Because $I_{\text{health}}$ depends on $\mathrm{LE}$, HDI is mechanistically linked to life expectancy and must be handled cautiously in regression models predicting `life_expectancy`.
+Here, $\mathrm{LE}$ is life expectancy at birth (years), $\mathrm{EYS}$ expected years of schooling, $\mathrm{MYS}$ mean years of schooling, and $\mathrm{GNIpc}$ gross national income per capita (PPP dollars^[PPP = purchasing power parity. “PPP dollars” (international dollars) adjust for cross-country price-level differences so that equal PPP amounts have comparable purchasing power across countries.]). Because $I_{\text{health}}$ depends on $\mathrm{LE}$, HDI is mechanistically linked to life expectancy and must not be used as a regressor to predict $\mathrm{LE}$.
 
 # Data and preprocessing
 
-We use (i) the Kaggle life expectancy panel (2000–2015) [@KumarRajarshi] and (ii) the UNDP HDR25 composite time series (HDI and GNIpc by ISO3) [@UNDP_HDR25_CompositeTimeSeries]. We do **not** drop missing `life_expectancy` here because the HDI identity check does not depend on the target.
+We reshape the UNDP HDR data from wide to long format, filter to the overlapping years (2000–2015), and merge on (ISO3, year). We also map Kaggle country names to ISO3 using the `pycountry` package. Finally, we compute coverage statistics and perform the identity check.
 
 ```{python}
 # | label: hdi-setup
@@ -72,14 +69,11 @@ def _hdr_usecols(col: str) -> bool:
     return c == "iso3" or c.startswith("hdi_") or c.startswith("gnipc_")
 
 
-hdr_df = (
-    pd.read_csv(
-        get_dataset_path("HDR25_Composite_indices_complete_time_series.csv"),
-        encoding="latin1",
-        usecols=_hdr_usecols,
-    )
-    .rename(columns=str.lower)
-)
+hdr_df = pd.read_csv(
+    get_dataset_path("HDR25_Composite_indices_complete_time_series.csv"),
+    encoding="latin1",
+    usecols=_hdr_usecols,
+).rename(columns=str.lower)
 
 hdi_cols = [f"hdi_{y}" for y in YEARS if f"hdi_{y}" in hdr_df.columns]
 gni_cols = [f"gnipc_{y}" for y in YEARS if f"gnipc_{y}" in hdr_df.columns]
@@ -91,7 +85,6 @@ hdr_hdi = (
     .dropna(subset=["hdi"])
 )
 
-# Filter GNIpc early: keep only positive values (required for the log transform).
 hdr_gni = (
     hdr_df[["iso3", *gni_cols]]
     .melt(id_vars=["iso3"], var_name="year", value_name="gnipc")
@@ -101,9 +94,6 @@ hdr_gni = (
     .dropna(subset=["gnipc"])
 )
 
-hdr_hdi_head = hdr_hdi.head(8)
-
-# Kaggle dataset: keep target missingness (not relevant for this check).
 le_df = LifeExpectancyDataset.from_csv(
     aggregate_by_country=False,
     drop_missing_target=False,
@@ -209,7 +199,7 @@ corr_tbl = pd.DataFrame(
 ```{python}
 # | label: tbl-hdi-hdr-preview
 # | tbl-cap: "UNDP HDR25 HDI time series after reshaping to long format (preview)."
-hdr_hdi_head.style.hide(axis="index")
+hdr_hdi.head().style.hide(axis="index")
 ```
 
 ```{python}
@@ -234,7 +224,7 @@ pd.DataFrame({"country": unmapped_countries}).head(20)
 ```
 :::
 
-# Results: identity check against UNDP HDI
+# Identity check against UNDP HDI
 
 ```{python}
 # | label: tbl-hdi-metrics
@@ -253,7 +243,7 @@ metrics.style.hide(axis="index").format(
 )
 ```
 
-Across $n=2509$ matched country-years, the feature shows near-identity agreement with UNDP HDI: Pearson correlation is $r \approx 0.993$ and the OLS fit is close to the identity line (slope $\approx 1.006$; intercept $\approx -0.026$; Table @tbl-hdi-metrics). The average bias is slightly negative (Kaggle lower than UNDP by about 0.022 on average), while typical errors are small (MAE $\approx 0.025$; 95% of absolute errors below $\approx 0.056$).
+Across $n=2509$ matched country-year data points, the feature shows near-identity agreement with UNDP HDI: Pearson correlation is $r \approx 0.993$ and the OLS fit is close to the identity line (slope $\approx 1.006$; intercept $\approx -0.026$). The average bias is slightly negative (Kaggle lower than UNDP by about 0.022 on average), while typical errors are small ($\mathrm{MAE} \approx 0.025$; 95% of absolute errors below $\approx 0.056$).
 
 ```{python}
 # | label: fig-hdi-scatter
@@ -274,7 +264,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-Figure @fig-hdi-scatter shows that points lie tightly around the identity line across the full HDI range (roughly 0.25–0.95), supporting the interpretation that the Kaggle feature is the UNDP HDI (up to rounding and minor revisions).
+@fig-hdi-scatter shows that points lie tightly around the identity line across the full HDI range (roughly 0.25–0.95), supporting the interpretation that the Kaggle feature is the UNDP HDI (up to rounding and minor revisions).
 
 ```{python}
 # | label: fig-hdi-diff
@@ -291,11 +281,15 @@ plt.tight_layout()
 plt.show()
 ```
 
-Figure @fig-hdi-diff shows the same result in error space: differences are narrowly distributed and centered slightly below zero, consistent with the small negative intercept and mean bias in Table @tbl-hdi-metrics.
+The residual distribution in @fig-hdi-diff supports this conclusion: differences are normally distributed and centered slightly below zero, consistent with the small negative intercept and mean bias in Table @tbl-hdi-metrics.
 
-# Disambiguation: HDI vs income-only index
+# HDI vs income-only index
 
-If `income_composition_of_resources` were only the income component, it should align more closely with the UNDP income index derived from GNIpc than with the full HDI. [@UNDP_HDR2025_TechNotes]
+If `income_composition_of_resources` were only the income component, it should align more closely with the UNDP income index $I_{\text{income}}$ derived from GNIpc via:
+
+$$
+I_{\text{income}} = \frac{\ln(\mathrm{GNIpc}) - \ln(100)}{\ln(75{,}000) - \ln(100)}
+$$
 
 ```{python}
 # | label: tbl-hdi-disambiguation
