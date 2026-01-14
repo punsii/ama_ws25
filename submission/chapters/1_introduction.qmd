@@ -5,12 +5,21 @@ format:
     toc: true
 ---
 
-We analyze the WHO [“Life Expectancy (WHO)” dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who), published on Kaggle [@KumarRajarshi]. The dataset merges longevity-related indicators from the WHO Global Health Observatory (GHO) with economic variables from the United Nations and provides a country-year panel for 193 countries over 2000–2015 (Table @tbl-intro-dataset-coverage). It consists of 22 columns: the target variable `life_expectancy` (years), as well as 20 candidate predictors spanning mortality burden, immunization coverage, socio-economic development, and nutrition [@KumarRajarshi]. Like many global indicator datasets, it exhibits systematic missingness, especially for `population`, `hepatitis_b`, and `gdp` [@KumarRajarshi]; we therefore document missing-value handling and sensitivity checks explicitly in Ch. 2.
+We analyze the WHO [“Life Expectancy (WHO)” dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who), published on Kaggle [@KumarRajarshi]. It is a country-year panel (193 countries, 2000–2015) with the target variable `life_expectancy` (years) and 20 candidate predictors spanning mortality burden, immunization, socio-economic development, and nutrition.
 
-Our overarching goal is **explanatory and predictive regression**: (i) identify which features matter for life expectancy (direction and magnitude), and (ii) quantify how well life expectancy can be predicted given the available features. Because the raw data is a longitudinal panel, we conduct regression analysis on a single cross‑section (2014) to avoid within‑country autocorrelation. For that cross‑section we retain broad coverage by **carry‑forward imputing predictors within each country** (last observation carried forward), and we keep rows even if some predictors remain missing. The complete‑case subset is then used for correlation and regression diagnostics in Ch. 3 and Ch. 5.
-<!-- TODO: link to the respective files - i.e. [Label](file.qmd) -->
+Our main goal is **explanatory and predictive regression**: (i) identify which predictors are most strongly associated with life expectancy (direction and magnitude), and (ii) quantify predictive performance out-of-sample. To reduce within-country temporal dependence, most multivariate analyses use a single cross-section (2014; see [Year Selection](2_preproc_year_selection.qmd)); regression models are evaluated on a separate holdout year in [Regression](5_regression.qmd). We interpret all results as descriptive associations in observational data.
 
-<!--  TODO: Do *not* start with an overview of missing values; Start with a description of the most important summary statistics, univariate plot of the life expectancy, life expectancy over the years; then most important predictors, as well as the overview of the columns / features (do not modify!)-->
+# Research questions and chapter map
+
+The report follows the course workflow (preprocessing → descriptives → exploration → regression). Concretely:
+
+1. **Choose a representative cross-section** and justify the 2014 framing ([Year Selection](2_preproc_year_selection.qmd)).
+2. **Clean and transform the data**, documenting missingness and outlier sensitivity ([Data Cleaning & Preprocessing](2_preprocessing.qmd), [Outlier Detection](2_outlier_detection.qmd)).
+3. **Quantify redundancy and low-dimensional structure** via correlations and grouped PCA ([Correlation Analysis](3_correlation.qmd), [Principal Component Analysis](3_pca.qmd)).
+4. **Explore country profiles** in standardized feature space ([Clustering](4_clustering.qmd)).
+5. **Select parsimonious models** using transparent criteria and search strategies ([Model Selection](4_model_selection.qmd)).
+6. **Fit and diagnose OLS models** and evaluate generalization to a holdout year ([Regression](5_regression.qmd)).
+7. **Document limitations and open questions** for follow-up ([Open Questions](5_open_questions.qmd)).
 ```{python}
 # | label: intro-setup
 # | include: false
@@ -32,6 +41,53 @@ le_panel = LifeExpectancyDataset.from_csv(
     resolve_nand_pred=False,
 )
 df_panel = le_panel.df
+
+# Life expectancy time series (panel; mean across countries with 95% CI)
+panel_lifeexp = (
+    df_panel[[LECol.YEAR, LECol.LIFE_EXPECTANCY]]
+    .dropna(subset=[LECol.LIFE_EXPECTANCY])
+    .assign(year=lambda d: d[LECol.YEAR].dt.year.astype(int))
+)
+lifeexp_by_year = (
+    panel_lifeexp.groupby("year")[LECol.LIFE_EXPECTANCY]
+    .agg(n="count", mean="mean", sd="std")
+    .reset_index()
+    .assign(se=lambda d: d["sd"] / np.sqrt(d["n"]))
+    .assign(ci_low=lambda d: d["mean"] - 1.96 * d["se"])
+    .assign(ci_high=lambda d: d["mean"] + 1.96 * d["se"])
+)
+
+trend_slope, trend_intercept = np.polyfit(
+    lifeexp_by_year["year"].to_numpy(),
+    lifeexp_by_year["mean"].to_numpy(),
+    deg=1,
+)
+lifeexp_mean_2000 = float(
+    lifeexp_by_year.loc[lifeexp_by_year["year"] == 2000, "mean"].iloc[0]
+)
+lifeexp_mean_2015 = float(
+    lifeexp_by_year.loc[lifeexp_by_year["year"] == 2015, "mean"].iloc[0]
+)
+lifeexp_delta_2000_2015 = lifeexp_mean_2015 - lifeexp_mean_2000
+
+lifeexp_trend_summary = pd.DataFrame(
+    {
+        "Statistic": [
+            "Mean life expectancy (2000)",
+            "Mean life expectancy (2015)",
+            "Absolute change (2015–2000)",
+            "Linear trend (years per year)",
+            "Linear trend (years per decade)",
+        ],
+        "Value": [
+            lifeexp_mean_2000,
+            lifeexp_mean_2015,
+            lifeexp_delta_2000_2015,
+            float(trend_slope),
+            float(trend_slope) * 10,
+        ],
+    }
+)
 
 # 2014 cross-section (carry-forward predictors; keep residual missingness)
 le_xs_2014 = LifeExpectancyDataset.from_csv(
@@ -68,27 +124,16 @@ dataset_coverage = pd.DataFrame(
 )
 
 # Missingness remaining after carry-forward (2014 cross-section)
-# TODO: add n_missing_features!
 rows_with_missing = int(df_2014[pred_cols].isna().any(axis=1).sum())
+n_missing_features = int(df_2014[pred_cols].isna().any(axis=0).sum())
 cross_section_missing = pd.DataFrame(
     {
         "n_rows": [len(df_2014)],
         "n_complete_cases": [len(df_2014_cc)],
         "n_rows_with_missing": [rows_with_missing],
+        "n_missing_features": [n_missing_features],
         "share_missing_pct": [rows_with_missing / len(df_2014) * 100],
     }
-)
-
-# Missingness overview in the panel (top 8 predictors)
-panel_missing = (
-    df_panel[le_panel.feature_columns(include_target=False)]
-    .isna()
-    .agg(["sum", "mean"])
-    .T.rename(columns={"sum": "missing_n", "mean": "missing_frac"})
-    .assign(missing_pct=lambda d: d["missing_frac"] * 100)
-    .sort_values("missing_pct", ascending=False)
-    .head(8)
-    .assign(feature=lambda d: d.index.map(le_panel.get_pretty_name))
 )
 
 # Life expectancy summary stats for the 2014 cross-section
@@ -99,43 +144,6 @@ life_expectancy_stats = (
 life_expectancy_stats.index = ["N", "Mean", "SD", "Min", "Max"]
 life_expectancy_stats = life_expectancy_stats.to_frame(name=life_expectancy_pretty).T
 life_expectancy_stats["N"] = life_expectancy_stats["N"].astype(int)
-
-# Correlations with target (complete-case 2014 subset; computed via the toolbox analyzer)
-corr_result_2014 = (
-    le_xs_2014.make_correlation_analyzer(standardized=False, include_target=True)
-    .fit()
-    .result(top_n_pairs=200)
-)
-assert corr_result_2014.target_correlations is not None
-target_corr_2014 = corr_result_2014.target_correlations.assign(
-    pretty=lambda d: d.feature.map(le_xs_2014.get_pretty_name),
-)
-
-pos5 = target_corr_2014.head(5).assign(direction="Positive")
-neg5 = target_corr_2014.tail(5).assign(direction="Negative")
-top_corr_2014 = (
-    pd.concat([neg5, pos5], ignore_index=True)
-    .assign(correlation=lambda d: d.correlation.astype(float))
-    .sort_values("correlation")
-)
-
-# Multicollinearity hotspots referenced in text
-hotspot_pairs = [
-    (LECol.INFANT_DEATHS, LECol.UNDER_FIVE_DEATHS),
-    (LECol.GDP, LECol.PERCENTAGE_EXPENDITURE),
-    (LECol.THINNESS_5_9_YEARS, LECol.THINNESS_1_19_YEARS),
-    (LECol.HDI, LECol.SCHOOLING),
-]
-collinearity_hotspots = pd.DataFrame(
-    [
-        {
-            "pair": f"`{str(a)}`–`{str(b)}`",
-            "pretty_pair": f"{le_xs_2014.get_pretty_name(str(a))} vs {le_xs_2014.get_pretty_name(str(b))}",
-            "correlation": float(corr_result_2014.matrix.loc[str(a), str(b)]),
-        }
-        for a, b in hotspot_pairs
-    ],
-).sort_values("correlation", ascending=False)
 
 
 # Helper: map per-column transforms to readable labels for the report
@@ -184,34 +192,19 @@ column_glossary.loc[column_glossary["column"] == str(LECol.STATUS), "description
 )
 ```
 
+# Dataset snapshot
+
 ```{python}
 # | label: tbl-intro-dataset-coverage
 # | tbl-cap: "Dataset coverage summary (raw panel, 2014 cross-section, complete-case subset)."
 dataset_coverage.style.hide(axis="index")
 ```
 
-```{python}
-# | label: tbl-intro-cross-section-missing
-# | tbl-cap: "Remaining predictor missingness after carry-forward (2014 cross-section)."
-cross_section_missing.assign(
-    **{"share_missing_pct": lambda d: d["share_missing_pct"].round(1)}
-).style.hide(axis="index")
-```
+Table @tbl-intro-dataset-coverage summarizes the dataset views used downstream. In the 2014 cross-section, carry-forward imputation retains $n=183$ countries; 50 (27.3%) still have at least one missing predictor, so complete-case analyses use $n=133$. Missing-value handling and robustness checks are documented in [Data Cleaning & Preprocessing](2_preprocessing.qmd) and [Outlier Detection](2_outlier_detection.qmd).
 
-```{python}
-# | label: tbl-intro-panel-missing
-# | tbl-cap: "Top predictors by missingness in the full panel (2000–2015; counts and %)."
-panel_missing.assign(
-    missing_pct=lambda d: d["missing_pct"].round(1),
-).loc[:, ["feature", "missing_n", "missing_pct"]].rename(
-    columns={"feature": "Feature", "missing_n": "Missing (n)", "missing_pct": "Missing (%)"}
-).style.hide(axis="index")
-```
+# Life expectancy in the data
 
-Table @tbl-intro-dataset-coverage summarizes sample sizes. The raw panel contains 2,938 country‑year samples across 193 countries (2000–2015). In 2014, carry‑forward imputation retains $n=183$ countries; 50 still have at least one missing predictor (Table @tbl-intro-cross-section-missing), leaving a complete‑case subset of $n=133$ used for correlation and regression diagnostics (Ch. 3–5). Missingness is concentrated in a small set of predictors (Table @tbl-intro-panel-missing), motivating the preprocessing choices documented in Ch. 2.
-
-<!-- TODO: rename section title -->
-# Descriptive snapshot (2014 cross-section)
+## 2014 cross-section: distribution
 
 ```{python}
 # | label: tbl-intro-lifeexp-summary
@@ -237,113 +230,9 @@ plt.tight_layout()
 plt.show()
 ```
 
-Figure @fig-intro-lifeexp-dist reinforces the summary statistics in Table @tbl-intro-lifeexp-summary: in 2014 ($n=183$), mean life expectancy is 71.5 years (SD 8.6; range 48.1–89.0), and the distribution is unimodal with a noticeable left tail. The lower tail signals a subset of countries with markedly shorter lifespans, motivating stratified interpretation when comparing country profiles later in the report.
+In 2014 ($n=183$), mean life expectancy is 71.5 years (SD 8.6) and ranges from 48.1 to 89.0 (Table @tbl-intro-lifeexp-summary). Figure @fig-intro-lifeexp-dist shows a unimodal distribution with a longer left tail: a small set of countries has markedly shorter life expectancy, while most observations lie between roughly 65 and 80 years.
 
-## Outcome and predictors
-
-All variables are reported at the country‑year level and come in mixed scales (counts, rates, percentages, and economic magnitudes). The target variable is `life_expectancy` (years). Predictors span four conceptual blocks:
-
-1. **Demography & mortality**
-   - **Adult Mortality (per 1000):** adult mortality rate per 1,000 population (probability of dying between ages 15 and 60).
-   - **Infant Deaths (per 1000):** number of infant deaths per 1,000 population.
-   - **Under‑5 Deaths (per 1000):** deaths of children under 5 per 1,000 population.
-   - **HIV/AIDS Deaths (per 1000 births):** deaths per 1,000 live births due to HIV/AIDS (ages 0–4).
-   - **Population:** total population of the country.
-
-2. **Immunization & infectious disease burden**
-   - **Hepatitis B Coverage (%):** HepB immunization coverage among 1‑year‑olds (%).
-   - **Polio Coverage (%):** polio immunization coverage among 1‑year‑olds (%).
-   - **Diphtheria Coverage (%):** DTP3 immunization coverage among 1‑year‑olds (%).
-   - **Measles Cases (per 1000):** number of measles cases per 1,000 population.
-
-3. **Socio‑economic & investment**
-   - **GDP per Capita (USD):** gross domestic product per capita (USD).
-   - **Health Expenditure (% of GDP per capita):** health spending as a percentage of GDP per capita.
-   - **Total Health Expenditure (% of govt expenditure):** government health expenditure as a percentage of total government spending.
-   - **Income composition of resources** or **Human Development Index (0–1):** socio‑economic development proxy; see [Investigate HDI](2_investigate_hdi.qmd) for details.
-   - **Schooling (years):** average years of schooling.
-   - **Alcohol Consumption (liters per capita):** recorded per‑capita (15+) consumption in liters of pure alcohol.
-
-
-4. **Nutrition & development status**
-   - **BMI (Average):** average body‑mass index.
-   - **Thinness 10–19 Years (%):** prevalence of thinness among children ages 10–19 (%).
-   - **Thinness 5–9 Years (%):** prevalence of thinness among children ages 5–9 (%).
-   - **Development Status:** categorical indicator (`0 = Developing`, `1 = Developed`).
-
-
-::: {.callout-note collapse="true"}
-## Column glossary (from `LifeExpectancyColumn`)
-
-The table below summarizes column meanings and the default transforms applied later in the pipeline (`tf_and_norm`).
-
-```{python}
-# | label: tbl-intro-column-glossary
-# | tbl-cap: "Column definitions and default preprocessing transforms."
-column_glossary.loc[:, ["pretty", "description", "transform"]].rename(
-    columns={
-        "pretty": "Feature",
-        "description": "Definition (units / scale)",
-        "transform": "Default transform",
-    },
-).style.hide(axis="index")
-
-```
-:::
-
-# Descriptive signal (2014 cross‑section, complete‑case subset)
-
-For bivariate correlations we restrict to the complete‑case subset ($n=133$) because Pearson correlation is defined on rows without missing values. Pearson correlations are scale‑invariant, so the coefficients below are unchanged by z‑scoring. The strongest *positive* linear associations with life expectancy are development and human‑capital indicators (income composition/HDI and schooling), while the strongest *negative* associations are mortality and burden indicators (adult mortality, HIV/AIDS, thinness). Because the income‑composition/HDI variable is potentially tied to life expectancy by construction, we treat it as a descriptive development proxy and interpret it cautiously in multivariate regression.
-
-```{python}
-# | label: fig-intro-top-corr
-# | fig-cap: "Top 5 positive and negative correlations with life expectancy (2014 complete-case subset)."
-
-fig, ax = plt.subplots(figsize=(8, 5))
-sns.barplot(
-    data=top_corr_2014,
-    x="correlation",
-    y="pretty",
-    hue="direction",
-    order=top_corr_2014.sort_values("correlation")["pretty"].tolist(),
-    dodge=False,
-    palette="coolwarm",
-    ax=ax,
-)
-ax.axvline(0, color="black", linewidth=1)
-ax.set_xlabel(f"Correlation with {LECol.LIFE_EXPECTANCY.pretty_name}")
-ax.set_ylabel("")
-ax.set_title("Strongest Linear Associations")
-ax.legend(title="")
-plt.tight_layout()
-plt.show()
-```
-
-```{python}
-# | label: tbl-intro-top-corr
-# | tbl-cap: "Top 5 positive and negative correlations with life expectancy (2014 complete-case subset)."
-top_corr_2014.assign(r=lambda d: d.correlation.round(2)).loc[:, ["pretty", "r"]].rename(
-    columns={"pretty": "Feature", "r": "Correlation (r)"},
-).style.hide(axis="index")
-```
-
-In the complete‑case subset, the largest positive associations are with income composition/HDI ($r \approx 0.89$) and schooling ($r \approx 0.79$), followed by BMI and alcohol consumption. The largest negative associations are with adult mortality ($r \approx -0.77$) and HIV/AIDS deaths ($r \approx -0.61$), with thinness indicators also strongly negative (Table @tbl-intro-top-corr). These are descriptive and do not control for confounding; the alcohol association likely reflects broader development differences rather than a causal protective effect. The full correlation structure and transform sensitivity are analyzed in Ch. 3.
-
-Several predictors are also *highly correlated with each other*, which motivates either feature grouping (PCA blocks) or careful interpretation of multivariate regression coefficients.
-
-```{python}
-# | label: tbl-intro-collinearity-hotspots
-# | tbl-cap: "Selected multicollinearity hotspots (pairwise Pearson correlations; 2014 complete-case subset)."
-collinearity_hotspots.assign(r=lambda d: d.correlation.round(3)).loc[
-    :, ["pretty_pair", "r"]
-].rename(
-    columns={"pretty_pair": "Pair", "r": "Correlation (r)"},
-).style.hide(axis="index")
-```
-
-Several predictor pairs are near‑redundant: infant deaths vs under‑5 deaths ($r \approx 0.995$), GDP vs health expenditure ($r \approx 0.95$), thinness 5–9 vs 10–19 ($r \approx 0.94$), and income composition/HDI vs schooling ($r \approx 0.91$). These collinear blocks motivate grouped PCA in Ch. 3 and careful interpretation of regression coefficients in Ch. 5.
-
-# Development status gap (2014 cross-section)
+## 2014 cross-section: development status gap
 
 ```{python}
 # | label: fig-intro-status-gap
@@ -412,27 +301,75 @@ status_stats.loc[:, ["n", "mean", "std", "median"]].rename_axis("Status").style.
 )
 ```
 
-Developed countries have markedly higher life expectancy in 2014: the mean is about 81.1 years (SD 4.2, $n=32$) versus 69.5 years (SD 7.8, $n=151$) for developing countries (Table @tbl-intro-status-stats). Figure @fig-intro-status-gap shows that while the distributions overlap, the developed‑country distribution is shifted upward and tighter, indicating a gap of roughly 11.6 years and motivating development status as a key stratifying variable in later analyses (Ch. 3–5).
+Developed countries have markedly higher life expectancy in 2014: the mean is 81.1 years (SD 4.2, $n=32$) versus 69.5 years (SD 7.8, $n=151$) for developing countries (Table @tbl-intro-status-stats). Figure @fig-intro-status-gap shows substantial heterogeneity among developing countries and a tighter distribution among developed countries; the two groups overlap mainly in the 74–83 year range. We use development status as a stratifying variable in descriptive plots and as a covariate (and potential effect modifier) in [Regression](5_regression.qmd).
 
-# Research questions
+## Panel trend (2000–2015)
 
-The course requirements ask us to answer two core questions: **which features matter** for the target and **how well** the target can be predicted. Motivated by the dataset description [@KumarRajarshi], we operationalize this as:
+```{python}
+# | label: tbl-intro-lifeexp-trend
+# | tbl-cap: "Life expectancy trend summary (panel averages; 2000–2015)."
+lifeexp_trend_summary.style.hide(axis="index").format({"Value": "{:.2f}"})
+```
 
-1. **Feature importance (explanatory):** Which predictors show the strongest associations with life expectancy, and which remain important in multivariate OLS once correlated development indicators are controlled? (effect sizes, uncertainty, $R^2$)
-2. **Prediction (generalization):** How accurately can life expectancy be predicted from the available predictors? We compare parsimonious vs richer models using a year-based holdout and cross-validation (RMSE/$R^2$).
-3. **Incremental value of immunization:** Do immunization variables (HepB/Polio/DTP3) add explanatory or predictive value beyond socio-economic development proxies (income composition, schooling, GDP) and mortality burden? [@KumarRajarshi]
-4. **Nonlinearity and effect modification:** Are there motivated nonlinearities or interactions (e.g., differences by development status; diminishing returns of expenditure-related predictors) that improve fit and remain interpretable?
-5. **Collinearity, PCA, and robustness:** Can grouped PCA mitigate multicollinearity without degrading predictive performance, and how sensitive are conclusions to outliers and preprocessing choices?
-6. **Country profiles (clustering):** Do countries cluster into distinct multivariate profiles in standardized feature space, and how do these profiles relate to life expectancy?
+```{python}
+# | label: fig-intro-lifeexp-time-series
+# | fig-cap: "Life expectancy over time in the longitudinal panel (annual mean across countries with 95% CI)."
 
-<!-- TODO: merge Analytics flow and Roadmap! -->
-# Analytical flow
+plot_df = lifeexp_by_year.assign(
+    trend=lambda d: trend_intercept + trend_slope * d["year"],
+)
 
-1. **Preprocessing:** header normalization, type conversion, year selection, transforms for skewed predictors, and z‑scoring of numeric predictors; documented missing‑value and outlier handling.
-2. **Exploration:** correlation structure and grouped PCA to quantify redundancy and dominant dimensions.
-3. **Modelling:** baseline univariate OLS, core multivariate OLS, assumption diagnostics, CV; grouped PCA + regression to mitigate multicollinearity.
-4. **Interpretation:** effect sizes with uncertainty, practical relevance, and stated limitations.
+fig, ax = plt.subplots(figsize=(9, 4))
+ax.plot(plot_df["year"], plot_df["mean"], color="steelblue", label="Annual mean")
+ax.fill_between(
+    plot_df["year"],
+    plot_df["ci_low"],
+    plot_df["ci_high"],
+    color="steelblue",
+    alpha=0.2,
+    linewidth=0,
+    label="95% CI",
+)
+ax.plot(
+    plot_df["year"],
+    plot_df["trend"],
+    color="black",
+    linestyle="--",
+    alpha=0.8,
+    label="Linear trend",
+)
+ax.set_xlabel("Year")
+ax.set_ylabel(LECol.LIFE_EXPECTANCY.pretty_name)
+ax.set_title("Life Expectancy Over Time (2000–2015)")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
 
-# Roadmap
+Across the full panel, average life expectancy increases from 66.8 years in 2000 to 71.6 years in 2015 (Table @tbl-intro-lifeexp-trend), an absolute change of about 4.9 years. A linear fit to annual means corresponds to an average increase of roughly 0.35 years per year (3.5 per decade). Figure @fig-intro-lifeexp-time-series shows a monotone upward trend in the annual mean; the shaded band is a 95% confidence interval for the annual mean across countries (mean $\pm 1.96 \cdot \mathrm{SE}$). The 2014 cross-section used in most multivariate chapters is chosen to balance recency and data completeness (see [Year Selection](2_preproc_year_selection.qmd)).
 
-Preprocessing & year selection/outliers (Ch. 2) $\rightarrow$ correlation & PCA (Ch. 3) $\rightarrow$ clustering (Ch. 4) $\rightarrow$ regression (Ch. 5). Each chapter cites the generating notebook(s) for figures/tables to keep provenance explicit.
+# Predictors and modelling considerations
+
+Predictors are measured at the country-year level and span mortality burden (e.g., adult mortality, HIV/AIDS, child deaths), immunization and infectious disease (e.g., HepB/Polio/DTP3 coverage, measles), socio-economic development and health investment (e.g., schooling, GDP, expenditure), and nutrition proxies (e.g., BMI and thinness). Variables are on heterogeneous scales, so most multivariate chapters use the standardized, transformed view produced by `LifeExpectancyDataset.tf_and_norm()` (see [Data Cleaning & Preprocessing](2_preprocessing.qmd)).
+
+Two modelling issues shape the rest of the report. First, residual missingness after carry-forward reduces the effective sample size for complete-case analyses (Table @tbl-intro-dataset-coverage), and we document sensitivity to missing-data handling in [Data Cleaning & Preprocessing](2_preprocessing.qmd). Second, many predictors are strongly correlated, so multicollinearity is addressed explicitly through correlation analysis and PCA-based grouping ([Correlation Analysis](3_correlation.qmd), [Principal Component Analysis](3_pca.qmd)) before interpreting multivariate regression coefficients ([Regression](5_regression.qmd)). Finally, the dataset’s HDI-like feature is mechanically related to life expectancy by construction; we therefore validate its interpretation against UNDP data in [Investigate HDI](2_investigate_hdi.qmd) and treat it cautiously in downstream models.
+
+
+::: {.callout-note collapse="true"}
+## Column glossary (from `LECol` metadata)
+
+The table below summarizes column meanings and the default transforms applied later in the pipeline (`tf_and_norm`).
+
+```{python}
+# | label: tbl-intro-column-glossary
+# | tbl-cap: "Column definitions and default preprocessing transforms."
+column_glossary.loc[:, ["pretty", "description", "transform"]].rename(
+    columns={
+        "pretty": "Feature",
+        "description": "Definition (units / scale)",
+        "transform": "Default transform",
+    },
+).style.hide(axis="index")
+
+```
+:::
