@@ -9,9 +9,54 @@ format:
 
 We operate on the WHO Life Expectancy dataset and apply a deterministic cleaning and preprocessing pipeline implemented in `LifeExpectancyDataset`. Raw CSV headers are normalized to snake_case to align with the `LifeExpectancyColumn` enum, `year` is parsed as a datetime variable, `status` is recoded into a binary indicator (1=developed), and all predictors are coerced to numeric where applicable. Observations with missing life expectancy are dropped to ensure a well-defined target for downstream modelling.
 
-Unless stated otherwise, the report focuses on a single cross-section (year 2014) to avoid longitudinal dependence. The choice of year is justified in the year selection chapter (`2_preproc_year_selection.qmd`). When aggregating to a single year, we average numeric predictors per country and impute residual gaps using country-level means. For analyses that require comparable scales (correlation, PCA, and standardized regression), we apply column-specific transforms and then z-score numeric predictors; identifiers and `status` remain on their native scale.
+Unless stated otherwise, the report focuses on a single cross-section (year 2014) to avoid longitudinal dependence. The choice of year is justified in the year selection chapter (`2_preproc_year_selection.qmd`). When selecting a single year, we impute remaining gaps in numeric predictors using global column means within that year to retain country coverage. For analyses that require comparable scales (correlation, PCA, and standardized regression), we apply column-specific transforms and then z-score numeric predictors; identifiers and `status` remain on their native scale.
 
 The goal of this chapter is to document the preprocessing artifacts that are used consistently across subsequent analysis pages and notebooks.
+
+## Schema as code: column enums with metadata
+
+All variables are accessed through a column enum (`LifeExpectancyColumn`, imported as `LECol`) rather than raw strings. Each enum member carries structured metadata via `ColumnMetadata` (original CSV name, cleaned name, expected dtype, pretty label, and an optional transform). This makes the preprocessing pipeline reproducible and consistent across the package: the same metadata drives (i) robust header normalization, (ii) type conversion, (iii) axis labels in plots and tables, and (iv) per-variable transformations used before standardization. Downstream analysis components operate on an immutable `DatasetView` (created by `BaseDataset.view()`), so preprocessing choices (raw vs standardized, dropping vs imputing missing values) are explicit and analyzers cannot accidentally mutate cached dataset state.
+
+## Missing values: predictors versus target
+
+Missingness in the outcome (`life_expectancy`) is handled separately from missingness in predictors. Most downstream methods require a well-defined target, so the default is to drop observations with missing life expectancy (`drop_missing_target=True`). Predictor missingness is controlled by the `resolve_nand_pred` parameter and depends on whether we keep the full panel or reduce to a single-year cross-section. In the longitudinal panel (`aggregate_by_country=False`), we compare three deterministic strategies: complete-case deletion (`drop`), global median imputation (`median`), and within-country forward filling (`carry_forward`, only meaningful when multiple years per country are available).
+
+```{python}
+# | label: tbl-missing-strategies
+# | tbl-cap: "Predictor-missingness strategies on the longitudinal panel (after dropping missing targets)."
+import pandas as pd
+
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+import numpy as np
+np.random.seed(42)
+
+strategies = {
+    "drop (complete-case)": "drop",
+    "median (global median imputation)": "median",
+    "carry_forward (within-country forward fill)": "carry_forward",
+}
+
+rows = []
+for label, strategy in strategies.items():
+    df = LifeExpectancyDataset.from_csv(
+        aggregate_by_country=False,
+        drop_missing_target=True,
+        resolve_nand_pred=strategy,
+    ).df
+    years = df[LECol.YEAR].dt.year
+    rows.append(
+        {
+            "strategy": label,
+            "rows": int(len(df)),
+            "countries": int(df[LECol.COUNTRY].nunique()),
+            "year_min": int(years.min()),
+            "year_max": int(years.max()),
+        }
+    )
+
+pd.DataFrame(rows).sort_values("rows", ascending=False).reset_index(drop=True)
+
+```
 
 ## Dataset snapshots
 
@@ -19,35 +64,69 @@ The goal of this chapter is to document the preprocessing artifacts that are use
 # | label: tbl-dataset-snapshots
 # | tbl-cap: "Dataset snapshots after cleaning"
 import pandas as pd
+
 from ama_tlbx.data import LifeExpectancyDataset, LECol
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
 
 DEFAULT_PLOT_CFG.apply_global()
 
+panel_raw = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=False,
+    drop_missing_target=False,
+    resolve_nand_pred=False,
+).df
+
+xs_2014_raw = panel_raw[panel_raw[LECol.YEAR].dt.year == 2014].copy()
+xs_2014_complete_case = xs_2014_raw.dropna(
+    subset=xs_2014_raw.select_dtypes(include=["number"]).columns
+).set_index(LECol.COUNTRY)
+
 snapshots = {
-    "agg_2014": LifeExpectancyDataset.from_csv(aggregate_by_country=2014).df,
-    "agg_default_2007": LifeExpectancyDataset.from_csv().df,
-    "longitudinal": LifeExpectancyDataset.from_csv(aggregate_by_country=False).df,
+    "panel_raw": panel_raw,
+    "xs_2014_raw": xs_2014_raw,
+    "xs_2014_complete_case": xs_2014_complete_case,
+    "xs_2014_imputed": LifeExpectancyDataset.from_csv(aggregate_by_country=2014).df,
+    "xs_latest_default": LifeExpectancyDataset.from_csv().df,
 }
 
-rows = {name: len(df) for name, df in snapshots.items()}
-years = snapshots["longitudinal"][LECol.YEAR].dt.year
+def _country_count(df: pd.DataFrame) -> int:
+    if LECol.COUNTRY in df.columns:
+        return int(df[LECol.COUNTRY].nunique())
+    if df.index.name == LECol.COUNTRY:
+        return int(df.index.nunique())
+    return int(df.index.nunique())
 
-pd.DataFrame(
-    {
-        "rows": rows,
-        "year_min": {
-            "longitudinal": years.min(),
-            "agg_2014": 2014,
-            "agg_default_2007": 2007,
-        },
-        "year_max": {
-            "longitudinal": years.max(),
-            "agg_2014": 2014,
-            "agg_default_2007": 2007,
-        },
-    }
-).astype({"rows": int})
+
+def _year_bounds(df: pd.DataFrame) -> tuple[int | None, int | None]:
+    if LECol.YEAR not in df.columns:
+        return None, None
+    s = df[LECol.YEAR]
+    years = s.dt.year if pd.api.types.is_datetime64_any_dtype(s) else s
+    return int(years.min()), int(years.max())
+
+
+def _pct_missing_numeric(df: pd.DataFrame) -> float:
+    numeric = df.select_dtypes(include=["number"])
+    if numeric.empty:
+        return 0.0
+    return float(numeric.isna().mean().mean() * 100)
+
+
+summary_rows = []
+for name, df in snapshots.items():
+    y_min, y_max = _year_bounds(df)
+    summary_rows.append(
+        {
+            "view": name,
+            "rows": int(len(df)),
+            "countries": _country_count(df),
+            "year_min": y_min,
+            "year_max": y_max,
+            "pct_missing_numeric": _pct_missing_numeric(df),
+        }
+    )
+
+pd.DataFrame(summary_rows).sort_values("view").reset_index(drop=True)
 ```
 
 ## Column transformations (tf_and_norm)
@@ -55,6 +134,8 @@ pd.DataFrame(
 ```{python}
 # | label: tbl-transforms
 # | tbl-cap: "Per-column transforms applied before standardization"
+import pandas as pd
+
 from ama_tlbx.data.life_expectancy_columns import LifeExpectancyColumn as Col
 
 rows = []
@@ -63,7 +144,9 @@ for col in Col:
     tf_name = tf.__name__ if tf is not None else "none"
     rows.append(
         {
+            "original": col.original_name,
             "column": col.value,
+            "dtype": col.dtype_name,
             "pretty": col.pretty_name,
             "transform": tf_name,
         }
@@ -74,6 +157,6 @@ pd.DataFrame(rows).sort_values("column")
 
 Notes:
 
-Skewed count and intensity variables are transformed using `log1p` (for example GDP, child mortality counts, measles cases, HIV/AIDS prevalence, thinness indicators, alcohol consumption, population, and expenditure measures). For immunization rates, we emphasize shortfall rather than saturation by transforming `log1p(100 - coverage)`. Variables that are already well-behaved on their native scale (for example BMI, schooling, income composition, and status) are left untransformed. After transformation, numeric predictors are imputed if needed (median-based) and standardized; the target is not standardized.
+Skewed count and intensity variables are transformed using `log1p` (for example GDP, child mortality counts, measles cases, HIV/AIDS prevalence, thinness indicators, alcohol consumption, population, and expenditure measures). For immunization rates, we emphasize shortfall rather than saturation by transforming `log1p(100 - coverage)`. Variables that are already well-behaved on their native scale (for example BMI, schooling, income composition, and status) are left untransformed. After transformation, numeric predictors are imputed if needed (median-based) and standardized; `year`, `status`, and the target remain unstandardized.
 
 Correlation analysis and outlier diagnostics are treated as dedicated analysis chapters because they motivate PCA and inform regression model specification. For details, see `3_correlation.qmd` (correlation structure and multicollinearity) and `2_outlier_detection.qmd` (outlier detection methods and sensitivity).

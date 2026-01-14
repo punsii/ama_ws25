@@ -20,9 +20,10 @@ import seaborn as sns
 
 from ama_tlbx.data import LECol, LifeExpectancyDataset
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
-
 np.random.seed(42)
+
 DEFAULT_PLOT_CFG.apply_global()
+
 ```
 
 ```{python}
@@ -379,7 +380,6 @@ iforest_detector = le_ds.make_isolation_forest_outlier_detector(
     columns=None,
     standardized=True,
     contamination="auto",
-    random_state=42,
     n_estimators=100,
 )
 
@@ -569,7 +569,8 @@ To illustrate how the detectors behave on the same feature-target relationship, 
 ```{python}
 # | label: fig-selected-features-comparison
 # | fig-cap: "Outlier labeling by method across all predictors versus life expectancy."
-selected_comparison_features = le_ds.feature_columns(include_target=False)
+selected_comparison_features = iqr_result.outlier_mask.columns.tolist()
+
 
 fig, axes = plt.subplots(
     len(selected_comparison_features),
@@ -595,7 +596,9 @@ for row_idx, feature in enumerate(selected_comparison_features):
     ):
         ax = axes[row_idx, col_idx]
 
-        feature_outliers = result.outlier_mask[feature].reindex(df.index, fill_value=False)
+        feature_outliers = result.outlier_mask[feature].reindex(
+            df.index, fill_value=False
+        )
 
         normal_mask = ~feature_outliers
         ax.scatter(
@@ -825,7 +828,6 @@ iforest_2014 = le_2014.make_isolation_forest_outlier_detector(
     columns=cols_2014,
     standardized=True,
     contamination=0.07,
-    random_state=42,
     n_estimators=200,
 ).fit().result()
 

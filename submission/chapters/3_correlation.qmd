@@ -20,9 +20,10 @@ from pprint import pprint
 from ama_tlbx.analysis import CorrelationResult, suggest_groups_from_correlation
 from ama_tlbx.data import LECol, LifeExpectancyDataset
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+np.random.seed(42)
 
 DEFAULT_PLOT_CFG.apply_global()
-np.random.seed(42)
+
 ```
 
 ```{python}

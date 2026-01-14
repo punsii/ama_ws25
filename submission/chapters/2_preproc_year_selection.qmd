@@ -20,9 +20,10 @@ import seaborn as sns
 
 from ama_tlbx.data import LECol, LifeExpectancyDataset
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+np.random.seed(42)
 
 DEFAULT_PLOT_CFG.apply_global()
-np.random.seed(42)
+
 ```
 
 ## Load the longitudinal panel
@@ -155,7 +156,7 @@ ds = LifeExpectancyDataset(
 print(ds.df.index.year.unique())
 
 iso_forest_results = (
-    ds.make_isolation_forest_outlier_detector(n_estimators=100, random_state=42)
+    ds.make_isolation_forest_outlier_detector(n_estimators=100)
     .fit()
     .result()
 )
@@ -277,4 +278,3 @@ print("=" * 70)
 ```
 
 The combined score selects 2014 as the representative cross-section. With a fixed Isolation Forest seed for reproducibility ($random\_state = 42$), the 2014 snapshot achieves the maximum normalized completeness and a low anomaly burden relative to other recent years. This year is therefore used as the default cross-section in the subsequent chapters. The resulting preprocessing pipeline is documented in `2_preprocessing.qmd`, and outlier handling is discussed in `2_outlier_detection.qmd`.
-
