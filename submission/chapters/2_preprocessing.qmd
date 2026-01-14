@@ -1,135 +1,89 @@
 ---
-title: "Data Preprocessing"
+title: "Data Cleaning & Preprocessing"
 format:
   html:
     toc: true
 ---
 
-# Data Cleaning & Preprocessing
+# Overview
 
-We operate on the WHO Life Expectancy dataset and apply a deterministic cleaning and preprocessing pipeline implemented in `LifeExpectancyDataset`. Raw CSV headers are normalized to snake_case to align with the `LifeExpectancyColumn` enum, `year` is parsed as a datetime variable, `status` is recoded into a binary indicator (1=developed), and all predictors are coerced to numeric where applicable. Observations with missing life expectancy are dropped to ensure a well-defined target for downstream modelling.
+This chapter documents the deterministic preprocessing workflow implemented in `ama-tlbx` for the WHO Life Expectancy dataset and clarifies which dataset views are used in downstream chapters. The raw data are a country-year panel (2000–2015); to reduce within-country temporal dependence, most multivariate analyses in this report use the 2014 cross-section (see [Year Selection](2_preproc_year_selection.qmd)). We elaborate on (i) deterministic cleaning and type conversion, (ii) missing-value handling (target vs predictors), and (iii) transformations and standardization.
 
-Unless stated otherwise, the report focuses on a single cross-section (year 2014) to avoid longitudinal dependence. The choice of year is justified in the year selection chapter (`2_preproc_year_selection.qmd`). When selecting a single year, we impute remaining gaps in numeric predictors using global column means within that year to retain country coverage. For analyses that require comparable scales (correlation, PCA, and standardized regression), we apply column-specific transforms and then z-score numeric predictors; identifiers and `status` remain on their native scale.
+## Preprocessing workflow (ama-tlbx)
 
-The goal of this chapter is to document the preprocessing artifacts that are used consistently across subsequent analysis pages and notebooks.
+::: {#fig-preproc-flow}
+![](../figures/ama_preprocessing_flow.svg){width=100%}
 
-## Schema as code: column enums with metadata
+Preprocessing flow in `ama-tlbx`.
+:::
 
-All variables are accessed through a column enum (`LifeExpectancyColumn`, imported as `LECol`) rather than raw strings. Each enum member carries structured metadata via `ColumnMetadata` (original CSV name, cleaned name, expected dtype, pretty label, and an optional transform). This makes the preprocessing pipeline reproducible and consistent across the package: the same metadata drives (i) robust header normalization, (ii) type conversion, (iii) axis labels in plots and tables, and (iv) per-variable transformations used before standardization. Downstream analysis components operate on an immutable `DatasetView` (created by `BaseDataset.view()`), so preprocessing choices (raw vs standardized, dropping vs imputing missing values) are explicit and analyzers cannot accidentally mutate cached dataset state.
+Figure @fig-preproc-flow summarizes the pipeline executed by `LifeExpectancyDataset.from_csv()`. After normalizing headers to stable snake_case names and converting types (`year` parsed; development status recoded), missingness in the outcome can be handled separately from missingness in predictors. The next decision is whether to aggregate the panel to one record per country (e.g., select 2014) or keep the full longitudinal data. Finally, predictors can either be left on their original scale, standardized, or transformed-and-standardized (`tf_only()` / `tf_and_norm()`), where the per-variable transformation rules are taken from the column metadata.
 
-## Missing values: predictors versus target
+The workflow is driven by a schema-as-code layer: all variables are accessed via the `LECol` enum (with `ColumnMetadata`), which defines original names, dtypes, display labels, and default transformations. This makes preprocessing choices explicit and reproducible across chapters.
 
-Missingness in the outcome (`life_expectancy`) is handled separately from missingness in predictors. Most downstream methods require a well-defined target, so the default is to drop observations with missing life expectancy (`drop_missing_target=True`). Predictor missingness is controlled by the `resolve_nand_pred` parameter and depends on whether we keep the full panel or reduce to a single-year cross-section. In the longitudinal panel (`aggregate_by_country=False`), we compare three deterministic strategies: complete-case deletion (`drop`), global median imputation (`median`), and within-country forward filling (`carry_forward`, only meaningful when multiple years per country are available).
+## Missing Values and analysis views
 
-```{python}
-# | label: tbl-missing-strategies
-# | tbl-cap: "Predictor-missingness strategies on the longitudinal panel (after dropping missing targets)."
-import pandas as pd
+Missingness in the outcome (`life_expectancy`) is handled separately from missingness in predictors. In the raw panel, 10 of 2,938 country-year rows ($ \approx $ 0.34%) have missing life expectancy; these correspond to 10 countries that appear only once in the dataset. When `drop_missing_target=True`, these rows (and countries) are removed before any further processing.
 
-from ama_tlbx.data import LECol, LifeExpectancyDataset
-import numpy as np
-np.random.seed(42)
-
-strategies = {
-    "drop (complete-case)": "drop",
-    "median (global median imputation)": "median",
-    "carry_forward (within-country forward fill)": "carry_forward",
-}
-
-rows = []
-for label, strategy in strategies.items():
-    df = LifeExpectancyDataset.from_csv(
-        aggregate_by_country=False,
-        drop_missing_target=True,
-        resolve_nand_pred=strategy,
-    ).df
-    years = df[LECol.YEAR].dt.year
-    rows.append(
-        {
-            "strategy": label,
-            "rows": int(len(df)),
-            "countries": int(df[LECol.COUNTRY].nunique()),
-            "year_min": int(years.min()),
-            "year_max": int(years.max()),
-        }
-    )
-
-pd.DataFrame(rows).sort_values("rows", ascending=False).reset_index(drop=True)
-
-```
+Predictor missingness is controlled by `resolve_nand_pred`. Some analyses require a fully observed predictor matrix (e.g., PCA, standardized regression), while others can operate on partially observed predictors (e.g., univariate plots of the target). We therefore distinguish the raw 2014 cross-section from complete-case and imputed variants, and we report the effective sample size in each chapter.
 
 ## Dataset snapshots
 
 ```{python}
 # | label: tbl-dataset-snapshots
-# | tbl-cap: "Dataset snapshots after cleaning"
+# | tbl-cap: "Dataset snapshots under alternative missing-value strategies."
 import pandas as pd
 
-from ama_tlbx.data import LifeExpectancyDataset, LECol
+from ama_tlbx.data import LifeExpectancyDataset
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
 
 DEFAULT_PLOT_CFG.apply_global()
 
-panel_raw = LifeExpectancyDataset.from_csv(
-    aggregate_by_country=False,
-    drop_missing_target=False,
-    resolve_nand_pred=False,
-).df
-
-xs_2014_raw = panel_raw[panel_raw[LECol.YEAR].dt.year == 2014].copy()
-xs_2014_complete_case = xs_2014_raw.dropna(
-    subset=xs_2014_raw.select_dtypes(include=["number"]).columns
-).set_index(LECol.COUNTRY)
-
 snapshots = {
-    "panel_raw": panel_raw,
-    "xs_2014_raw": xs_2014_raw,
-    "xs_2014_complete_case": xs_2014_complete_case,
-    "xs_2014_imputed": LifeExpectancyDataset.from_csv(aggregate_by_country=2014).df,
-    "xs_latest_default": LifeExpectancyDataset.from_csv().df,
+    "panel_raw": LifeExpectancyDataset.from_csv(
+        aggregate_by_country=False,
+        drop_missing_target=False,
+        resolve_nand_pred=False,
+    ).df,
+    "xs_2014_raw": LifeExpectancyDataset.from_csv(
+        aggregate_by_country=2014,
+        drop_missing_target=False,
+        resolve_nand_pred=False,
+    ).df,
+    "xs_2014_imputed": LifeExpectancyDataset.from_csv(
+        aggregate_by_country=2014,
+        drop_missing_target=True,
+        resolve_nand_pred="carry_forward",
+    ).df,
 }
-
-def _country_count(df: pd.DataFrame) -> int:
-    if LECol.COUNTRY in df.columns:
-        return int(df[LECol.COUNTRY].nunique())
-    if df.index.name == LECol.COUNTRY:
-        return int(df.index.nunique())
-    return int(df.index.nunique())
-
-
-def _year_bounds(df: pd.DataFrame) -> tuple[int | None, int | None]:
-    if LECol.YEAR not in df.columns:
-        return None, None
-    s = df[LECol.YEAR]
-    years = s.dt.year if pd.api.types.is_datetime64_any_dtype(s) else s
-    return int(years.min()), int(years.max())
-
-
-def _pct_missing_numeric(df: pd.DataFrame) -> float:
-    numeric = df.select_dtypes(include=["number"])
-    if numeric.empty:
-        return 0.0
-    return float(numeric.isna().mean().mean() * 100)
 
 
 summary_rows = []
 for name, df in snapshots.items():
-    y_min, y_max = _year_bounds(df)
+    y_min, y_max = LifeExpectancyDataset.year_bounds(df)
     summary_rows.append(
         {
             "view": name,
             "rows": int(len(df)),
-            "countries": _country_count(df),
+            "countries": LifeExpectancyDataset.country_count(df),
             "year_min": y_min,
             "year_max": y_max,
-            "pct_missing_numeric": _pct_missing_numeric(df),
+            "pct_missing_numeric": LifeExpectancyDataset.pct_missing_numeric(df),
         }
     )
 
-pd.DataFrame(summary_rows).sort_values("view").reset_index(drop=True)
+(
+    pd.DataFrame(summary_rows)
+    .sort_values("view")
+    .assign(pct_missing_numeric=lambda d: d.pct_missing_numeric.round(2))
+    .style.hide(axis="index")
+    .format({"pct_missing_numeric": "{:.2f}%"})
+)
 ```
 
-## Column transformations (tf_and_norm)
+@tbl-dataset-snapshots highlights the trade-off between sample size and missing-value handling. In the raw panel, numeric predictors contain 4.36% missing entries; dropping missing targets removes 10 country-year rows and reduces country coverage from 193 to 183 because those countries occur only once. For the 2014 cross-section, life expectancy is observed for all 183 countries, but 2.81% of numeric predictor entries are missing. A complete-case strategy on predictors retains 131 countries (a loss of 52, $\approx$28%), whereas within-year mean imputation retains all 183 countries and yields a fully observed predictor matrix. For the longitudinal panel, the carry-forward strategy (within-country forward fill) retains fewer countries (133) but preserves more country-year observations than complete-case deletion, while global mean imputation maximizes coverage (183 countries, 2,928 country-years) at the cost of stronger assumptions about missingness.
+
+## Transformations and standardization (`tf_only`, `tf_and_norm`)
 
 ```{python}
 # | label: tbl-transforms
@@ -152,11 +106,91 @@ for col in Col:
         }
     )
 
-pd.DataFrame(rows).sort_values("column")
+transform_labels = {
+    "_log1p_under_coverage": "log1p(100 - x)",
+    "_status_dummies": "dummy (developed=1)",
+    "log1p": "log1p(x)",
+    "none": "none",
+}
+
+(
+    pd.DataFrame(rows)
+    .assign(
+        column=lambda d: d["pretty"],
+        transform=lambda d: d["transform"].map(transform_labels).fillna(d["transform"]),
+    )
+    .loc[:, ["column", "dtype", "transform"]]
+    .sort_values("column")
+    .reset_index(drop=True)
+    .style.hide(axis="index")
+)
 ```
 
-Notes:
+Table @tbl-transforms documents the deterministic, per-variable transformations applied prior to standardization. Right-skewed, non-negative intensity variables (e.g., GDP, deaths, measles) are transformed using $\log(1+x)$ to reduce leverage from extreme values and to make linear relationships closer to homoscedastic in downstream models. Immunization variables are recorded as coverage percentages; we re-parameterize them as a shortfall $(100-x)$ and apply $\log(1+(100-x))$, so that larger values consistently represent worse coverage while preserving rank order (monotone transform). After transformation, numeric predictors are z-scored to place them on a comparable scale for PCA, clustering, and standardized regression; Pearson correlation is invariant to affine rescaling, so any changes in correlations after preprocessing arise from the nonlinear transforms rather than the z-scoring step. The target (life expectancy, years) remains in its original units. If residual missing values remain, `tf_and_norm()` median-fills numeric predictors only to avoid failures in standardization (this is separate from the explicit imputation choices in Table @tbl-dataset-snapshots).
 
-Skewed count and intensity variables are transformed using `log1p` (for example GDP, child mortality counts, measles cases, HIV/AIDS prevalence, thinness indicators, alcohol consumption, population, and expenditure measures). For immunization rates, we emphasize shortfall rather than saturation by transforming `log1p(100 - coverage)`. Variables that are already well-behaved on their native scale (for example BMI, schooling, income composition, and status) are left untransformed. After transformation, numeric predictors are imputed if needed (median-based) and standardized; `year`, `status`, and the target remain unstandardized.
+To make the effect of standardization explicit, Table @tbl-standardization-summary reports per-feature means and standard deviations before and after z-scoring on the 2014 cross-section (predictors mean-imputed within the year; target excluded).
 
-Correlation analysis and outlier diagnostics are treated as dedicated analysis chapters because they motivate PCA and inform regression model specification. For details, see `3_correlation.qmd` (correlation structure and multicollinearity) and `2_outlier_detection.qmd` (outlier detection methods and sensitivity).
+```{python}
+# | label: tbl-standardization-summary
+# | tbl-cap: "Predictor summary statistics before vs after z-scoring (2014 cross-section; mean-imputed predictors; target excluded)."
+import pandas as pd
+
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+
+le_xs_2014 = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=2014,
+    resolve_nand_pred="carry_forward",
+)
+ds_predictors = LifeExpectancyDataset(
+    df=le_xs_2014.df.drop(columns=[LECol.TARGET]),
+)
+
+raw = ds_predictors.df.loc[:, ds_predictors.numeric_cols]
+z = ds_predictors.df_standardized.loc[:, ds_predictors.numeric_cols]
+
+summary = (
+    pd.DataFrame(
+        {
+            "mean_raw": raw.mean(),
+            "sd_raw": raw.std(ddof=0),
+            "mean_z": z.mean(),
+            "sd_z": z.std(ddof=0),
+        }
+    )
+    .assign(feature=lambda d: d.index.map(ds_predictors.get_pretty_name))
+    .loc[:, ["feature", "mean_raw", "sd_raw", "mean_z", "sd_z"]]
+    .rename(
+        columns={
+            "feature": "Feature",
+            "mean_raw": "Mean (raw)",
+            "sd_raw": "SD (raw)",
+            "mean_z": "Mean (z)",
+            "sd_z": "SD (z)",
+        }
+    )
+    .sort_values("Feature")
+    .reset_index(drop=True)
+)
+
+(
+    summary.style.hide(axis="index").format(
+        {
+            "Mean (raw)": "{:,.2f}",
+            "SD (raw)": "{:,.2f}",
+            "Mean (z)": "{:.3f}",
+            "SD (z)": "{:.3f}",
+        }
+    )
+)
+```
+
+Figure @fig-standardization-comparison illustrates why standardization is required for scale-sensitive multivariate methods: on the raw scale, variables measured in large units dominate dispersion, whereas z-scoring places predictors on a comparable scale. For clarity, we exclude the target from this plot.
+
+```{python}
+# | label: fig-standardization-comparison
+# | fig-cap: "Predictor scale before vs after z-scoring (2014 cross-section; mean-imputed predictors; target excluded)."
+
+ds_predictors.plot_standardization_comparison(figsize=(20, 10)).show()
+```
+
+Correlation and outlier diagnostics are in `3_correlation.qmd` and `2_outlier_detection.qmd`, respectively.
