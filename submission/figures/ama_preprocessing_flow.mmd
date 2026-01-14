@@ -1,0 +1,49 @@
+%%{init: {'flowchart': {'nodeSpacing': 60, 'rankSpacing': 85}, 'themeVariables': {'fontSize': '14px'}}}%%
+flowchart TD
+  A[Raw CSV] --> B([Normalize Headers<br/><code>_normalize_col_names</code>])
+  B --> C([Type Conversion<br/>year → dt<br/>status → bin<br/><code>_convert_data_types</code>])
+  C --> D([Drop Missing Target<br/><code>drop_missing_target</code>])
+
+  D --> E{Aggregate by Country?}
+  E -->|2014| F([Filter Year<br/><code>_aggregate_by_country</code>])
+  E -->|True| G([Select Latest Year<br/>agg by country<br/><code>_latest_valid_year</code> → <code>_aggregate_by_country</code>])
+  E -->|False| H0([No Aggregation<br/><code>aggregate_by_country=False</code>])
+
+  F --> I0
+  G --> I0
+  H0 --> I0
+
+  I0{Resolve NAs?} -->|False| I[DF Cleaned]
+  I0 -->|True| H([Resolve NAs<br/>carry_fwd / mean /<br/>median / drop<br/><code>_resolve_missing_predictors</code>])
+  H --> I
+
+  I --> J0([Standardize<br/>StandardScaler <br/><code>standardize</code>])
+  J0 --> J[Standardized DF]
+  I --> K([<code>tf_only</code><br/>apply LECol tfs])
+  K --> N[TF DF]
+  K --> L([<code>tf_and_norm</code><br/><code>median-fill</code>→<code>standardize</code>])
+  L --> M[TF + Standardized DF]
+
+
+  subgraph S["LECol + ColumnMetadata"]
+    S1[Cleaned Names]
+    S2[Dtypes]
+    S3[Pretty Labels]
+    S4[Transforms]
+  end
+
+  S1 --> B
+  S2 --> C
+  S3 --> J
+  S4 --> K
+
+  classDef output fill:#DFF3E3,stroke:#2E8B57,stroke-width:1px
+  classDef process fill:#EAF3FF,stroke:#5B7DB1,stroke-width:1px,rx:24,ry:24
+  classDef data fill:#FFFFFF,stroke:#6B6B6B,stroke-width:1px
+
+  class A,S1,S2,S3,S4 data
+  class B,C,D,F,G,H,K,L process
+  class H0,I0 process
+  class I,J,M,N output
+  class J0 process
+  style S fill:none,stroke:#888,stroke-dasharray: 5 5
