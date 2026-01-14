@@ -7,4 +7,29 @@ format:
 
 # Life Expectancy
 
-Analysis of life expectancy
+This report documents our multivariate analysis of the WHO “Life Expectancy” country-year dataset, with a focus on a 2014 cross-section to support correlation analysis, PCA, clustering, and regression in a consistent setting.
+
+
+## Introduction
+
+- [Introduction](chapters/1_introduction.qmd) — Motivation, dataset overview, and the cross-sectional framing (2014).
+
+## Data preparation
+
+- [Year Selection](chapters/2_preproc_year_selection.qmd) — Completeness and anomaly diagnostics used to select a representative year.
+- [Data Preprocessing](chapters/2_preprocessing.qmd) — Cleaning pipeline, missing-value handling, transforms, and standardization used throughout.
+- [Outlier Detection and Cleaning](chapters/2_outlier_detection.qmd) — IQR, z-score, and Isolation Forest screening on the longitudinal panel.
+
+## Exploratory structure
+
+- [Correlation Analysis](chapters/3_correlation.qmd) — Correlation structure, multicollinearity, and feature-group motivation for PCA/regression.
+- [Principal Component Analysis](chapters/3_pca.qmd) — Dimensionality reduction and PCA-based feature combination/interpretation.
+
+## Clustering
+
+- [Clustering](chapters/4_clustering.qmd) — K-means clustering (with PCA visualization) on standardized country profiles.
+
+## Regression and open questions
+
+- [Regression Analysis](chapters/5_regression.qmd) — OLS models with PCA-based reduction, diagnostics, and year-based out-of-sample evaluation.
+- [Open Questions](chapters/5_open_questions.qmd) — Remaining methodological choices and items to clarify.
