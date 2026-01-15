@@ -131,7 +131,7 @@ class LifeExpectancyDataset(BaseDataset):
             le_df = cls._resolve_missing_predictors(
                 le_df,
                 strategy="carry_forward",
-                drop_remaining=False,
+                drop_remaining=True,
             )
 
         if aggregate_by_country:
