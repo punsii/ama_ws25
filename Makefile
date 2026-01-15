@@ -90,7 +90,7 @@ docs-clean: ## 📚 Clean documentation output
 
 
 #  ═════════════════════════════════════════════════════════════════════=
-#  Agent Context helpers
+#  🗺️  Codebase Context & Navigation
 #  ═════════════════════════════════════════════════════════════════════=
 
 .PHONY: _check_python
@@ -108,17 +108,57 @@ _check_python:
 		fi; \
 	fi
 
-context-package: _check_python ## 🗺️ Summarize symbols per module (classes/functions/constants)
+context: _check_python ## 🗺️ Generate comprehensive codebase context (all information)
+	@echo ""
+	@echo "$(GREEN)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(GREEN)           AMA-TLBX CODEBASE CONTEXT — COMPREHENSIVE           $(NC)"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo ""
+	@echo "$(BLUE)1️⃣  DIRECTORY TREE$(NC)"
+	@echo "---"
+	@echo ""
+	@bash -lc 'tree ama_tlbx/ama_tlbx/ -I "__pycache__" -L 2'
+	@echo ""
+	@echo "$(BLUE)2️⃣  MODULE SYMBOLS (Classes/Functions/Constants)$(NC)"
+	@echo "---"
+	@echo ""
+	@$(PYTHON_INTERPRETER) ama_tlbx/scripts/get_context.py packages --root ama_tlbx/ama_tlbx
+	@echo ""
+	@echo "$(BLUE)3️⃣  CLASS ARCHITECTURE & DOCSTRINGS$(NC)"
+	@echo "---"
+	@echo ""
+	@echo "# Mermaid UML Diagram of the ama_tlbx:"
+	@echo "\`\`\`{mermaid}"
+	@$(PYTHON_INTERPRETER) -m syrenka classdiagram ama_tlbx/ama_tlbx
+	@echo "\`\`\`"
+	@echo ""
+	@echo "# Classes with docstrings"
+	@echo ""
+	@$(PYTHON_INTERPRETER) ama_tlbx/scripts/get_context.py classes --root ama_tlbx/ama_tlbx --full-doc
+	@echo ""
+	@echo "$(BLUE)4️⃣ Submission Chapters$(NC)"
+	@echo "---"
+	@echo ""
+	@echo "\`\`\`"
+	tree  submission/chapters -P "*.qmd" -L 1
+	@echo "\`\`\`"
+	@echo "$(GREEN)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo ""
+
+context-package: _check_python ## 🗺️ [DEPRECATED] Use 'make context' instead
+	@echo "$(YELLOW)⚠️  'make context-package' is deprecated. Use 'make context' for comprehensive output.$(NC)"
 	@$(PYTHON_INTERPRETER) ama_tlbx/scripts/get_context.py packages --root ama_tlbx/ama_tlbx
 
-context-classes: _check_python ## 🗺️ List classes with full docstrings
-	echo "# Mermaid UML Diagram of the ama_tlbx:\n\`\`\`{mermaid}"
+context-classes: _check_python ## 🗺️ [DEPRECATED] Use 'make context' instead
+	@echo "$(YELLOW)⚠️  'make context-classes' is deprecated. Use 'make context' for comprehensive output.$(NC)"
+	@echo "# Mermaid UML Diagram of the ama_tlbx:\n\`\`\`{mermaid}"
 	@$(PYTHON_INTERPRETER) -m syrenka classdiagram ama_tlbx/ama_tlbx
-	echo "\`\`\`\n---\n"
+	@echo "\`\`\`\n---\n"
 	@$(PYTHON_INTERPRETER) ama_tlbx/scripts/get_context.py classes --root ama_tlbx/ama_tlbx --full-doc
 
-context-dir-tree: _check_python ## 🗺️ Print directory tree for `ama_tlbx/ama_tlbx/` (ignore __pycache__)
-	@echo "Directory tree for ama_tlbx/ama_tlbx/:"
+context-dir-tree: _check_python ## 🗺️ [DEPRECATED] Use 'make context' instead
+	@echo "$(YELLOW)⚠️  'make context-dir-tree' is deprecated. Use 'make context' for comprehensive output.$(NC)"
+	@echo "Directory tree for ama_tlbx/ama_tlbx:"
 	@bash -lc 'tree ama_tlbx/ama_tlbx/ -I "__pycache__"'
 
 #  ═══════════════════════════════════════════════════════════════════════
@@ -131,12 +171,17 @@ help: ## Show this help message
 	@echo "$(GREEN)               AMA WS25 Project - Makefile Commands             $(NC)"
 	@echo "$(GREEN)═══════════════════════════════════════════════════════════════$(NC)"
 	@echo ""
-		@echo "$(YELLOW)Usage:$(NC) make <target>"
+	@echo "$(YELLOW)Usage:$(NC) make <target>"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*?## "; section=""} \
 		/^#  ═+$$/ {next} \
 		/^#  [📦🔍🧪📚🔧🗺️]/ {if (section) print ""; section=$$0; gsub(/^#  /, "", section); print "$(YELLOW)" section "$(NC)"; next} \
 		/^[a-zA-Z_-]+:.*?## / {printf "  $(BLUE)%-18s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "$(BLUE)ℹ️  Quick Tips:$(NC)"
+	@echo "  • Run $(BLUE)make context$(NC) first to understand codebase structure"
+	@echo "  • Always run $(BLUE)make check test$(NC) before committing"
+	@echo "  • Use $(BLUE)make ci$(NC) to run full integration pipeline"
 	@echo ""
 	@echo "$(GREEN)═══════════════════════════════════════════════════════════════$(NC)"
 	@echo ""

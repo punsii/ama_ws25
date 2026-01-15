@@ -7,7 +7,6 @@ from .model_registry import ModelEntry, ModelRegistry
 from .model_selection import (
     SelectionPathResult,
     SelectionStep,
-    compare_models,
     compute_mallows_cp,
     selection_path,
 )
@@ -46,7 +45,6 @@ __all__ = [
     "SelectionPathResult",
     "SelectionStep",
     "ZScoreOutlierDetector",
-    "compare_models",
     "compute_mallows_cp",
     "fit_ols",
     "fit_ols_design",
