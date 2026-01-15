@@ -1,11 +1,11 @@
 project:
   type: website
   output-dir: _site
-  resources:
-    - pdoc/**
   render:
     - "index.qmd"
     - "chapters/*.qmd"
+
+bibliography: references.bib
 
 website:
   title: "Multivariate data analysis - Life expectancy"
@@ -25,6 +25,8 @@ website:
             text: Data Preprocessing
           - href: chapters/2_outlier_detection.qmd
             text: Outlier Detection
+          - href: chapters/2_investigate_hdi.qmd
+            text: Investigate HDI
           - href: chapters/3_correlation.qmd
             text: Correlation Analysis
           - href: chapters/3_pca.qmd
@@ -33,6 +35,9 @@ website:
             text: Clustering
           - href: chapters/5_regression.qmd
             text: Regression Analysis
+          - href: chapters/6_model_selection.qmd
+            text: Model Selection
+
 
 # Python configuration - use the ama_tlbx virtual environment
 # set QUARTO_PYTHON environment variable to e.g. "../ama_tlbx/.venv/bin/python"
