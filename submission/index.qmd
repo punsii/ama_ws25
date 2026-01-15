@@ -7,7 +7,9 @@ format:
 
 # Life Expectancy
 
-This report documents our multivariate analysis of the WHO “Life Expectancy” country-year dataset, with a focus on a 2014 cross-section to support correlation analysis, PCA, clustering, and regression in a consistent setting.
+## Abstract
+
+We analyze the WHO “Life Expectancy” country-year panel (193 countries, 2000–2015; 2,938 observations) to answer two core questions: (i) which features are most important for modeling life expectancy and how do they relate to the outcome, and (ii) how well can life expectancy be predicted from the available indicators. To reduce within-country temporal dependence, we focus most multivariate analyses on a 2014 cross-section ($n=183$) and evaluate generalization on a year-based holdout (2011). After deterministic cleaning, per-variable transforms, and standardization, we quantify multicollinearity using Pearson correlations and PCA-based feature grouping, and we explore country profiles via clustering in standardized feature space. Descriptively, life expectancy in 2014 averages 71.5 years and differs by about 11.6 years between developed and developing countries; across the panel, the country-average increases by about 4.9 years from 2000 to 2015. In stepwise OLS regression with diagnostics and robustness checks, socioeconomic development (HDI/education), mortality burden (adult mortality, HIV/AIDS), and child health indicators emerge as key predictors; the final model explains about 86% of holdout variance with an RMSE of about 3.37 years. Results are interpreted as conditional associations in observational data.
 
 
 ## Introduction
@@ -28,6 +30,10 @@ This report documents our multivariate analysis of the WHO “Life Expectancy”
 ## Clustering
 
 - [Clustering](chapters/4_clustering.qmd) — K-means clustering (with PCA visualization) on standardized country profiles.
+
+## Model selection
+
+- [Model Selection](chapters/4_model_selection.qmd) — Criteria (AIC/BIC/Cp, adjusted $R^2$), stepwise procedures, and selection caveats.
 
 ## Regression and open questions
 
