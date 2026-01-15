@@ -114,3 +114,23 @@ class BaseColumn(StrEnum):
     def transform(self) -> Callable[[Series], Series] | None:
         """Get the optional transformation function for this column."""
         return self.metadata().transform
+
+    @classmethod
+    def transform_label(cls, feature: str | "BaseColumn") -> str:
+        """Get a human-readable label for the transform applied to a feature.
+
+        Args:
+            feature: Column enum member or its string value.
+
+        Returns:
+            Transform label based on the transform function's ``__name__``.
+        """
+        try:
+            col = feature if isinstance(feature, cls) else cls(feature)
+        except ValueError:
+            if isinstance(feature, str) and feature.startswith("status_"):
+                return "dummy"
+            return "custom"
+
+        transform = col.metadata().transform
+        return transform.__name__ if transform is not None else "none"
