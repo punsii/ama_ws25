@@ -7,17 +7,17 @@ format:
 
 We analyze the WHO [“Life Expectancy (WHO)” dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who), published on Kaggle [@KumarRajarshi]. It is a country-year panel (193 countries, 2000–2015) with the target variable `life_expectancy` (years) and 20 candidate predictors spanning mortality burden, immunization, socio-economic development, and nutrition.
 
-Our main goal is **explanatory and predictive regression**: (i) identify which predictors are most strongly associated with life expectancy (direction and magnitude), and (ii) quantify predictive performance out-of-sample. To reduce within-country temporal dependence, most multivariate analyses use a single cross-section (2014; see [Year Selection](2_preproc_year_selection.qmd)); regression models are evaluated on a separate holdout year in [Regression](5_regression.qmd). We interpret all results as descriptive associations in observational data.
+Our main goal is **explanatory and predictive regression**: (i) identify which predictors are most strongly associated with life expectancy (direction and magnitude), and (ii) quantify predictive performance out-of-sample. To reduce within-country temporal dependence, most multivariate analyses use a single cross-section (2014; see [Year Selection](2_preproc_year_selection.qmd)); regression models are evaluated on a separate holdout year in [Regression](5_regression.qmd). All findings are interpreted as descriptive associations in observational data (not causal effects).
 
 # Research questions and chapter map
 
-The report follows the course workflow (preprocessing → descriptives → exploration → regression). Concretely:
+The report follows the course workflow (preprocessing → descriptives → exploration → regression). This introduction summarizes the analysis views and a small set of descriptive and bivariate patterns that motivate the later chapters. Concretely:
 
 1. **Choose a representative cross-section** and justify the 2014 framing ([Year Selection](2_preproc_year_selection.qmd)).
 2. **Clean and transform the data**, documenting missingness and outlier sensitivity ([Data Cleaning & Preprocessing](2_preprocessing.qmd), [Outlier Detection](2_outlier_detection.qmd)).
 3. **Quantify redundancy and low-dimensional structure** via correlations and grouped PCA ([Correlation Analysis](3_correlation.qmd), [Principal Component Analysis](3_pca.qmd)).
 4. **Explore country profiles** in standardized feature space ([Clustering](4_clustering.qmd)).
-5. **Select parsimonious models** using transparent criteria and search strategies ([Model Selection](4_model_selection.qmd)).
+5. **Select parsimonious models** using transparent criteria and search strategies ([Model Selection](6_model_selection.qmd)).
 6. **Fit and diagnose OLS models** and evaluate generalization to a holdout year ([Regression](5_regression.qmd)).
 7. **Document limitations and open questions** for follow-up ([Open Questions](5_open_questions.qmd)).
 ```{python}
@@ -248,9 +248,11 @@ column_glossary.loc[column_glossary["column"] == str(LECol.STATUS), "description
 dataset_coverage.style.hide(axis="index")
 ```
 
-Table @tbl-intro-dataset-coverage summarizes the dataset views used downstream. In the 2014 cross-section, carry-forward imputation retains $n=183$ countries; 50 (27.3%) still have at least one missing predictor, so complete-case analyses use $n=133$. Missing-value handling and robustness checks are documented in [Data Cleaning & Preprocessing](2_preprocessing.qmd) and [Outlier Detection](2_outlier_detection.qmd).
+Table @tbl-intro-dataset-coverage summarizes the dataset views used downstream. In the 2014 cross-section, carry-forward imputation retains $n=183$ countries, but 50 (27.3%) still have at least one missing predictor; complete-case analyses therefore use $n=133$. This distinction matters because univariate target plots and development-status comparisons use the larger cross-section, while correlation-based analyses require the complete-case subset. Missing-value handling and robustness checks are documented in [Data Cleaning & Preprocessing](2_preprocessing.qmd) and [Outlier Detection](2_outlier_detection.qmd).
 
 # Life expectancy in the data
+
+We start by characterizing the target variable at three levels: the 2014 cross-sectional distribution, differences by development status, and the longitudinal trend in annual cross-country averages.
 
 ## 2014 cross-section: distribution
 
@@ -278,39 +280,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-In 2014 ($n=183$), mean life expectancy is 71.5 years (SD 8.6) and ranges from 48.1 to 89.0 (Table @tbl-intro-lifeexp-summary). Figure @fig-intro-lifeexp-dist shows a unimodal distribution with a longer left tail: a small set of countries has markedly shorter life expectancy, while most observations lie between roughly 65 and 80 years.
-
-## Outcome and predictors
-
-All variables are reported at the country‑year level and come in mixed scales (counts, rates, percentages, and economic magnitudes). The target variable is `life_expectancy` (years). Predictors span four conceptual blocks:
-
-1. **Demography & mortality**
-   - **Adult Mortality (per 1000):** adult mortality rate per 1,000 population (probability of dying between ages 15 and 60).
-   - **Infant Deaths (per 1000):** number of infant deaths per 1,000 population.
-   - **Under‑5 Deaths (per 1000):** deaths of children under 5 per 1,000 population.
-   - **HIV/AIDS Deaths (per 1000 births):** deaths per 1,000 live births due to HIV/AIDS (ages 0–4).
-   - **Population:** total population of the country.
-
-2. **Immunization & infectious disease burden**
-   - **Hepatitis B Coverage (%):** HepB immunization coverage among 1‑year‑olds (%).
-   - **Polio Coverage (%):** polio immunization coverage among 1‑year‑olds (%).
-   - **Diphtheria Coverage (%):** DTP3 immunization coverage among 1‑year‑olds (%).
-   - **Measles Cases (per 1000):** number of measles cases per 1,000 population.
-
-3. **Socio‑economic & investment**
-   - **GDP per Capita (USD):** gross domestic product per capita (USD).
-   - **Health Expenditure (% of GDP per capita):** health spending as a percentage of GDP per capita.
-   - **Total Health Expenditure (% of govt expenditure):** government health expenditure as a percentage of total government spending.
-   - **Income composition of resources** or **Human Development Index (0–1):** socio‑economic development proxy; see [Investigate HDI](2_investigate_hdi.qmd) for details.
-   - **Schooling (years):** average years of schooling.
-   - **Alcohol Consumption (liters per capita):** recorded per‑capita (15+) consumption in liters of pure alcohol.
-
-
-4. **Nutrition & development status**
-   - **BMI (Average):** average body‑mass index.
-   - **Thinness 10–19 Years (%):** prevalence of thinness among children ages 10–19 (%).
-   - **Thinness 5–9 Years (%):** prevalence of thinness among children ages 5–9 (%).
-   - **Development Status:** categorical indicator (`0 = Developing`, `1 = Developed`).
+In 2014 ($n=183$), mean life expectancy is 71.5 years (SD 8.6) and ranges from 48.1 to 89.0 (Table @tbl-intro-lifeexp-summary). Figure @fig-intro-lifeexp-dist shows a unimodal distribution with a longer left tail: a small set of countries has markedly shorter life expectancy, while most observations lie between roughly 65 and 80 years. This wide cross-country dispersion motivates multivariate modelling rather than focusing on single predictors in isolation.
 
 ## 2014 cross-section: development status gap
 
@@ -381,7 +351,7 @@ status_stats.loc[:, ["n", "mean", "std", "median"]].rename_axis("Status").style.
 )
 ```
 
-Developed countries have markedly higher life expectancy in 2014: the mean is 81.1 years (SD 4.2, $n=32$) versus 69.5 years (SD 7.8, $n=151$) for developing countries (Table @tbl-intro-status-stats). Figure @fig-intro-status-gap shows substantial heterogeneity among developing countries and a tighter distribution among developed countries; the two groups overlap mainly in the 74–83 year range. We use development status as a stratifying variable in descriptive plots and as a covariate (and potential effect modifier) in [Regression](5_regression.qmd).
+Developed countries have markedly higher life expectancy in 2014: the mean is 81.1 years (SD 4.2, $n=32$) versus 69.5 years (SD 7.8, $n=151$) for developing countries (Table @tbl-intro-status-stats), a difference of about 11.6 years. Figure @fig-intro-status-gap shows substantial heterogeneity among developing countries and a tighter distribution among developed countries; the upper tail of developing countries overlaps with the lower tail of developed countries. We use development status as a stratifying variable in descriptives and as a baseline covariate (and potential effect modifier) in [Regression](5_regression.qmd).
 
 ## Panel trend (2000–2015)
 
@@ -426,13 +396,46 @@ plt.tight_layout()
 plt.show()
 ```
 
-Across the full panel, average life expectancy increases from 66.8 years in 2000 to 71.6 years in 2015 (Table @tbl-intro-lifeexp-trend), an absolute change of about 4.9 years. A linear fit to annual means corresponds to an average increase of roughly 0.35 years per year (3.5 per decade). Figure @fig-intro-lifeexp-time-series shows a monotone upward trend in the annual mean; the shaded band is a 95% confidence interval for the annual mean across countries (mean $\pm 1.96 \cdot \mathrm{SE}$). The 2014 cross-section used in most multivariate chapters is chosen to balance recency and data completeness (see [Year Selection](2_preproc_year_selection.qmd)).
+Across the full panel, average life expectancy increases from 66.8 years in 2000 to 71.6 years in 2015 (Table @tbl-intro-lifeexp-trend), an absolute change of about 4.9 years. A linear fit to annual means corresponds to an average increase of roughly 0.35 years per year (3.5 per decade). Figure @fig-intro-lifeexp-time-series shows a monotone upward trend in the annual mean; the shaded band is a 95% confidence interval for the annual mean across countries (mean $\pm 1.96 \cdot \mathrm{SE}$). This plot is descriptive: it summarizes cross-country averages by year without modelling within-country trajectories or explicit time effects. The 2014 cross-section used in most multivariate chapters is chosen to balance recency and data completeness (see [Year Selection](2_preproc_year_selection.qmd)).
+
+# Outcome and predictors
+
+All variables are reported at the country‑year level and come in mixed scales (counts, rates, percentages, and economic magnitudes). The target variable is `life_expectancy` (years). Predictors span four conceptual blocks:
+
+1. **Demography & mortality**
+   - **Adult Mortality (per 1000):** adult mortality rate per 1,000 population (probability of dying between ages 15 and 60).
+   - **Infant Deaths (per 1000):** number of infant deaths per 1,000 population.
+   - **Under‑5 Deaths (per 1000):** deaths of children under 5 per 1,000 population.
+   - **HIV/AIDS Deaths (per 1000 births):** deaths per 1,000 live births due to HIV/AIDS (ages 0–4).
+   - **Population:** total population of the country.
+
+2. **Immunization & infectious disease burden**
+   - **Hepatitis B Coverage (%):** HepB immunization coverage among 1‑year‑olds (%).
+   - **Polio Coverage (%):** polio immunization coverage among 1‑year‑olds (%).
+   - **Diphtheria Coverage (%):** DTP3 immunization coverage among 1‑year‑olds (%).
+   - **Measles Cases (per 1000):** number of measles cases per 1,000 population.
+
+3. **Socio‑economic & investment**
+   - **GDP per Capita (USD):** gross domestic product per capita (USD).
+   - **Health Expenditure (% of GDP per capita):** health spending as a percentage of GDP per capita.
+   - **Total Health Expenditure (% of govt expenditure):** government health expenditure as a percentage of total government spending.
+   - **Income composition of resources** or **Human Development Index (0–1):** socio‑economic development proxy; see [Investigate HDI](2_investigate_hdi.qmd) for details.
+   - **Schooling (years):** average years of schooling.
+   - **Alcohol Consumption (liters per capita):** recorded per‑capita (15+) consumption in liters of pure alcohol.
+
+4. **Nutrition & development status**
+   - **BMI (Average):** average body‑mass index.
+   - **Thinness 10–19 Years (%):** prevalence of thinness among children ages 10–19 (%).
+   - **Thinness 5–9 Years (%):** prevalence of thinness among children ages 5–9 (%).
+   - **Development Status:** categorical indicator (`0 = Developing`, `1 = Developed`).
+
+For precise definitions and the default transforms used downstream, see the column glossary (Table @tbl-intro-column-glossary).
 
 # Predictors and modelling considerations
 
-Predictors are measured at the country-year level and span mortality burden (e.g., adult mortality, HIV/AIDS, child deaths), immunization and infectious disease (e.g., HepB/Polio/DTP3 coverage, measles), socio-economic development and health investment (e.g., schooling, GDP, expenditure), and nutrition proxies (e.g., BMI and thinness). Variables are on heterogeneous scales, so most multivariate chapters use the standardized, transformed view produced by `LifeExpectancyDataset.tf_and_norm()` (see [Data Cleaning & Preprocessing](2_preprocessing.qmd)).
+The predictor set above is heterogeneous in scale and distribution. To improve comparability across variables and reduce the influence of heavy tails, most multivariate chapters use the transformed and standardized view produced by `LifeExpectancyDataset.tf_and_norm()` (see [Data Cleaning & Preprocessing](2_preprocessing.qmd)).
 
-Two modelling issues shape the rest of the report. First, residual missingness after carry-forward reduces the effective sample size for complete-case analyses (Table @tbl-intro-dataset-coverage), and we document sensitivity to missing-data handling in [Data Cleaning & Preprocessing](2_preprocessing.qmd). Second, many predictors are strongly correlated, so multicollinearity is addressed explicitly through correlation analysis and PCA-based grouping ([Correlation Analysis](3_correlation.qmd), [Principal Component Analysis](3_pca.qmd)) before interpreting multivariate regression coefficients ([Regression](5_regression.qmd)). Finally, the dataset’s HDI-like feature is mechanically related to life expectancy by construction; we therefore validate its interpretation against UNDP data in [Investigate HDI](2_investigate_hdi.qmd) and treat it cautiously in downstream models.
+Three modelling issues shape the rest of the report. First, residual missingness after carry-forward reduces the effective sample size for complete-case analyses (Table @tbl-intro-dataset-coverage), and we document sensitivity to missing-data handling in [Data Cleaning & Preprocessing](2_preprocessing.qmd). Second, many predictors are strongly correlated, so multicollinearity is addressed explicitly through correlation analysis and PCA-based grouping ([Correlation Analysis](3_correlation.qmd), [Principal Component Analysis](3_pca.qmd)) before interpreting multivariate regression coefficients and before running selection procedures ([Model Selection](6_model_selection.qmd), [Regression](5_regression.qmd)). Third, the dataset’s HDI-like feature is mechanically related to life expectancy by construction; we therefore validate its interpretation against UNDP data in [Investigate HDI](2_investigate_hdi.qmd) and treat it cautiously in downstream models.
 
 ## Correlation snapshot (2014 complete-case subset)
 
@@ -479,7 +482,9 @@ collinearity_hotspots.assign(r=lambda d: d.correlation.round(3)).loc[
 ).style.hide(axis="index")
 ```
 
-The feature–target correlations highlight a broad development gradient: development and human-capital proxies (e.g., HDI and schooling) correlate positively with life expectancy, whereas mortality and disease burden indicators (e.g., adult mortality, HIV/AIDS) correlate negatively (Figure @fig-intro-top-corr). At the same time, several predictors are near-redundant (Table @tbl-intro-collinearity-hotspots), which motivates feature grouping/PCA before interpreting multivariate regression coefficients ([Principal Component Analysis](3_pca.qmd), [Regression](5_regression.qmd)). Because HDI includes life expectancy by construction, its correlation with the target is partly mechanical; we therefore treat it primarily as a descriptive proxy and assess sensitivity in [Investigate HDI](2_investigate_hdi.qmd).
+The feature–target correlations quantify a strong development gradient in 2014 (Table @tbl-intro-top-corr). The strongest positive associations are with HDI ($r \approx 0.89$) and schooling ($r \approx 0.79$), while the strongest negative associations are with adult mortality ($r \approx -0.77$) and HIV/AIDS deaths ($r \approx -0.61$). Several variables that plausibly reflect development level (development status, BMI, alcohol consumption) are also positively correlated with life expectancy; these are descriptive patterns and can reflect confounding by broader socio-economic conditions rather than direct effects. In multivariate modelling we therefore focus on conditional associations, compare competing specifications, and assess out-of-sample performance ([Model Selection](6_model_selection.qmd), [Regression](5_regression.qmd)).
+
+The hotspot pairs in Table @tbl-intro-collinearity-hotspots show that some predictors are close to redundant measurements (e.g., infant vs under-5 deaths, $r \approx 0.995$; thinness 5–9 vs 10–19, $r \approx 0.94$; GDP vs percentage expenditure, $r \approx 0.95$). This motivates explicit redundancy handling (feature grouping and PCA blocks) before interpreting coefficients and conducting selection ([Correlation Analysis](3_correlation.qmd), [Principal Component Analysis](3_pca.qmd)). Finally, because HDI includes life expectancy by construction, its bivariate correlation is partly mechanical; we therefore treat it primarily as a descriptive proxy and assess sensitivity in [Investigate HDI](2_investigate_hdi.qmd).
 
 
 ::: {.callout-note collapse="true"}
