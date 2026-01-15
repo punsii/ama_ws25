@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from operator import itemgetter
 from typing import Literal
 
 import numpy as np
@@ -61,7 +60,9 @@ class SelectionPathResult:
                     "n_terms": len(step.terms),
                     "rhs": step.rhs,
                     "aic": step.metrics.aic,
+                    "aicc": step.metrics.aicc,
                     "bic": step.metrics.bic,
+                    "mdl": step.metrics.mdl,
                     "adj_r2": step.metrics.adj_r2,
                     "rmse": step.metrics.rmse,
                     "cv_rmse": step.metrics.cv_rmse,
@@ -69,27 +70,6 @@ class SelectionPathResult:
                 },
             )
         return pd.DataFrame(rows).set_index("step")
-
-
-def compare_models(models: dict[str, sm.regression.linear_model.RegressionResultsWrapper]) -> pd.DataFrame:
-    """Tabulate AIC/BIC, adj R², and RMSE for multiple fitted OLS models.
-
-    Information criteria are most meaningful for comparing models fit to the
-    same response on the same data; lower values indicate a better trade-off of
-    fit and complexity.
-    """
-    rows = []
-    for name, res in models.items():
-        rows.append(
-            {
-                "model": name,
-                "aic": float(res.aic),
-                "bic": float(res.bic),
-                "adj_r2": float(res.rsquared_adj),
-                "rmse": float(np.sqrt(res.mse_resid)),
-            },
-        )
-    return pd.DataFrame(rows).sort_values("aic").reset_index(drop=True)
 
 
 def compute_mallows_cp(
@@ -114,18 +94,19 @@ def compute_mallows_cp(
     return rss / sigma2 + 2.0 * p - n
 
 
-def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0914
     data: pd.DataFrame,
     *,
     target_col: str,
     base_terms: list[str] | None,
     candidates: list[str],
     direction: Literal["forward", "backward", "stepwise"] = "forward",
-    criterion: Literal["aic", "bic", "cp", "adj_r2", "cv_rmse"] = "aic",
+    criterion: Literal["aic", "aicc", "bic", "mdl", "cp", "adj_r2", "cv_rmse"] = "aic",
     threshold: float = 1.0,
     cv_folds: int | None = None,
     shuffle_cv: bool = False,
     random_state: int | None = None,
+    max_models: int | None = None,
 ) -> SelectionPathResult:
     """Run a greedy selection procedure and return the full path.
 
@@ -140,6 +121,8 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915
         cv_folds: Optional K-folds for computing CV RMSE at each step.
         shuffle_cv: Whether to shuffle during CV.
         random_state: Random seed used when shuffling CV splits.
+        max_models: Optional cap on the number of fitted models evaluated
+            during the search (useful to bound exhaustive/stepwise searches).
 
     Returns:
         SelectionPathResult containing all visited steps.
@@ -154,10 +137,14 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915
     criterion = criterion.lower()
     if direction not in {"forward", "backward", "stepwise"}:
         raise ValueError("direction must be one of: forward, backward, stepwise")
-    if criterion not in {"aic", "bic", "cp", "adj_r2", "cv_rmse"}:
-        raise ValueError("criterion must be one of: aic, bic, cp, adj_r2, cv_rmse")
+    if criterion not in {"aic", "aicc", "bic", "mdl", "cp", "adj_r2", "cv_rmse"}:
+        raise ValueError(
+            "criterion must be one of: aic, aicc, bic, mdl, cp, adj_r2, cv_rmse",
+        )
     if criterion == "cv_rmse" and (cv_folds is None or cv_folds <= 1):
         raise ValueError("cv_folds must be > 1 when using criterion='cv_rmse'")
+    if max_models is not None and max_models <= 0:
+        raise ValueError("max_models must be a positive integer when provided.")
 
     base_terms = list(base_terms or [])
     candidates = [term for term in candidates if term not in base_terms]
@@ -170,7 +157,14 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915
         full_rhs = rhs_for([*base_terms, *candidates])
         full_model = smf.ols(f"{target_col} ~ {full_rhs}", data=data).fit()
 
-    def build_step(terms: list[str], step_index: int) -> SelectionStep:
+    models_built = 0
+    limit_reached = False
+
+    def build_step(terms: list[str], step_index: int) -> SelectionStep | None:
+        nonlocal models_built, limit_reached
+        if max_models is not None and models_built >= max_models:
+            limit_reached = True
+            return None
         rhs = rhs_for(terms)
         model = smf.ols(f"{target_col} ~ {rhs}", data=data).fit()
         design_matrix = design_matrix_from_model(model)
@@ -186,30 +180,20 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915
             random_state=random_state,
         )
         cp = compute_mallows_cp(full_model, model) if full_model is not None else None
+        models_built += 1
         return SelectionStep(step=step_index, terms=list(terms), rhs=rhs, model=model, metrics=metrics, cp=cp)
 
-    def score(step: SelectionStep) -> float:  # noqa: C901
-        if criterion == "aic":
-            if step.metrics.aic is None:
-                raise ValueError("AIC not available for this model.")
-            return float(step.metrics.aic)
-        if criterion == "bic":
-            if step.metrics.bic is None:
-                raise ValueError("BIC not available for this model.")
-            return float(step.metrics.bic)
+    def score(step: SelectionStep) -> float:
         if criterion == "cp":
             if step.cp is None:
                 raise ValueError("Cp not computed for this model.")
             return float(step.cp)
-        if criterion == "adj_r2":
-            if step.metrics.adj_r2 is None:
-                raise ValueError("Adjusted R^2 not available for this model.")
-            return float(step.metrics.adj_r2)
-        if criterion == "cv_rmse":
-            if step.metrics.cv_rmse is None:
-                raise ValueError("CV RMSE not computed for this model.")
-            return float(step.metrics.cv_rmse)
-        raise ValueError(f"Unsupported criterion '{criterion}'.")
+        metric_value = getattr(step.metrics, criterion, None)
+        if metric_value is None:
+            raise ValueError(
+                f"{criterion} not computed for this model, check out definition of :meth:`compute_metrics`, :class:`MetricsResult`.",
+            )
+        return float(metric_value)
 
     def better(candidate: float, current: float) -> bool:
         if criterion == "adj_r2":
@@ -219,7 +203,10 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915
     steps: list[SelectionStep] = []
     current_terms = [*base_terms, *candidates] if direction == "backward" else base_terms.copy()
 
-    steps.append(build_step(current_terms, step_index=0))
+    first_step = build_step(current_terms, step_index=0)
+    if first_step is None:
+        raise ValueError("max_models limit too small to fit the base model.")
+    steps.append(first_step)
 
     while True:
         candidate_steps: list[SelectionStep] = []
@@ -227,13 +214,23 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915
             for term in candidates:
                 if term in current_terms:
                     continue
-                candidate_steps.append(build_step([*current_terms, term], step_index=-1))
+                step = build_step([*current_terms, term], step_index=-1)
+                if step is None:
+                    break
+                candidate_steps.append(step)
+            if limit_reached:
+                break
         if direction in {"backward", "stepwise"} and len(current_terms) > len(base_terms):
             for term in list(current_terms):
                 if term in base_terms:
                     continue
                 reduced_terms = [t for t in current_terms if t != term]
-                candidate_steps.append(build_step(reduced_terms, step_index=-1))
+                step = build_step(reduced_terms, step_index=-1)
+                if step is None:
+                    break
+                candidate_steps.append(step)
+            if limit_reached:
+                break
 
         if not candidate_steps:
             break
@@ -288,132 +285,10 @@ def collect_selection_paths(
     return pd.concat(tables, ignore_index=True)
 
 
-def forward_selection(  # noqa: PLR0913
-    data: pd.DataFrame,
-    *,
-    target_col: str,
-    base_terms: list[str] | None,
-    candidates: list[str],
-    criterion: Literal["aic", "bic", "cp", "adj_r2", "cv_rmse"] = "aic",
-    threshold: float = 1.0,
-    cv_folds: int | None = None,
-    shuffle_cv: bool = False,
-    random_state: int | None = None,
-) -> SelectionPathResult:
-    """Convenience wrapper for forward selection."""
-    return selection_path(
-        data,
-        target_col=target_col,
-        base_terms=base_terms,
-        candidates=candidates,
-        direction="forward",
-        criterion=criterion,
-        threshold=threshold,
-        cv_folds=cv_folds,
-        shuffle_cv=shuffle_cv,
-        random_state=random_state,
-    )
-
-
-def backward_selection(  # noqa: PLR0913
-    data: pd.DataFrame,
-    *,
-    target_col: str,
-    base_terms: list[str] | None,
-    candidates: list[str],
-    criterion: Literal["aic", "bic", "cp", "adj_r2", "cv_rmse"] = "aic",
-    threshold: float = 1.0,
-    cv_folds: int | None = None,
-    shuffle_cv: bool = False,
-    random_state: int | None = None,
-) -> SelectionPathResult:
-    """Convenience wrapper for backward selection."""
-    return selection_path(
-        data,
-        target_col=target_col,
-        base_terms=base_terms,
-        candidates=candidates,
-        direction="backward",
-        criterion=criterion,
-        threshold=threshold,
-        cv_folds=cv_folds,
-        shuffle_cv=shuffle_cv,
-        random_state=random_state,
-    )
-
-
-def stepwise_selection(  # noqa: PLR0913
-    data: pd.DataFrame,
-    *,
-    target_col: str,
-    base_terms: list[str] | None,
-    candidates: list[str],
-    criterion: Literal["aic", "bic", "cp", "adj_r2", "cv_rmse"] = "aic",
-    threshold: float = 1.0,
-    cv_folds: int | None = None,
-    shuffle_cv: bool = False,
-    random_state: int | None = None,
-) -> SelectionPathResult:
-    """Convenience wrapper for stepwise selection in both directions."""
-    return selection_path(
-        data,
-        target_col=target_col,
-        base_terms=base_terms,
-        candidates=candidates,
-        direction="stepwise",
-        criterion=criterion,
-        threshold=threshold,
-        cv_folds=cv_folds,
-        shuffle_cv=shuffle_cv,
-        random_state=random_state,
-    )
-
-
-def stepwise_aic(
-    data: pd.DataFrame,
-    target_col: str,
-    base_terms: list[str],
-    candidates: list[str],
-    *,
-    threshold: float = 1.0,
-) -> tuple[list[str], sm.regression.linear_model.RegressionResultsWrapper]:
-    """Forward stepwise search that keeps adding terms while AIC improves by ``threshold``.
-
-    This is a greedy heuristic: it evaluates candidate additions one at a time
-    and does not guarantee a global optimum. Use with caution due to multiple
-    testing and selection bias.
-    """
-    current = base_terms.copy()
-    base_formula = f"{target_col} ~ " + (" + ".join(current) if current else "1")
-    best_res = smf.ols(base_formula, data=data).fit()
-    remaining = candidates.copy()
-    improved = True
-    while improved and remaining:
-        improved = False
-        scores: list[tuple[float, str, sm.regression.linear_model.RegressionResultsWrapper]] = []
-        for cand in remaining:
-            formula = f"{target_col} ~ " + " + ".join([*current, cand])
-            res = smf.ols(formula=formula, data=data).fit()
-            scores.append((res.aic, cand, res))
-        scores.sort(key=itemgetter(0))
-        best_aic, best_cand, best_candidate_res = scores[0]
-        if best_aic + threshold < best_res.aic:
-            current.append(best_cand)
-            remaining.remove(best_cand)
-            best_res = best_candidate_res
-            improved = True
-    return current, best_res
-
-
 __all__ = [
     "SelectionPathResult",
     "SelectionStep",
-    "backward_selection",
     "collect_selection_paths",
-    "compare_models",
     "compute_mallows_cp",
-    "forward_selection",
     "selection_path",
-    "stepwise_aic",
-    "stepwise_selection",
 ]

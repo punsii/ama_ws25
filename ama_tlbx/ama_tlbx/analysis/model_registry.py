@@ -1,6 +1,7 @@
-from dataclasses import asdict, dataclass, field
 import re
-from typing import Iterable, Literal
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass, field
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -143,7 +144,7 @@ class ModelRegistry:
         name: str | None = None,
         target_col: str = LECol.TARGET,
         direction: Literal["forward", "backward", "stepwise"] = "forward",
-        criterion: Literal["aic", "bic", "cp", "adj_r2", "cv_rmse"] = "aic",
+        criterion: Literal["aic", "aicc", "bic", "mdl", "cp", "adj_r2", "cv_rmse"] = "aic",
         threshold: float = 1.0,
         cv_folds: int | None = None,
         shuffle_cv: bool = False,
@@ -155,8 +156,8 @@ class ModelRegistry:
         Stepwise selection is a greedy variable-selection procedure that trades
         off goodness of fit against model complexity using a criterion such as
         AIC/BIC (or Cp/adjusted R^2). AIC/BIC compare models via the maximized
-        log-likelihood and the number of estimated parameters (with BIC using
-        an n-dependent penalty). Lower AIC/BIC/Cp indicates a preferred model;
+        log-likelihood and the number of estimated parameters.
+        Lower AIC/BIC/Cp indicates a preferred model;
         BIC penalizes complexity more strongly than AIC for larger n. In
         forward selection, we start from the base model and add the candidate
         term that most improves the criterion; in backward selection, we start
@@ -296,10 +297,12 @@ class ModelRegistry:
                     "direction": path.direction,
                     "criterion": path.criterion,
                     "step": int(step.step),
-                    "n_terms": int(len(step.terms)),
+                    "n_terms": len(step.terms),
                     "rhs": step.rhs,
                     "aic": diag.metrics.aic,
+                    "aicc": diag.metrics.aicc,
                     "bic": diag.metrics.bic,
+                    "mdl": diag.metrics.mdl,
                     "adj_r2": diag.metrics.adj_r2,
                     "rmse": diag.metrics.rmse,
                     "cv_rmse": diag.metrics.cv_rmse,
@@ -328,9 +331,7 @@ class ModelRegistry:
 
     def assumptions_table(self, *, names: Iterable[str] | None = None) -> pd.DataFrame:
         """Return a tidy table of assumption-test statistics for registered models."""
-        entries = (
-            [self.get(name) for name in names] if names is not None else list(self.models.values())
-        )
+        entries = [self.get(name) for name in names] if names is not None else list(self.models.values())
         rows: list[dict[str, float | str]] = []
         for entry in entries:
             assumptions = entry.diag.assumptions

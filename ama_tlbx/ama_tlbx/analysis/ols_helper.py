@@ -307,7 +307,7 @@ class AssumptionCheckResult:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True)  # noqa: PLR0904
 class RegressionResult:
     """Packaged OLS fit, metrics, and diagnostics for reporting.
 
@@ -343,6 +343,11 @@ class RegressionResult:
         return self.metrics.aic or float("nan")
 
     @property
+    def aicc(self) -> float:
+        """Small-sample corrected AIC (AICc) of the fitted model."""
+        return self.metrics.aicc or float("nan")
+
+    @property
     def adj_r2(self) -> float:
         """Adjusted :math:`R^2` correcting for the number of regressors."""
         return self.metrics.adj_r2 or float("nan")
@@ -351,6 +356,11 @@ class RegressionResult:
     def rmse(self) -> float:
         """Root mean squared error (RMSE) of the in-sample residuals."""
         return self.metrics.rmse
+
+    @property
+    def mdl(self) -> float:
+        """Minimum Description Length (MDL) criterion of the fitted model."""
+        return self.metrics.mdl or float("nan")
 
     @property
     def intercept(self) -> float:
@@ -794,40 +804,22 @@ def compute_mallows_cp(
     full_model: sm.regression.linear_model.RegressionResultsWrapper,
     model: sm.regression.linear_model.RegressionResultsWrapper,
 ) -> float:
-    """Proxy to model_selection.compute_mallows_cp (kept for backwards compatibility)."""
-    from .model_selection import compute_mallows_cp as _compute_mallows_cp
+    r"""Compute Mallows' :math:`C_p` for a candidate model.
 
-    return _compute_mallows_cp(full_model, model)
+    Uses the variance estimate from the full model to penalize model size:
 
+    :math:`C_p = \frac{RSS}{\hat{\sigma}^2} + 2(p+1) - n`
 
-def selection_path(  # noqa: PLR0913
-    data: pd.DataFrame,
-    *,
-    target_col: str,
-    base_terms: list[str] | None,
-    candidates: list[str],
-    direction: Literal["forward", "backward", "stepwise"] = "forward",
-    criterion: Literal["aic", "bic", "cp", "adj_r2", "cv_rmse"] = "aic",
-    threshold: float = 1.0,
-    cv_folds: int | None = None,
-    shuffle_cv: bool = False,
-    random_state: int | None = None,
-):
-    """Proxy to model_selection.selection_path (kept for backwards compatibility)."""
-    from .model_selection import selection_path as _selection_path
-
-    return _selection_path(
-        data=data,
-        target_col=target_col,
-        base_terms=base_terms,
-        candidates=candidates,
-        direction=direction,
-        criterion=criterion,
-        threshold=threshold,
-        cv_folds=cv_folds,
-        shuffle_cv=shuffle_cv,
-        random_state=random_state,
-    )
+    where :math:`p+1` is the number of parameters including the intercept,
+    :math:`RSS` is the residual sum of squares of the candidate model, and
+    :math:`\hat{\sigma}^2` is estimated from the full model. A well-fitting
+    model often yields :math:`C_p \approx p+1` (no strong underfitting).
+    """
+    n = float(model.nobs)
+    p = float(model.df_model) + 1.0
+    rss = float(np.sum(model.resid**2))
+    sigma2 = float(full_model.mse_resid)
+    return rss / sigma2 + 2.0 * p - n
 
 
 def design_matrix_for_data(
@@ -853,48 +845,6 @@ def design_matrix_for_data(
         return exog
     matrices = build_design_matrices([design_info], df, return_type="dataframe")
     return matrices[0]
-
-
-def poly_terms(feature: str, *, degree: int = 2) -> str:
-    r"""Return a Patsy formula snippet for polynomial terms.
-
-    This helper returns terms of the form ``x + I(x**2) + ...`` so that
-    non-linear effects can be modeled within the linear OLS framework.
-
-    Args:
-        feature: Base feature name.
-        degree: Polynomial degree (>= 1). Commonly 2 or 3.
-
-    Returns:
-        Patsy formula string for use on the RHS of a model formula.
-    """
-    if degree < 1:
-        raise ValueError("degree must be >= 1")
-    terms = [feature]
-    for power in range(2, degree + 1):
-        terms.append(f"I({feature}**{power})")
-    return " + ".join(terms)
-
-
-def spline_terms(feature: str, *, df: int = 4, degree: int = 3) -> str:
-    r"""Return a Patsy formula snippet for spline terms.
-
-    Uses ``bs()`` from patsy to construct a B-spline basis, which enables
-    flexible non-linear effects while preserving the linear model structure.
-
-    Args:
-        feature: Base feature name.
-        df: Degrees of freedom (number of spline basis functions).
-        degree: Polynomial degree of the spline basis (default cubic).
-
-    Returns:
-        Patsy formula string for use on the RHS of a model formula.
-    """
-    if df < 1:
-        raise ValueError("df must be >= 1")
-    if degree < 1:
-        raise ValueError("degree must be >= 1")
-    return f"bs({feature}, df={df}, degree={degree})"
 
 
 @dataclass
