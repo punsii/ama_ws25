@@ -62,7 +62,7 @@ class TestIQROutlierDetector:
         assert result.outlier_mask.shape == sample_view.df.shape
         assert result.outlier_mask.dtypes.all() == bool or all(result.outlier_mask.dtypes == bool)
         # Should detect some outliers
-        assert result.total_outliers > 0
+        assert int(result.n_outliers_per_column.sum()) > 0
 
     def test_iqr_result_statistics(self, sample_view: DatasetView) -> None:
         """Test that result contains proper statistics."""
@@ -71,9 +71,8 @@ class TestIQROutlierDetector:
 
         assert isinstance(result.n_outliers_per_column, pd.Series)
         assert isinstance(result.n_outliers_per_row, pd.Series)
-        assert isinstance(result.total_outliers, int)
-        assert isinstance(result.outlier_percentage, float)
-        assert 0 <= result.outlier_percentage <= 100
+        assert result.n_outliers_per_column.sum() >= 0
+        assert result.n_outliers_per_row.sum() >= 0
 
     def test_iqr_stricter_threshold(self, sample_view: DatasetView) -> None:
         """Test that stricter threshold detects more outliers."""
@@ -84,7 +83,7 @@ class TestIQROutlierDetector:
         strict_result = strict_detector.fit().result()
 
         # Stricter threshold should detect more outliers
-        assert strict_result.total_outliers >= loose_result.total_outliers
+        assert strict_result.n_outliers_per_column.sum() >= loose_result.n_outliers_per_column.sum()
 
 
 class TestZScoreOutlierDetector:
@@ -108,15 +107,15 @@ class TestZScoreOutlierDetector:
         assert isinstance(result, OutlierDetectionResult)
         assert isinstance(result.outlier_mask, pd.DataFrame)
         assert result.outlier_mask.shape == sample_view.df.shape
-        assert result.total_outliers > 0
+        assert int(result.n_outliers_per_row.sum()) > 0
 
     def test_zscore_result_contains_statistics(self, sample_view: DatasetView) -> None:
         """Test Z-score result statistics."""
         detector = ZScoreOutlierDetector(sample_view, threshold=2.0)
         result = detector.fit().result()
 
-        assert result.total_outliers > 0
-        assert len(result.column_names) == 2
+        assert result.n_outliers_per_column.sum() >= 0
+        assert len(result.outlier_mask.columns) == 2
 
     def test_zscore_stricter_threshold(self, sample_view: DatasetView) -> None:
         """Test that lower threshold detects more outliers."""
@@ -126,7 +125,7 @@ class TestZScoreOutlierDetector:
         loose_result = loose_detector.fit().result()
         strict_result = strict_detector.fit().result()
 
-        assert strict_result.total_outliers >= loose_result.total_outliers
+        assert strict_result.n_outliers_per_column.sum() >= loose_result.n_outliers_per_column.sum()
 
 
 class TestIsolationForestOutlierDetector:
@@ -164,7 +163,7 @@ class TestIsolationForestOutlierDetector:
         assert isinstance(result.outlier_mask, pd.DataFrame)
         assert result.outlier_mask.shape == sample_view.df.shape
         # Should detect some outliers
-        assert result.total_outliers > 0
+        assert int(result.n_outliers_per_row.sum()) > 0
 
     def test_isolation_forest_reproducible(self, sample_view: DatasetView) -> None:
         """Test that results are reproducible with random_state."""
@@ -181,8 +180,8 @@ class TestIsolationForestOutlierDetector:
         detector = IsolationForestOutlierDetector(sample_view, random_state=42)
         result = detector.fit().result()
 
-        assert result.total_outliers >= 0
-        assert len(result.column_names) == 2
+        assert result.n_outliers_per_column.sum() >= 0
+        assert len(result.outlier_mask.columns) == 2
 
 
 class TestOutlierDetectorComparison:

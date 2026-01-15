@@ -231,3 +231,15 @@ def test_pc1_scores_match_pca_transform(sample_view, sample_groups):
     correlation = np.corrcoef(manual_pc1, result_pc1)[0, 1]
 
     assert np.abs(correlation) > 0.99  # Should be nearly identical (sign may differ)
+
+
+def test_dim_reduction_result_transform_reproduces_training_scores(sample_view, sample_groups):
+    """transform() should reproduce stored reduced_df when applied to the training data."""
+    analyzer = PCADimReductionAnalyzer(view=sample_view, feature_groups=sample_groups)
+    result = analyzer.fit().result()
+
+    transformed = result.transform(sample_view.df)
+
+    assert list(transformed.columns) == list(result.reduced_df.columns)
+    assert transformed.index.equals(result.reduced_df.index)
+    assert np.allclose(transformed.to_numpy(), result.reduced_df.to_numpy())

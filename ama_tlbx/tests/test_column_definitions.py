@@ -76,8 +76,8 @@ class TestLifeExpectancyColumn:
         numeric = LifeExpectancyColumn.numeric_columns()
         assert "life_expectancy" in numeric
         assert "gdp" in numeric
+        assert "status" in numeric  # binary indicator is treated as numeric
         assert "country" not in numeric
-        assert "status" not in numeric
         assert "year" not in numeric
 
     def test_feature_columns_include_target(self) -> None:
@@ -96,7 +96,7 @@ class TestLifeExpectancyColumn:
     def test_identifier_columns(self) -> None:
         """Test identifier_columns class method."""
         identifiers = LifeExpectancyColumn.identifier_columns()
-        assert identifiers == ["country", "year", "status"]
+        assert identifiers == ["country", "year"]
 
 
 class TestSiebenkampfColumn:

@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.utils.paths import get_dataset_path
 
 
 class TestLifeExpectancyDataset:
@@ -90,7 +92,8 @@ class TestLifeExpectancyDataset:
 
         dataset = LifeExpectancyDataset.from_csv(
             csv_path=csv_path,
-            aggregate_by_country=True,
+            aggregate_by_country="mean",
+            drop_missing_target=False,
         )
 
         # Should have 3 countries (one row per country)
@@ -162,9 +165,75 @@ class TestLifeExpectancyDataset:
         """Test identifier columns attribute."""
         identifier_cols = sample_dataset.Col.identifier_columns()
         assert "country" in identifier_cols
-        assert "status" in identifier_cols
         assert "year" in identifier_cols
 
     def test_default_target_column(self, sample_dataset: LifeExpectancyDataset) -> None:
         """Test default target column."""
         assert sample_dataset.Col.TARGET == "life_expectancy"
+
+    def test_from_csv_defaults_to_latest_year(self) -> None:
+        """Default aggregation should pick the most recent available year in the CSV."""
+        csv_path = get_dataset_path("life_expectancy")
+        raw = pd.read_csv(csv_path)
+
+        expected_year = int(raw.dropna(subset=["Life expectancy "])["Year"].max())
+
+        ds = LifeExpectancyDataset.from_csv(csv_path=csv_path)
+
+        year_series = ds.df[LECol.YEAR]
+        years = (
+            year_series.dt.year.unique()
+            if pd.api.types.is_datetime64_any_dtype(year_series)
+            else pd.Series(year_series, copy=False).astype(int).unique()
+        )
+        assert set(years) == {expected_year}
+        assert ds.df.index.name == LECol.COUNTRY
+
+    def test_from_csv_respects_explicit_year_override(self) -> None:
+        """Passing an explicit year should override the latest-year default."""
+        csv_path = get_dataset_path("life_expectancy")
+        raw = pd.read_csv(csv_path)
+
+        chosen_year = int(raw["Year"].min())  # earliest year present to ensure coverage
+
+        ds = LifeExpectancyDataset.from_csv(csv_path=csv_path, aggregate_by_country=chosen_year)
+
+        year_series = ds.df[LECol.YEAR]
+        years = (
+            year_series.dt.year.unique()
+            if pd.api.types.is_datetime64_any_dtype(year_series)
+            else pd.Series(year_series, copy=False).astype(int).unique()
+        )
+        assert set(years) == {chosen_year}
+
+    def test_latest_valid_year_skips_missing_target(self) -> None:
+        """Latest-year inference should ignore rows where the target is missing when requested."""
+        df = pd.DataFrame(
+            {
+                LECol.COUNTRY: ["A", "A"],
+                LECol.YEAR: pd.to_datetime(["2014", "2015"], format="%Y"),
+                LECol.STATUS: [0, 0],
+                LECol.TARGET: [1.0, float("nan")],
+            },
+        )
+
+        assert LifeExpectancyDataset._latest_valid_year(df, target_col=LECol.TARGET) == 2014
+        assert LifeExpectancyDataset._latest_valid_year(df, target_col=None) == 2015
+
+    def test_tf_only_applies_transforms_without_standardization(self, sample_dataset: LifeExpectancyDataset) -> None:
+        """tf_only should apply transforms but leave numeric scales unchanged."""
+        raw = sample_dataset.df
+
+        tf_only = sample_dataset.tf_only()
+        assert np.isclose(tf_only[LECol.GDP].iloc[0], np.log1p(raw[LECol.GDP].iloc[0]))
+        assert tf_only[LECol.TARGET].equals(raw[LECol.TARGET])
+        assert "status_developed" in tf_only.columns
+        assert LECol.STATUS not in tf_only.columns
+        assert set(tf_only["status_developed"].unique()) <= {0, 1}
+
+        tf_norm = sample_dataset.tf_and_norm()
+        assert abs(float(tf_norm[LECol.GDP].mean())) < 1e-8
+        assert np.isclose(float(tf_norm[LECol.GDP].std(ddof=0)), 1.0)
+        assert tf_norm[LECol.TARGET].equals(raw[LECol.TARGET])
+        assert "status_developed" in tf_norm.columns
+        assert set(tf_norm["status_developed"].unique()) <= {0, 1}

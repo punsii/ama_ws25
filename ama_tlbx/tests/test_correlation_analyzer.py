@@ -120,8 +120,10 @@ class TestCorrelationAnalyzer:
     def test_compute_returns_result(self, sample_view: DatasetView) -> None:
         """Test that compute returns CorrelationResult."""
         analyzer = CorrelationAnalyzer(sample_view)
-        result = analyzer.fit()
+        fitted = analyzer.fit()
+        result = analyzer.result()
 
+        assert fitted is analyzer
         assert isinstance(result, CorrelationResult)
         assert result.matrix is not None
         assert result.feature_pairs is not None
@@ -130,7 +132,8 @@ class TestCorrelationAnalyzer:
     def test_compute_without_target(self, view_without_target: DatasetView) -> None:
         """Test compute works without target column."""
         analyzer = CorrelationAnalyzer(view_without_target)
-        result = analyzer.fit()
+        analyzer.fit()
+        result = analyzer.result()
 
         assert isinstance(result, CorrelationResult)
         assert result.matrix is not None
@@ -172,7 +175,8 @@ class TestCorrelationAnalyzer:
         )
 
         analyzer = CorrelationAnalyzer(view)
-        result = analyzer.fit()
+        analyzer.fit()
+        result = analyzer.result()
 
         # Should still compute correlations (using pairwise complete observations)
         assert result.matrix is not None

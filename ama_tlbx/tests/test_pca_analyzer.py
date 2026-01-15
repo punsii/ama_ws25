@@ -126,15 +126,12 @@ class TestPCAAnalyzer:
         assert isinstance(loadings, pd.Series)
         assert loadings.name == "PC1"
 
-    def test_get_top_loading_features_sum(self, sample_view: DatasetView) -> None:
-        """Test getting top loading features using sum method."""
+    def test_get_top_loading_features_rejects_unknown_method(self, sample_view: DatasetView) -> None:
+        """Unsupported aggregation methods should raise a ValueError."""
         analyzer = PCAAnalyzer(sample_view)
         analyzer.fit(n_components=2)
-        top_features = analyzer.get_top_loading_features(n_components=2, method="sum")
-
-        # Returns pd.Index of feature names
-        assert isinstance(top_features, pd.Index)
-        assert len(top_features) == 4  # All features returned, sorted
+        with pytest.raises(ValueError):
+            analyzer.get_top_loading_features(n_components=2, method="sum")
 
     def test_get_top_loading_features_max(self, sample_view: DatasetView) -> None:
         """Test getting top loading features using max method."""
@@ -191,11 +188,15 @@ class TestPCAAnalyzer:
         scores = pd.DataFrame({"PC1": [1, 2], "PC2": [3, 4]})
         variance = pd.DataFrame({"PC": ["PC1"], "explained_ratio": [0.8]})
         loadings = pd.DataFrame({"PC1": [0.7, 0.7]})
+        top_features_global = pd.Index(["feat1", "feat2"])
+        top_features_per_pc = {"PC1": pd.Index(["feat1", "feat2"])}
 
         result = PCAResult(
             scores=scores,
             explained_variance=variance,
             loadings=loadings,
+            top_features_global=top_features_global,
+            top_features_per_pc=top_features_per_pc,
         )
 
         assert result.scores is not None
