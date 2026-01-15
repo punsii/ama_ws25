@@ -25,10 +25,11 @@ import statsmodels.api as sm
 from ama_tlbx.data import LifeExpectancyDataset, LECol
 
 dataset = LifeExpectancyDataset.from_csv(
-    csv_path="../../_data/life_expectancy_data.csv"    
-    ,aggregate_by_country="mean")
+    resolve_nand_pred="carry_forward",
+    aggregate_by_country=2014,
+)
 
-assert(not dataset.df.empty)
+assert not dataset.df.empty
 
 from ama_tlbx.analysis import (
     ColumnConcatenator,
@@ -63,7 +64,7 @@ dataset4 = column_concatinator3.concatenate(
 )
 concat_dataset = dataset4
 
-assert(not concat_dataset.df.empty)
+assert not concat_dataset.df.empty
 
 df = concat_dataset.df
 ```
@@ -74,7 +75,7 @@ Performing regression on data is a common analysis method often used in attempt 
 
 ## Liniar Regression Analyis
 
-Liniar regession is a common analysis performed on liniar data. Since life expectency is "mostly" liniar data, it is very fitting to use it to predict life expectency. The regression analysis has 5 parts each described in the figure below. 
+Liniar regession is a common analysis performed on liniar data. Since life expectency is "mostly" liniar data, it is very fitting to use it to predict life expectency. The regression analysis has 5 parts each described in the figure below.
 
 ```{python}
 # | label: liniar-reg
@@ -175,9 +176,9 @@ plt.tight_layout()
 plt.show()
 ```
 
-Based on the analysis the residuals looks completly random which is a good look and shows that there is no systematic mispredictions. 
+Based on the analysis the residuals looks completly random which is a good look and shows that there is no systematic mispredictions.
 
-Creating an influence plot is a great way to get an idea for which countries and their respective residuals are the cause for the outliers/residuals. Our X axis "Leverage" shows us which residuals have high leverage over our regression analysis and are causes for analysis. The Y represents how much of an outlier the residual is. We aim to avoid `|y| < 2`. The size 
+Creating an influence plot is a great way to get an idea for which countries and their respective residuals are the cause for the outliers/residuals. Our X axis "Leverage" shows us which residuals have high leverage over our regression analysis and are causes for analysis. The Y represents how much of an outlier the residual is. We aim to avoid `|y| < 2`. The size
 
 ```{python}
 # | label: diag-result
@@ -198,17 +199,17 @@ influence_plot(ols_model, criterion="cooks", ax=ax)
 # Process all text labels
 for txt in ax.texts:
     txt_content = txt.get_text().strip()
-    
+
     # Only process if it looks like a pure integer (not a decimal like Cook's distance)
     if txt_content.isdigit():
         try:
             obs_num = int(txt_content)
-            
+
             # Try to get country name
             if obs_num < len(y_train):
                 original_idx = y_train.index[obs_num]
                 country = idx_to_country.get(original_idx, None)
-                
+
                 if country:
                     txt.set_text(str(country))
                     txt.set_fontsize(7)
@@ -229,7 +230,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-We see that after performing the analysis that the majority of the residuals remain within the `|y| < 2` range showing a good fit. This is especially good since a lot of them are clumped towards `leverage = 0`. Indicating that each residual isn't being an extreme outliner. 
+We see that after performing the analysis that the majority of the residuals remain within the `|y| < 2` range showing a good fit. This is especially good since a lot of them are clumped towards `leverage = 0`. Indicating that each residual isn't being an extreme outliner.
 
 The last noteworthy outliers are Ukraine, Venezuela and Bolivia. All countries with a large circle and sitting at high leverage. But still within the `|y| > 2` showing a good sign of fitness. Although further analysis could be performed here.
 
@@ -244,30 +245,30 @@ To test some predictive capabilites we decided to perform some single variable a
 def pred_plot(model, feature_col, df):
     """Plot actual vs predicted values for a single feature regression"""
     feature_name = str(feature_col)
-    
+
     # Get predictions with confidence intervals
     predictions = model.get_prediction(df)
     pred_summary = predictions.summary_frame(alpha=0.05)  # 95% CI
-    
+
     # Sort by feature for clean line plots
     sort_idx = df[feature_name].argsort()
     x_sorted = df[feature_name].iloc[sort_idx]
-    
+
     plt.figure(figsize=(10, 6))
-    
+
     # Plot actual data
     plt.scatter(df[feature_name], df['life_expectancy'], alpha=0.6, label='Actual', zorder=3)
-    
+
     # Plot regression line
-    plt.plot(x_sorted, pred_summary['mean'].iloc[sort_idx], 
+    plt.plot(x_sorted, pred_summary['mean'].iloc[sort_idx],
              color='red', linewidth=2, label='Regression Line', zorder=2)
-    
+
     # Plot 95% confidence interval
-    plt.fill_between(x_sorted, 
+    plt.fill_between(x_sorted,
                      pred_summary['mean_ci_lower'].iloc[sort_idx],
                      pred_summary['mean_ci_upper'].iloc[sort_idx],
                      alpha=0.2, color='red', label='95% CI', zorder=1)
-    
+
     plt.xlabel(feature_name.replace('_', ' ').title())
     plt.ylabel('Life Expectancy')
     plt.title(f'Life Expectancy vs {feature_name.replace("_", " ").title()}')
@@ -281,15 +282,15 @@ def pred_plot(model, feature_col, df):
 # | fig-cap: prediction_icr
 # | echo: false
 
-pred = f"{LECol.INCOME_COMPOSITION}"
+pred = f"{LECol.HDI}"
 model = sm.formula.ols(f"life_expectancy ~ {pred}", data=df).fit()
 
 print(model.summary())
-pred_plot(model, LECol.INCOME_COMPOSITION, df)
+pred_plot(model, LECol.HDI, df)
 
 ```
 
-In the plot for income composition of resources we see a very narrow 95% CI which would be good if it weren't for the majority of the daty lies outside of this bound meaning that this predicter alone is not sufficient to estimate life expectency. 
+In the plot for income composition of resources we see a very narrow 95% CI which would be good if it weren't for the majority of the daty lies outside of this bound meaning that this predicter alone is not sufficient to estimate life expectency.
 This is what we would expect given that the original analyis shows a `Adj. R-Squared: 0.927`. Although the trendline in the model does show a clear positive correlation between the two, which matches a sanity check.
 
 
