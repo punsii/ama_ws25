@@ -3,76 +3,256 @@ title: "Clustering"
 format:
   html:
     toc: true
+    code-fold: show
 ---
 
-# Clustering
+# Clustering Analysis
+
+In this chapter, we aim to identify natural groupings of countries based on their health and socio-economic indicators. By clustering the data, we can discover if there are distinct patterns such as "Under-developed" vs. "Developed" nations without relying on pre-existing labels.
 
 ```{python}
-## | label: clustering-imports
-#| fig-cap: "A line plot on a polar axis"
+#| label: init_dataloading
 #| include: false
-from IPython.display import display, Math, Latex
-from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_samples, silhouette_score
+from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
-
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-import seaborn as sns
+import plotly.express as px
 
-import ama_tlbx.plotting as plotting
-import ama_tlbx.data as data
-import ama_tlbx.analysis as analysis
+# Configuration
+CSV_PATH = "../../_data/life_expectancy_data.csv"
+COLUMN_NAMES = [
+  "country",
+  "year",
+  "status",
+  "life_expectancy",
+  "adult_mortality",
+  "infant_deaths",
+  "alcohol",
+  "percentage_expenditure",
+  "hepatitis_b",
+  "measles",
+  "bmi",
+  "under_five_deaths",
+  "polio",
+  "total_expenditure",
+  "diphtheria",
+  "hiv_aids",
+  "gdp",
+  "population",
+  "thinness_1_19_years",
+  "thinness_5_9_years",
+  "income_composition_of_resources",
+  "schooling"
+]
+IDENTIFIER_COLS = ["country", "year"]
+TARGET_COLUMNS = ["life_expectancy"]
+NUMERIC_COLUMNS = [col for col in COLUMN_NAMES if col not in IDENTIFIER_COLS]
+FEATURE_COLUMNS = [col for col in NUMERIC_COLUMNS if col not in TARGET_COLUMNS]
+
+def convert_data_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Set appropriate data types for each col."""
+    converted = df.assign(
+        year=pd.to_datetime(df["year"].astype(str), format="%Y", errors="coerce"),
+        status=(df["status"].str.strip().str.lower() == "developed").astype(int),
+    )
+    return converted.assign(
+        **{col: pd.to_numeric(converted[col], errors="coerce") for col in NUMERIC_COLUMNS if col != "status"},
+    )
+
+# Load and Preprocess Data
+df = pd.read_csv(CSV_PATH).dropna().reset_index(drop=True)
+df.columns = COLUMN_NAMES
+df = convert_data_types(df)
+
+# Standardize the features (Crucial for distance-based clustering)
+df_scaled = StandardScaler().fit_transform(df[FEATURE_COLUMNS])
 ```
 
+## 1. Determining the Optimal Number of Clusters
+
+To decide how many clusters ($k$) to split our data into, we evaluate the cluster quality using two metrics:
+
+1.  **Inertia:** Measures the variance within the cluster. We look for the "Elbow" where the improvement slows down.
+2.  **Silhouette Score:** Measures how well-separated the clusters are.
+
+### The Elbow Method
 
 ```{python}
-#| label: fig-test
-#| fig-cap: "A line plot on a polar axis"
+#| label: elbow-plot
+#| fig-cap: "Elbow Method: Inertia vs. Number of Clusters"
 
-dataset = data.LifeExpectancyDataset.from_csv(csv_path="../../_data/life_expectancy_data.csv")
-df = dataset.df_standardized
-print(df)
+inertia = []
+K_range = range(1, 11)
 
-kmeans_4 = KMeans(n_clusters=4, n_init=25)
-print(type(df))
-kmeans_4.fit(df)
+for k in K_range:
+    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+    kmeans.fit(df_scaled)
+    inertia.append(kmeans.inertia_)
 
-pca = PCA(n_components=2) # 2-D visualization
-pca_fit = pca.fit_transform(df)
-# Create a DataFrame for PCA results (i.e. score-vector of datapoints w.r.t principal components)
-pca_df = pd.DataFrame(pca_fit, columns=['PC1', 'PC2'], index=df.index)
-
-pca_df['Cluster_4means'] = kmeans_4.labels_
-
-# Biplot Visualization
-plt.figure(figsize=(15, 10))
-
-# Plot datapoints with different colors for different clusters
-clusters = np.unique(pca_df['Cluster_4means'])
-colors = plt.get_cmap('viridis', len(clusters))
-
-for cluster in clusters:
-    cluster_data = pca_df[pca_df['Cluster_4means'] == cluster]
-    plt.scatter(cluster_data['PC1'], cluster_data['PC2'], color=colors(cluster), label=f'Cluster {cluster}')
-
-# Plot cluster centroids
-centroids = pd.DataFrame(kmeans_4.cluster_centers_, columns=df.columns)
-centroids_pca=pca.transform(centroids)
-plt.scatter(centroids_pca[:, 0], centroids_pca[:, 1], s=100, c='black', marker='X', label='Centroids')
-
-# Plot arrows for principal components
-for i, var in enumerate(dataset.feature_columns()):
-    plt.arrow(0, 0, pca.components_[0, i], pca.components_[1, i], color='r', alpha=0.5, head_width=0.05, head_length=0.1)
-    plt.text(pca.components_[0, i] * 1.15, pca.components_[1, i] * 1.15, var, color='r', fontsize=8)
-
-plt.xlabel('PC1')
-plt.ylabel('PC2')
-plt.title('Biplot of the two biggest principal components')
+plt.figure(figsize=(9, 5))
+plt.plot(K_range, inertia, 'bx-')
+plt.xlabel('Number of clusters (k)')
+plt.ylabel('Inertia (Within-Cluster Variance)')
+plt.title('Elbow Method For Optimal k')
 plt.grid(True)
-plt.legend()
 plt.show()
+```
+
+### Average Silhouette Score
+
+```{python}
+#| label: silhouette-score
+#| fig-cap: "Average Silhouette Score for different k values"
+
+silhouette_avgs = []
+K_silhouette = range(2, 11)
+
+for k in K_silhouette:
+    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(df_scaled)
+    silhouette_avgs.append(silhouette_score(df_scaled, cluster_labels))
+
+plt.figure(figsize=(9, 5))
+plt.bar(K_silhouette, silhouette_avgs, color='skyblue')
+plt.xlabel('Number of clusters (k)')
+plt.ylabel('Average Silhouette Score')
+plt.title('Silhouette Score for Optimal k')
+plt.grid(axis='y')
+plt.show()
+```
+
+*The average silhouette score peaks at **k=8**, but the Elbow method shows a significant leveling off around **k=4**. We proceed with 4 clusters for better interpretability.*
+
+## 2. K-Means Clustering (k=4)
+
+```{python}
+#| label: perform-clustering
+
+# Set optimal k
+optimal_k = 4
+
+# Fit K-Means
+kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+df['cluster'] = kmeans.fit_predict(df_scaled)
+df['cluster_label'] = df['cluster'].astype(str)
+
+print(f"Clustering performed with k={optimal_k}")
+```
+
+## 3. Visualization in 3D PCA Space
+
+We use Principal Component Analysis (PCA) to visualize the clusters.
+
+```{python}
+#| label: pca-3d-plot
+#| fig-cap: "3D Visualization of Clusters using PCA"
+
+# 1. Run PCA
+pca = PCA(n_components=3)
+components = pca.fit_transform(df_scaled)
+
+# 2. Create a DataFrame for Plotly
+pca_df = pd.DataFrame(data=components, columns=['PC1', 'PC2', 'PC3'])
+pca_df['cluster'] = df['cluster_label']
+pca_df['status'] = df['status']   
+# Create combined label for hover
+pca_df['country_year'] = df['country'] + " (" + df['year'].dt.year.astype(str) + ")"
+
+# 3. Interactive 3D Plot
+fig = px.scatter_3d(
+    pca_df, 
+    x='PC1', y='PC2', z='PC3', 
+    color='cluster',
+    hover_name='country_year',
+    hover_data=['status'],
+    title=f'Life Expectancy Clusters (k={optimal_k})',
+    opacity=0.7, size_max=9
+)
+fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
+fig.show()
+```
+
+## 4. Cluster Interpretation
+
+We analyzed the characteristics of our 4 clusters to understand what they represent in the real world.
+
+**Cluster Characteristics:**
+Three of the clusters follow a standard development trajectory:
+
+* **Developed Nations:** High life expectancy, GDP, and schooling.
+
+* **In-Development:** Middle range indicators.
+
+* **Developing Nations:** Lower healthcare expenditure and life expectancy.
+
+**The "India" Anomaly (Cluster 2):**
+Our analysis reveals a distinct 4th cluster consisting exclusively by data points from India. To understand why this group is so mathematically distinct, we analyzed the loadings of the Principal Components.
+
+```{python}
+#| label: pc2-analysis
+#| fig-cap: "Feature Contributions to Principal Component 2"
+
+# Get the loadings for PC2 (Index 1)
+pc2_loadings = pd.DataFrame(
+    pca.components_[1], 
+    index=FEATURE_COLUMNS, 
+    columns=['Loading']
+).sort_values(by='Loading')
+
+# Plotting
+fig = px.bar(
+    pc2_loadings, 
+    y='Loading', 
+    x=pc2_loadings.index, 
+    title='Feature Contributions to PC2 (Drivers of the India Cluster)',
+    labels={'index': 'Feature', 'Loading': 'Weight'},
+    color='Loading',
+    color_continuous_scale='RdBu'
+)
+fig.show()
+```
+
+**Interpretation of the India Cluster:**
+The loadings plot above highlights that **PC2 is heavily driven by Population and Child Mortality** (including `infant_deaths` and `under_five_deaths`).
+
+* **PC1 vs. PC2:** While most "Developing" nations exhibit low values in both PC1 and PC2, India behaves differently. 
+* This suggests that while India shares certain "Developed" characteristics, its population density and specific mortality statistics create a unique statistical profile that distinguishes it from other developing nations.
+
+```{python}
+#| label: cluster-means-table
+display_cols = ['life_expectancy', 'gdp', 'schooling', 'population', 'infant_deaths']
+cluster_means = df.groupby('cluster_label')[display_cols].mean().sort_values(by='life_expectancy')
+display(cluster_means)
+```
+
+## 5. Supplementary Analysis: k=8
+
+Since the Silhouette Score peaked at $k=8$, we provide a visualization of this more granular clustering for comparison.
+
+```{python}
+#| label: pca-3d-plot-k8
+#| fig-cap: "3D Visualization of Clusters (k=8)"
+
+# Perform clustering with k=8
+kmeans_8 = KMeans(n_clusters=8, random_state=42, n_init=10)
+labels_8 = kmeans_8.fit_predict(df_scaled)
+
+# Add to PCA DataFrame
+pca_df['cluster_k8'] = labels_8.astype(str)
+
+# Plot
+fig = px.scatter_3d(
+    pca_df, 
+    x='PC1', y='PC2', z='PC3', 
+    color='cluster_k8',
+    hover_name='country_year',
+    hover_data=['status'],
+    title='Life Expectancy Clusters (k=8)',
+    opacity=0.7, size_max=9
+)
+fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
+fig.show()
 ```

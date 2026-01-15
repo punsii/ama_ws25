@@ -25,7 +25,7 @@ jobs:
       - name: Setup Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:
-          version: 'release'
+          version: 'pre-release'
 
       - name: Verify Quarto
         run: quarto --version

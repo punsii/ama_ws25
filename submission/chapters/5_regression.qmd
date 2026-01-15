@@ -5,5 +5,291 @@ format:
     toc: true
 ---
 
+```{python}
+# | label: init
+# | fig-cap: "Dataset loading function hidden"
+# | include: false
+from pathlib import Path
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import scipy.stats as stats
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+from statsmodels.graphics.regressionplots import influence_plot
+import statsmodels.api as sm
+
+from ama_tlbx.data import LifeExpectancyDataset, LECol
+
+dataset = LifeExpectancyDataset.from_csv(
+    csv_path="../../_data/life_expectancy_data.csv"    
+    ,aggregate_by_country="mean")
+
+assert(not dataset.df.empty)
+
+from ama_tlbx.analysis import (
+    ColumnConcatenator,
+)
+
+column_concatinator = ColumnConcatenator(dataset)
+dataset2 = column_concatinator.concatenate(
+    columns=[
+        LECol.HEPATITIS_B,
+        LECol.POLIO,
+        LECol.DIPHTHERIA,
+    ],
+    new_column_name="Immunisation",
+)
+
+column_concatinator2 = ColumnConcatenator(dataset2)
+dataset3 = column_concatinator2.concatenate(
+    columns=[
+        LECol.THINNESS_1_19_YEARS,
+        LECol.THINNESS_5_9_YEARS,
+    ],
+    new_column_name="Child Thinness",
+)
+
+column_concatinator3 = ColumnConcatenator(dataset3)
+dataset4 = column_concatinator3.concatenate(
+    columns=[
+        LECol.INFANT_DEATHS,
+        LECol.UNDER_FIVE_DEATHS,
+    ],
+    new_column_name="Baby Deaths",
+)
+concat_dataset = dataset4
+
+assert(not concat_dataset.df.empty)
+
+df = concat_dataset.df
+```
+
 # Regression Analysis
+
+Performing regression on data is a common analysis method often used in attempt to derive and predict the life expectency using similar yet unknown data. Since the project primarely focuses on finding information as it pertains to life expectency, our regression analysis will fucus on predicting life expectency.
+
+## Liniar Regression Analyis
+
+Liniar regession is a common analysis performed on liniar data. Since life expectency is "mostly" liniar data, it is very fitting to use it to predict life expectency. The regression analysis has 5 parts each described in the figure below. 
+
+```{python}
+# | label: liniar-reg
+# | fig-cap: "Process for regression"
+
+# 1: Drop rows where target is missing
+target_col = LECol.LIFE_EXPECTANCY
+reg_df = df.dropna(subset=[target_col])
+
+# 2: Select features (numeric only, excluding target)
+X = reg_df.select_dtypes(include=['number']).drop(columns=[target_col])
+y = reg_df[target_col]
+
+# 3: Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 4: Train model
+model = LinearRegression()
+model.fit(X_train, y_train)
+
+# 5: Predict
+y_pred = model.predict(X_test)
+```
+
+The six step process for the regeression analysis is as follows:
+1. Defined the target variable we wish to estimate, here it is the Life expectency stored as an enum. We also drop all NA Columns since they cannot be used in a regression algorithm.
+2. We extract all numeric features from the dataset excluding the target column to ensure contamination of data.
+3. Split the dataset into train and test.
+4. Train the model
+5. Make predictions for analysis.
+
+Afterwards we can perform a summary analysis using the OLS libary to guage our model capabilities.
+
+```{python}
+# | label: regression-summary
+# | fig-cap: "Detailed Regression Summary"
+
+# Fit OLS model with statsmodels for detailed summary
+X_train_sm = sm.add_constant(X_train)
+# Set index to country names for better labeling
+X_train_sm.index = y_train.index
+ols_model = sm.OLS(y_train, X_train_sm).fit()
+# Store country names for later use in influence plot
+country_names = reg_df[LECol.COUNTRY] if LECol.COUNTRY in reg_df.columns else reg_df.index
+
+print(ols_model.summary())
+```
+
+Based on our OLS Regression result we get an `R-Squared: 0.937` Which means that the model explains 93% of the variance of the dataset. `Adj. R-Squared: 0.927` Shows that if you adjust for the number of features the amount still remains high. Showing that the majority of features play a signficant part of the analysis.
+
+```{python}
+# | label: liniar-reg-fig
+# | echo: false
+# | fig-cap: "Plot of how accurate our coefifients are on test data"
+
+
+plt.figure(figsize=(10, 6))
+plt.scatter(y_test, y_pred, alpha=0.5)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+plt.xlabel('Actual Life Expectancy')
+plt.ylabel('Predicted Life Expectancy')
+plt.title('Multivariate Regression: Actual vs Predicted')
+plt.tight_layout()
+plt.show()
+
+```
+
+The graph above tells a similar story showing a comparison between a countries predicted life expectency and it's actual expecetency on the test set, showing a strong fit given the data. The same strong fit that was shown previously.
+
+### Residual Analysis
+
+Performing a residual analysis allows us to analyse and gather an understanding of datapoints lying outside the predictions by the models. Residuals are calculated by subtracting the prediction from the test data. When a regression model is good the residuals should be random indicating that there is no missing data being modelled.
+
+```{python}
+# | label: residual-analysis
+# | fig-cap: "Residual Analysis"
+# | echo: false
+
+residuals = y_test - y_pred
+
+# Plot-Setup
+fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+
+# --- Plot 1: Residuals vs. Test --
+sns.scatterplot(x=y_pred, y=residuals, ax=axes[0], alpha=0.6)
+axes[0].axhline(0, color='red', linestyle='--')
+axes[0].set_xlabel('Predicted Life expectency')
+axes[0].set_ylabel('Residuals')
+axes[0].set_title('Residuals for the Fitted Values\n')
+
+# --- Plot 2: Q-Q Plot ---
+stats.probplot(residuals, dist="norm", plot=axes[1])
+axes[1].set_title('Q-Q Plot\n')
+axes[1].get_lines()[0].set_markerfacecolor('C0')
+axes[1].get_lines()[0].set_markeredgewidth(0)
+
+plt.tight_layout()
+plt.show()
+```
+
+Based on the analysis the residuals looks completly random which is a good look and shows that there is no systematic mispredictions. 
+
+Creating an influence plot is a great way to get an idea for which countries and their respective residuals are the cause for the outliers/residuals. Our X axis "Leverage" shows us which residuals have high leverage over our regression analysis and are causes for analysis. The Y represents how much of an outlier the residual is. We aim to avoid `|y| < 2`. The size 
+
+```{python}
+# | label: diag-result
+# | fig-cap: "Residual Diagnostics Result"
+# | echo: false
+
+from matplotlib import pyplot as plt
+
+# Create a proper mapping: original dataframe index -> country name
+if LECol.COUNTRY in reg_df.columns:
+    idx_to_country = dict(zip(reg_df.index, reg_df[LECol.COUNTRY]))
+else:
+    idx_to_country = {i: str(i) for i in reg_df.index}
+
+fig, ax = plt.subplots(figsize=(7, 5))
+influence_plot(ols_model, criterion="cooks", ax=ax)
+
+# Process all text labels
+for txt in ax.texts:
+    txt_content = txt.get_text().strip()
+    
+    # Only process if it looks like a pure integer (not a decimal like Cook's distance)
+    if txt_content.isdigit():
+        try:
+            obs_num = int(txt_content)
+            
+            # Try to get country name
+            if obs_num < len(y_train):
+                original_idx = y_train.index[obs_num]
+                country = idx_to_country.get(original_idx, None)
+                
+                if country:
+                    txt.set_text(str(country))
+                    txt.set_fontsize(7)
+                else:
+                    # No country found - hide it
+                    txt.set_visible(False)
+            else:
+                # Index out of bounds - hide it
+                txt.set_visible(False)
+        except:
+            # Any error - hide it
+            txt.set_visible(False)
+
+plt.title("Influence Plot (Cook's Distance)")
+plt.xlabel("Leverage")
+plt.ylabel("Studentized Residuals")
+plt.tight_layout()
+plt.show()
+```
+
+We see that after performing the analysis that the majority of the residuals remain within the `|y| < 2` range showing a good fit. This is especially good since a lot of them are clumped towards `leverage = 0`. Indicating that each residual isn't being an extreme outliner. 
+
+The last noteworthy outliers are Ukraine, Venezuela and Bolivia. All countries with a large circle and sitting at high leverage. But still within the `|y| > 2` showing a good sign of fitness. Although further analysis could be performed here.
+
+### Predictive capabilities
+
+To test some predictive capabilites we decided to perform some single variable analyses, here we chose `income_composition_of_resources` because of it's coefficient of `7.0218`, which is the highest besides the constant which cant model anything itself.
+
+```{python}
+# | label: pred-plot-function
+# | echo: false
+
+def pred_plot(model, feature_col, df):
+    """Plot actual vs predicted values for a single feature regression"""
+    feature_name = str(feature_col)
+    
+    # Get predictions with confidence intervals
+    predictions = model.get_prediction(df)
+    pred_summary = predictions.summary_frame(alpha=0.05)  # 95% CI
+    
+    # Sort by feature for clean line plots
+    sort_idx = df[feature_name].argsort()
+    x_sorted = df[feature_name].iloc[sort_idx]
+    
+    plt.figure(figsize=(10, 6))
+    
+    # Plot actual data
+    plt.scatter(df[feature_name], df['life_expectancy'], alpha=0.6, label='Actual', zorder=3)
+    
+    # Plot regression line
+    plt.plot(x_sorted, pred_summary['mean'].iloc[sort_idx], 
+             color='red', linewidth=2, label='Regression Line', zorder=2)
+    
+    # Plot 95% confidence interval
+    plt.fill_between(x_sorted, 
+                     pred_summary['mean_ci_lower'].iloc[sort_idx],
+                     pred_summary['mean_ci_upper'].iloc[sort_idx],
+                     alpha=0.2, color='red', label='95% CI', zorder=1)
+    
+    plt.xlabel(feature_name.replace('_', ' ').title())
+    plt.ylabel('Life Expectancy')
+    plt.title(f'Life Expectancy vs {feature_name.replace("_", " ").title()}')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+```
+```{python}
+# | label: prediction-income-composition
+# | fig-cap: prediction_icr
+# | echo: false
+
+pred = f"{LECol.INCOME_COMPOSITION}"
+model = sm.formula.ols(f"life_expectancy ~ {pred}", data=df).fit()
+
+print(model.summary())
+pred_plot(model, LECol.INCOME_COMPOSITION, df)
+
+```
+
+In the plot for income composition of resources we see a very narrow 95% CI which would be good if it weren't for the majority of the daty lies outside of this bound meaning that this predicter alone is not sufficient to estimate life expectency. 
+This is what we would expect given that the original analyis shows a `Adj. R-Squared: 0.927`. Although the trendline in the model does show a clear positive correlation between the two, which matches a sanity check.
+
 
