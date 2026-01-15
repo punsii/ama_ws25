@@ -11,7 +11,7 @@ Model selection balances **fit** and **parsimony**: we want models that explain 
 
 # Criteria for model quality
 
-We summarize the criteria used by Menzel (2025, pp. 17–20) and in `ama_tlbx` for linear regression model choice. The key idea is to trade off goodness of fit against model complexity. Lower values are preferred for information criteria, while higher is better for adjusted $R^2$. @Menzel2025_ModelSelection_p17 @Menzel2025_ModelSelection_p18 @Menzel2025_ModelSelection_p19 @Menzel2025_ModelSelection_p20
+We summarize the criteria used in the course material (slides 17–20) and in `ama_tlbx` for linear regression model choice. The key idea is to trade off goodness of fit against model complexity. Lower values are preferred for information criteria, while higher is better for adjusted $R^2$ [@Menzel2025_ModelSelection, p. 17-20].
 
 ## $R^2$ and adjusted $R^2$
 
@@ -27,11 +27,11 @@ $$
 \bar{R}^2 = 1 - (1 - R^2)\frac{n - 1}{n - p - 1}.
 $$
 
-Menzel (2025, p. 17) emphasizes that $R^2$ and even adjusted $R^2$ can still favor overly complex models; $\bar{R}^2$ can increase even when the added predictor is only weakly related to the target, so it is **not recommended as the sole selection criterion**. @Menzel2025_ModelSelection_p17. For general background see [Wikipedia :: Adjusted R-squared](https://en.wikipedia.org/wiki/Coefficient_of_determination#Adjusted_R2).
+$R^2$ and even adjusted $R^2$ can still favor overly complex models; $\bar{R}^2$ can increase even when the added predictor is only weakly related to the target, so it is **not recommended as the sole selection criterion** [@Menzel2025_ModelSelection, p. 17]. For general background see [Wikipedia :: Adjusted R-squared](https://en.wikipedia.org/wiki/Coefficient_of_determination#Adjusted_R2).
 
 ## Akaike and Bayesian information criteria (AIC/BIC)
 
-For a model with log-likelihood $\ell(\hat{\theta})$, $k$ estimated parameters (including the intercept), and $n$ observations, Menzel (2025, p. 18) defines: @Menzel2025_ModelSelection_p18.
+For a model with log-likelihood $\ell(\hat{\theta})$, $k$ estimated parameters (including the intercept), and $n$ observations, the information criteria are defined as [@Menzel2025_ModelSelection, p. 18].
 
 $$
 \mathrm{AIC} = 2k - 2\,\ell(\hat{\theta}),
@@ -41,7 +41,7 @@ $$
 \mathrm{BIC} = k\ln(n) - 2\,\ell(\hat{\theta}).
 $$
 
-Both criteria are **lower-is-better** trade-offs between fit and complexity; BIC uses a stronger penalty that grows with $n$, so it tends to select smaller models than AIC. AIC is rooted in information theory, whereas BIC is related to Bayesian model comparison (Menzel, 2025, p. 18). @Menzel2025_ModelSelection_p18. For more context, see [Wikipedia :: Akaike information criterion](https://en.wikipedia.org/wiki/Akaike_information_criterion) and [Wikipedia :: Bayesian information criterion](https://en.wikipedia.org/wiki/Bayesian_information_criterion).
+Both criteria are **lower-is-better** trade-offs between fit and complexity; BIC uses a stronger penalty that grows with $n$, so it tends to select smaller models than AIC. AIC is rooted in information theory, whereas BIC is related to Bayesian model comparison [@Menzel2025_ModelSelection, p. 18]. For more context, see [Wikipedia :: Akaike information criterion](https://en.wikipedia.org/wiki/Akaike_information_criterion) and [Wikipedia :: Bayesian information criterion](https://en.wikipedia.org/wiki/Bayesian_information_criterion).
 
 ## Mallows' $C_p$
 
@@ -51,15 +51,15 @@ $$
 C_p = \frac{\mathrm{RSS}}{\hat{\sigma}^2} + 2k - n.
 $$
 
-Menzel (2025, p. 19) recommends choosing **small** $C_p$ values, with well-fitting models typically yielding $C_p \approx k$ (i.e., $p+1$) when underfitting is not severe. @Menzel2025_ModelSelection_p19. For background, see [Wikipedia :: Mallows's Cp](https://en.wikipedia.org/wiki/Mallows%27s_Cp).
+Small $C_p$ values are preferred, with well-fitting models typically yielding $C_p \approx k$ (i.e., $p+1$) when underfitting is not severe [@Menzel2025_ModelSelection, p. 19]. For background, see [Wikipedia :: Mallows's Cp](https://en.wikipedia.org/wiki/Mallows%27s_Cp).
 
 # Search strategies
 
-Given $K$ candidate predictors, exhaustive search evaluates all $2^K$ subsets, which is often infeasible for moderate $K$. Menzel (2025, pp. 21–22) therefore recommends **greedy** procedures. @Menzel2025_ModelSelection_p21 @Menzel2025_ModelSelection_p22
+Given $K$ candidate predictors, exhaustive search evaluates all $2^K$ subsets, which is often infeasible for moderate $K$. Greedy procedures are recommended in this setting [@Menzel2025_ModelSelection, p. 21-22].
 
-1. **Forward selection**: start with an intercept-only model, then add the predictor that yields the best improvement (e.g., lowest AIC). Stop when the criterion no longer improves or a test threshold is violated (Menzel, 2025, p. 21). @Menzel2025_ModelSelection_p21.
-2. **Backward selection**: start with the full model, then remove the predictor whose exclusion improves the criterion most. Stop when the criterion worsens or a test threshold is reached (Menzel, 2025, p. 22). @Menzel2025_ModelSelection_p22.
-3. **Stepwise selection**: combines forward and backward moves; at each iteration one can either add or drop a term based on the criterion (Menzel, 2025, p. 22). @Menzel2025_ModelSelection_p22.
+1. **Forward selection**: start with an intercept-only model, then add the predictor that yields the best improvement (e.g., lowest AIC). Stop when the criterion no longer improves or a test threshold is violated [@Menzel2025_ModelSelection, p. 21].
+2. **Backward selection**: start with the full model, then remove the predictor whose exclusion improves the criterion most. Stop when the criterion worsens or a test threshold is reached [@Menzel2025_ModelSelection, p. 22].
+3. **Stepwise selection**: combines forward and backward moves; at each iteration one can either add or drop a term based on the criterion [@Menzel2025_ModelSelection, p. 22].
 
 These strategies are instances of **stepwise regression** (see [Wikipedia :: Stepwise regression](https://en.wikipedia.org/wiki/Stepwise_regression)).
 
@@ -101,7 +101,7 @@ The project exposes a small set of **high‑level, public entry points** for mod
 
 These are the only functions you need to reproduce the full workflow in this chapter: build paths, register best models, evaluate holdout performance, and interpret diagnostics.
 
-In the regression chapter, we **do not rely on a single criterion**. Instead, we compare AIC/BIC, adjusted $R^2$, and out-of-sample performance (year-based holdout and optional cross-validation) to balance interpretability with generalization. This aligns with the stated trade-off between model fit and complexity (Menzel, 2025, p. 20). @Menzel2025_ModelSelection_p20.
+In the regression chapter, we **do not rely on a single criterion**. Instead, we compare AIC/BIC, adjusted $R^2$, and out-of-sample performance (year-based holdout and optional cross-validation) to balance interpretability with generalization. This aligns with the stated trade-off between model fit and complexity [@Menzel2025_ModelSelection, p. 20].
 
 # Empirical model selection on the 2014 cross-section
 
@@ -670,4 +670,4 @@ plt.show()
 
 # Caveats and interpretation
 
-Menzel (2025, p. 23) emphasizes that **global criteria can yield models with non-significant coefficients**; these criteria minimize prediction error and are not equivalent to hypothesis tests. @Menzel2025_ModelSelection_p23. In addition, stepwise procedures can introduce selection bias, so uncertainty in the final model should be interpreted cautiously; see [Wikipedia :: Stepwise regression](https://en.wikipedia.org/wiki/Stepwise_regression). For this reason, we treat stepwise selection as **exploratory** and confirm decisions with holdout performance and diagnostic checks in the regression chapter.
+**Global criteria can yield models with non-significant coefficients**; these criteria minimize prediction error and are not equivalent to hypothesis tests [@Menzel2025_ModelSelection, p. 23]. In addition, stepwise procedures can introduce selection bias, so uncertainty in the final model should be interpreted cautiously; see [Wikipedia :: Stepwise regression](https://en.wikipedia.org/wiki/Stepwise_regression). For this reason, we treat stepwise selection as **exploratory** and confirm decisions with holdout performance and diagnostic checks in the regression chapter.
