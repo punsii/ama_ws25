@@ -12,6 +12,7 @@ from .ols_helper import (
     EvalMetrics,
     MetricsResult,
     RegressionResult,
+    diagnose_ols,
     evaluate_model,
     fit_ols,
 )
@@ -144,11 +145,13 @@ class ModelRegistry:
         name: str | None = None,
         target_col: str = LECol.TARGET,
         direction: Literal["forward", "backward", "stepwise"] = "forward",
-        criterion: Literal["aic", "aicc", "bic", "mdl", "cp", "adj_r2", "cv_rmse"] = "aic",
+        criterion: Literal["aic", "aicc", "bic", "mdl", "cp", "adj_r2"] = "aic",
         threshold: float = 1.0,
         cv_folds: int | None = None,
         shuffle_cv: bool = False,
         random_state: int | None = None,
+        max_models: int | None = None,
+        reuse_path_model: bool = True,
         refit: bool = False,
     ) -> RegressionResult:
         """Run a stepwise selection path and cache the best model.
@@ -194,28 +197,72 @@ class ModelRegistry:
             cv_folds=cv_folds,
             shuffle_cv=shuffle_cv,
             random_state=random_state,
+            max_models=max_models,
         )
-        best_rhs = path.best_step().rhs
-        diag = fit_ols(
-            df,
-            rhs=best_rhs,
+
+        return self.add_from_path(
+            path,
+            name=name,
+            df=df,
             target_col=target_col,
             cv_folds=cv_folds,
             shuffle_cv=shuffle_cv,
             random_state=random_state,
+            refit=refit,
+            reuse_path_model=reuse_path_model,
         )
+
+    def add_from_path(
+        self,
+        path: SelectionPathResult,
+        *,
+        name: str,
+        df: pd.DataFrame | None = None,
+        target_col: str = LECol.TARGET,
+        cv_folds: int | None = None,
+        shuffle_cv: bool = False,
+        random_state: int | None = None,
+        refit: bool = False,
+        reuse_path_model: bool = True,
+    ) -> RegressionResult:
+        """Register the best step from a selection path.
+
+        By default, reuse the fitted model stored in the path to avoid a refit.
+        Set ``reuse_path_model=False`` to refit from ``df``.
+        """
+        if name in self.models and not refit:
+            return self.models[name].diag
+
+        step = path.best_step()
+        if reuse_path_model:
+            diag = diagnose_ols(
+                step.model,
+                cv_folds=cv_folds,
+                shuffle_cv=shuffle_cv,
+                random_state=random_state,
+            )
+        else:
+            if df is None:
+                raise ValueError("df is required when reuse_path_model is False.")
+            diag = fit_ols(
+                df,
+                rhs=step.rhs,
+                target_col=target_col,
+                cv_folds=cv_folds,
+                shuffle_cv=shuffle_cv,
+                random_state=random_state,
+            )
 
         self.add(
             ModelEntry(
                 name=name,
-                rhs=best_rhs,
+                rhs=step.rhs,
                 diag=diag,
                 metrics=diag.metrics,
                 selection_path=path,
             ),
             overwrite=True,
         )
-
         return diag
 
     def compare(self, *, sort_by: str = "aic") -> pd.DataFrame:
@@ -261,6 +308,7 @@ class ModelRegistry:
         cv_folds: int | None = None,
         shuffle_cv: bool = False,
         random_state: int | None = None,
+        reuse_path_model: bool = True,
         refit: bool = True,
     ) -> pd.DataFrame:
         """Fit and register the best step from each selection path.
@@ -274,19 +322,26 @@ class ModelRegistry:
             return slug or "model"
 
         rows: list[dict[str, object]] = []
+        seen: dict[str, int] = {}
         for label, path in paths.items():
             slug = _slugify(label)
-            name = f"{name_prefix}_{slug}" if name_prefix else slug
+            if slug in seen:
+                seen[slug] += 1
+            else:
+                seen[slug] = 1
+            suffix = f"_{seen[slug]}" if seen[slug] > 1 else ""
+            name = f"{name_prefix}_{slug}{suffix}" if name_prefix else f"{slug}{suffix}"
             step = path.best_step()
-            diag = self.fit(
-                df,
-                rhs=step.rhs,
+            diag = self.add_from_path(
+                path,
                 name=name,
+                df=df,
                 target_col=target_col,
                 cv_folds=cv_folds,
                 shuffle_cv=shuffle_cv,
                 random_state=random_state,
                 refit=refit,
+                reuse_path_model=reuse_path_model,
             )
             entry = self.get(name)
             entry.selection_path = path
@@ -310,6 +365,97 @@ class ModelRegistry:
                 },
             )
         return pd.DataFrame(rows)
+
+    def run_selection_grid(  # noqa: PLR0913
+        self,
+        df: pd.DataFrame,
+        *,
+        base_terms: list[str] | None,
+        candidates: list[str],
+        target_col: str = LECol.TARGET,
+        directions: Iterable[str] | None = None,
+        criteria: Iterable[str] | None = None,
+        thresholds: dict[str, float] | None = None,
+        cv_folds: int | None = None,
+        shuffle_cv: bool = False,
+        random_state: int | None = None,
+        max_models: int | None = None,
+        name_prefix: str = "best",
+        reuse_path_model: bool = True,
+        refit: bool = True,
+        eval_df: pd.DataFrame | None = None,
+        eval_label: str | None = None,
+        sort_by: str = "aic",
+    ) -> tuple[dict[str, SelectionPathResult], pd.DataFrame, pd.DataFrame]:
+        """Run a grid of selection paths and register the best model per path.
+
+        Returns (paths, best_map, model_compare).
+        """
+        if directions is None:
+            directions = ("forward", "backward", "stepwise")
+        if criteria is None:
+            criteria = ("aic", "aicc", "bic", "mdl", "cp", "adj_r2")
+        if thresholds is None:
+            thresholds = {
+                "aic": 1.0,
+                "aicc": 1.0,
+                "bic": 1.0,
+                "mdl": 1.0,
+                "cp": 1.0,
+                "adj_r2": 0.0,
+            }
+
+        paths: dict[str, SelectionPathResult] = {}
+        for direction in directions:
+            for criterion in criteria:
+                label = f"{direction.upper()}-{criterion.upper()}"
+                paths[label] = selection_path(
+                    data=df,
+                    target_col=target_col,
+                    base_terms=base_terms,
+                    candidates=candidates,
+                    direction=direction,
+                    criterion=criterion,
+                    threshold=thresholds.get(criterion, 1.0),
+                    cv_folds=cv_folds,
+                    shuffle_cv=shuffle_cv,
+                    random_state=random_state,
+                    max_models=max_models,
+                )
+
+        best_map = self.register_best_paths(
+            df,
+            paths=paths,
+            target_col=target_col,
+            name_prefix=name_prefix,
+            cv_folds=cv_folds,
+            shuffle_cv=shuffle_cv,
+            random_state=random_state,
+            reuse_path_model=reuse_path_model,
+            refit=refit,
+        )
+
+        if eval_df is not None:
+            self.evaluate_all(eval_df, label=eval_label, target_col=target_col)
+
+        model_compare = (
+            self.compare(sort_by=sort_by)
+            .reset_index()
+            .merge(
+                best_map.drop(
+                    columns=[
+                        col
+                        for col in ("aic", "aicc", "bic", "mdl", "adj_r2", "rmse", "cv_rmse", "cp")
+                        if col in best_map.columns
+                    ],
+                ),
+                on="model",
+                how="left",
+            )
+            .sort_values(["direction", "criterion", sort_by])
+        )
+
+        return paths, best_map, model_compare
 
     def evaluate_all(
         self,

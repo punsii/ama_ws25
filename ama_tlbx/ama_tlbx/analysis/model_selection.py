@@ -101,7 +101,7 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0914
     base_terms: list[str] | None,
     candidates: list[str],
     direction: Literal["forward", "backward", "stepwise"] = "forward",
-    criterion: Literal["aic", "aicc", "bic", "mdl", "cp", "adj_r2", "cv_rmse"] = "aic",
+    criterion: Literal["aic", "aicc", "bic", "mdl", "cp", "adj_r2"] = "aic",
     threshold: float = 1.0,
     cv_folds: int | None = None,
     shuffle_cv: bool = False,
@@ -137,12 +137,10 @@ def selection_path(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0914
     criterion = criterion.lower()
     if direction not in {"forward", "backward", "stepwise"}:
         raise ValueError("direction must be one of: forward, backward, stepwise")
-    if criterion not in {"aic", "aicc", "bic", "mdl", "cp", "adj_r2", "cv_rmse"}:
+    if criterion not in {"aic", "aicc", "bic", "mdl", "cp", "adj_r2"}:
         raise ValueError(
-            "criterion must be one of: aic, aicc, bic, mdl, cp, adj_r2, cv_rmse",
+            "criterion must be one of: aic, aicc, bic, mdl, cp, adj_r2",
         )
-    if criterion == "cv_rmse" and (cv_folds is None or cv_folds <= 1):
-        raise ValueError("cv_folds must be > 1 when using criterion='cv_rmse'")
     if max_models is not None and max_models <= 0:
         raise ValueError("max_models must be a positive integer when provided.")
 
