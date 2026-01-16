@@ -7,7 +7,7 @@ format:
 
 # Selecting a representative cross-sectional year
 
-The dataset is a country-year panel; repeated observations per country can induce serial dependence in residuals and violate the regression assumption of no autocorrelation. We therefore conduct the main multivariate analyses on a single cross-section and select a representative year that balances recency, completeness, and within-year typicality (Isolation Forest).
+The dataset is a country-year panel; repeated observations per country can induce serial dependence in residuals and violate the regression assumption of no autocorrelation. We therefore conduct the main multivariate analyses on a single cross-section and select a representative year that balances recency, predictor missingness, and within-year typicality (Isolation Forest).
 
 
 ```{python}
@@ -31,7 +31,7 @@ DEFAULT_PLOT_CFG.apply_global()
 # | label: load-longitudinal
 le_ds = LifeExpectancyDataset.from_csv(
     aggregate_by_country=False,
-    drop_missing_target=False,
+    drop_missing_target=True,
     resolve_nand_pred=False,
 )
 
@@ -43,121 +43,87 @@ print(f"Years: {df[LECol.YEAR].nunique()}")
 print(
     f"Year range: {df[LECol.YEAR].dt.year.min():.0f} - {df[LECol.YEAR].dt.year.max():.0f}"
 )
+
+missing_target_by_year = (
+    df.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .groupby("year")[LECol.TARGET]
+    .apply(lambda s: s.isna().sum())
+    .rename("missing_target_n")
+    .to_frame()
+)
+print(f"Missing target rows (all years): {int(missing_target_by_year.sum().iloc[0])}")
 ```
 
-Year selection is therefore driven mainly by completeness near the end of the panel.
 
-## Data completeness by year
+Since we drop ten outlier countries with a singular presence in 2013 and missing targets, the remaining panel provides full target coverage from 2000 to 2015 for 183 countries (2,988 observations). Year selection is therefore driven only by predictor missingness and within-year typicality.
 
-For each year $y$, we summarize country coverage, target availability, and average predictor missingness. To fuse these aspects into a single indicator, we define a completeness score
 
-$$
-CS_y = \frac{n^{(t)}_y}{n_y}\,(100 - m_y),
-$$
+## Predictor missingness by year
 
-where $n_y$ is the number of available country records in year $y$, $n^{(t)}_y$ is the number of countries with observed life expectancy, and $m_y$ is the mean percentage of missing values across *numeric predictors* in that year (excluding the target). Higher values indicate broader coverage and fewer missing predictors.
+For each year $y$, we summarize the mean predictor missingness as $m_y$, defined as the percent of missing values across predictors columns.
 
 ```{python}
 # | label: tbl-year-completeness
-# | tbl-cap: "Data completeness metrics by year (panel: 193 countries, 2000-2015)."
+# | tbl-cap: "Predictor missingness by year (panel: 183 countries, 2000-2015)."
 numeric_cols = le_ds.feature_columns(include_target=False)
 
 year_stats = (
     df.groupby(LECol.YEAR)
     .agg(
-        n_countries=(LECol.COUNTRY, "count"),
-        n_countries_with_target=(LECol.TARGET, lambda x: x.notna().sum()),
-        pct_missing_target=(LECol.TARGET, lambda x: x.isna().mean() * 100),
-        pct_missing_all=(
+        pred_missing_pct=(
             numeric_cols[0],
             lambda x: df.loc[x.index, numeric_cols].isna().mean().mean() * 100,
         ),
     )
     .reset_index()
-    .assign(
-        completeness_score=lambda d: d["n_countries_with_target"]
-        * (100 - d["pct_missing_all"])
-        / d["n_countries"]
-    )
-    .sort_values(by="completeness_score", ascending=False)
+    .sort_values(by="pred_missing_pct", ascending=True)
 )
-
-year_stats.set_index(LECol.YEAR)
 ```
+
 
 ```{python}
 # | label: fig-completeness-over-time
-# | fig-cap: "Completeness score and missingness over time."
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+# | fig-cap: "Predictor missingness by year."
+fig, ax = plt.subplots(1, 1, figsize=(12, 6))
 
 year_stats_time = year_stats.sort_values(LECol.YEAR).assign(
-    year=lambda d: d[LECol.YEAR].dt.year,
-    completeness_rank=lambda d: d["completeness_score"]
-    .rank(ascending=False)
-    .astype(int),
+    year=lambda d: d[LECol.YEAR].dt.year
 )
 
 sns.barplot(
     data=year_stats_time,
     x="year",
-    y="completeness_score",
-    hue="completeness_rank",
+    y="pred_missing_pct",
     alpha=0.7,
-    ax=ax1,
-    palette="coolwarm",
+    ax=ax,
+    color="steelblue",
 )
-ax1.legend()
-ax1.set_xlabel("Year")
-ax1.set_ylabel("Completeness Score (log)")
-ax1.set_title("Data Quality Score by Year")
-ax1.tick_params(axis="x", rotation=45)
-ax1.set_yscale("log")
-
-sns.lineplot(
-    data=year_stats_time.melt(
-        id_vars="year",
-        value_vars=["pct_missing_all", "pct_missing_target"],
-        var_name="Category",
-        value_name="Missing %",
-    ).replace(
-        {"pct_missing_all": "All Features", "pct_missing_target": "Life Expectancy"}
-    ),
-    x="year",
-    y="Missing %",
-    hue="Category",
-    markers=True,
-    dashes=False,
-    linewidth=2,
-    ax=ax2,
-)
-ax2.set_xlabel("Year")
-ax2.set_ylabel("Missing Data (%)")
-ax2.set_title("Missing Data Over Time")
-ax2.legend(title=None)
+ax.set_xlabel("Year")
+ax.set_ylabel("Predictor missingness (%)")
+ax.set_title("Predictor Missingness by Year")
+ax.tick_params(axis="x", rotation=45)
 
 plt.tight_layout()
 plt.show()
 ```
 
-Completeness improves from 2000 through the mid-2000s and then plateaus. Two outliers matter: 2013 has target missingness (5.18%) despite full country coverage, and 2015 shows a sharp predictor-missingness spike (13.32%) with the lowest completeness score (86.68). We therefore restrict candidates to **2007-2014**, exclude **2013** due to target missingness, and exclude **2015** due to the missingness spike.
+Predictor missingness declines from 2000 through the mid-2000s and then plateaus. The main outlier is **2015**, which shows a sharp predictor-missingness spike (13.32%). We therefore restrict candidates to **2007-2014** and exclude **2015** due to the missingness spike.
 
 ## Multivariate anomaly burden in candidate years
 
-Completeness alone does not guarantee typicality, so we estimate within-year anomaly rates using Isolation Forest on complete cases; the share of flagged countries summarizes within-year coherence (lower is more typical). Anomaly rates are stable across candidates, so completeness remains the primary discriminator.
+Predictor missingness alone does not guarantee typicality, so we estimate within-year anomaly rates using Isolation Forest on complete cases; the share of flagged countries summarizes within-year coherence (lower is more typical).
 
 ```{python}
 # | label: fig-outliers-by-year
 # | fig-cap: "Share of countries flagged as Isolation Forest anomalies (per year)."
 candidate_years = list(range(2007, 2015))
-candidate_years.remove(2013)
 
 feature_cols = le_ds.feature_columns(include_target=False)
 outlier_rows: list[dict[str, float]] = []
 for year in candidate_years:
-    df_year = df[df[LECol.YEAR].dt.year == year].copy()
-    ds_year = LifeExpectancyDataset(df=df_year)
     iso_result = (
-        ds_year.make_isolation_forest_outlier_detector(
+        LifeExpectancyDataset(df=df[df[LECol.YEAR].dt.year == year].copy())
+        .make_isolation_forest_outlier_detector(
             columns=feature_cols,
             standardized=True,
             random_state=42,
@@ -181,9 +147,6 @@ df_mean_outliers = (
     .assign(outlier_rate_pct=lambda d: d["outlier_rate"] * 100)
     .sort_values("outlier_rate")
 )
-outlier_max = df_mean_outliers["outlier_rate"].max()
-outlier_range = outlier_max - df_mean_outliers["outlier_rate"].min()
-
 sns.barplot(
     df_mean_outliers,
     x="year",
@@ -197,37 +160,29 @@ plt.show()
 
 ## Combined quality score and final recommendation
 
-To balance completeness with anomaly burden, we min-max normalize completeness and invert-normalize the anomaly rate to 0--100 within the candidate window. The combined score
+To balance predictor missingness with anomaly burden, we invert both metrics to a 0--100 "quality" scale using their absolute percentages (lower is better). The combined score
 
 $$
-Q_y = 0.6\,CS^{\star}_y + 0.4\,O^{\star}_y
+Q_y = 0.8\,M^{\star}_y + 0.2\,O^{\star}_y
 $$
 
-prioritizes completeness while still penalizing years with unusually many outliers.
+prioritizes low missingness while still penalizing years with unusually many outliers, where $M^{\star}_y$ is inverted missingness and $O^{\star}_y$ is inverted outlier rate.
 
 ```{python}
 # | label: fig-combined-year-score
-# | fig-cap: "Normalized completeness, outlier quality, and the combined score."
+# | fig-cap: "Missingness quality, outlier quality, and the combined score."
 comparison_df = (
     year_stats[year_stats[LECol.YEAR].dt.year.isin(candidate_years)]
-    .assign(year=lambda d: d[LECol.YEAR].dt.year)[["year", "completeness_score"]]
+    .assign(year=lambda d: d[LECol.YEAR].dt.year)[["year", "pred_missing_pct"]]
     .merge(
         df_mean_outliers.loc[:, ["year", "outlier_rate"]],
         on="year",
     )
     .assign(
-        completeness_norm=lambda d: (
-            d["completeness_score"] - d["completeness_score"].min()
-        )
-        / (d["completeness_score"].max() - d["completeness_score"].min())
-        * 100,
-        outlier_quality_norm=lambda d: np.where(
-            outlier_range == 0,
-            100.0,
-            (outlier_max - d["outlier_rate"]) / outlier_range * 100,
-        ),
-        combined_score=lambda d: d["completeness_norm"] * 0.6
-        + d["outlier_quality_norm"] * 0.4,
+        missingness_quality_norm=lambda d: 100 - d["pred_missing_pct"],
+        outlier_quality_norm=lambda d: 100 - d["outlier_rate"] * 100,
+        combined_score=lambda d: d["missingness_quality_norm"] * 0.8
+        + d["outlier_quality_norm"] * 0.2,
     )
 )
 
@@ -236,12 +191,12 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 sns.barplot(
     data=comparison_df.melt(
         id_vars="year",
-        value_vars=["completeness_norm", "outlier_quality_norm"],
+        value_vars=["missingness_quality_norm", "outlier_quality_norm"],
         var_name="Metric",
         value_name="Score",
     ).replace(
         {
-            "completeness_norm": "Data completeness",
+            "missingness_quality_norm": "Predictor missingness (inverted)",
             "outlier_quality_norm": "Outlier quality",
         }
     ),
@@ -252,8 +207,8 @@ sns.barplot(
 )
 ax1.set(
     xlabel="Year",
-    ylabel="Normalized score (0--100)",
-    title="Completeness vs outlier quality",
+    ylabel="Quality score (0--100)",
+    title="Predictor missingness vs outlier quality",
 )
 ax1.legend(title=None)
 ax1.grid(True, alpha=0.3, axis="y")
@@ -268,19 +223,18 @@ sns.barplot(
 )
 
 best_idx = comparison_df["combined_score"].idxmax()
-score_tol = 1.0
 score_top = comparison_df.loc[best_idx, "combined_score"]
 best_year = (
-    comparison_df[comparison_df["combined_score"] >= score_top - score_tol]
+    comparison_df[comparison_df["combined_score"] >= score_top]
     .sort_values("year")
     .iloc[-1]["year"]
 )
-best_row = comparison_df.loc[comparison_df["year"] == best_year].iloc[0]
+best_row = comparison_df.query("year == @best_year").iloc[0]
 
 ax2.set(
     xlabel="Year",
     ylabel="Combined score",
-    title="Combined quality score\n(60% completeness + 40% low outliers)",
+    title="Combined quality score\n(80% low missingness + 20% low outliers)",
 )
 ax2.grid(True, alpha=0.3, axis="y")
 sns.despine(fig=fig)
@@ -290,9 +244,9 @@ plt.show()
 print(f"\n{'=' * 70}\nFINAL YEAR RECOMMENDATION\n{'=' * 70}")
 print(f"  Best year: {int(best_year)}")
 print(f"   Combined score: {best_row['combined_score']:.1f}/100")
-print(f"   Completeness: {best_row['completeness_score']:.1f}")
-print(f"   Outlier rate: {best_row['outlier_rate']*100:.2f}%")
+print(f"   Predictor missingness: {best_row['pred_missing_pct']:.2f}%")
+print(f"   Outlier rate: {best_row['outlier_rate'] * 100:.2f}%")
 print("=" * 70)
 ```
 
-The combined score yields a narrow band of top years because completeness has plateaued and anomaly rates are tightly clustered. We therefore select the **most recent** year within one point of the maximum score, which yields **2014**. With a fixed Isolation Forest seed ($random\_state = 42$), 2014 combines the highest completeness with a typical anomaly rate, and it is used as the default cross-section in subsequent chapters (see `2_preprocessing.qmd` and `2_outlier_detection.qmd`).
+The combined score indicate minimal differences among candidate years because predictor missingness has plateaued and anomaly rates are tightly clustered. We therefore select the **most recent** year within one point of the maximum score, which yields **2014**.
