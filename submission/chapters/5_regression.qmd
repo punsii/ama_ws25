@@ -26,15 +26,22 @@ from ama_tlbx.data import LifeExpectancyDataset, LECol
 
 dataset = LifeExpectancyDataset.from_csv(
     resolve_nand_pred="carry_forward",
+    aggregate_by_country=2011,
+)
+
+dataset_latest = LifeExpectancyDataset.from_csv(
+    resolve_nand_pred="carry_forward",
     aggregate_by_country=2014,
 )
 
 assert not dataset.df.empty
+assert not dataset_latest.df.empty
 
 from ama_tlbx.analysis import (
     ColumnConcatenator,
 )
 
+# Concatenate columns for 2014 dataset
 column_concatinator = ColumnConcatenator(dataset)
 dataset2 = column_concatinator.concatenate(
     columns=[
@@ -64,9 +71,41 @@ dataset4 = column_concatinator3.concatenate(
 )
 concat_dataset = dataset4
 
+# Concatenate columns for latest dataset
+column_concatinator_latest = ColumnConcatenator(dataset_latest)
+dataset2_latest = column_concatinator_latest.concatenate(
+    columns=[
+        LECol.HEPATITIS_B,
+        LECol.POLIO,
+        LECol.DIPHTHERIA,
+    ],
+    new_column_name="Immunisation",
+)
+
+column_concatinator2_latest = ColumnConcatenator(dataset2_latest)
+dataset3_latest = column_concatinator2_latest.concatenate(
+    columns=[
+        LECol.THINNESS_1_19_YEARS,
+        LECol.THINNESS_5_9_YEARS,
+    ],
+    new_column_name="Child Thinness",
+)
+
+column_concatinator3_latest = ColumnConcatenator(dataset3_latest)
+dataset4_latest = column_concatinator3_latest.concatenate(
+    columns=[
+        LECol.INFANT_DEATHS,
+        LECol.UNDER_FIVE_DEATHS,
+    ],
+    new_column_name="Baby Deaths",
+)
+concat_dataset_latest = dataset4_latest
+
 assert not concat_dataset.df.empty
+assert not concat_dataset_latest.df.empty
 
 df = concat_dataset.df
+df_latest = concat_dataset_latest.df
 ```
 
 # Regression Analysis
@@ -293,4 +332,118 @@ pred_plot(model, LECol.HDI, df)
 In the plot for income composition of resources we see a very narrow 95% CI which would be good if it weren't for the majority of the daty lies outside of this bound meaning that this predicter alone is not sufficient to estimate life expectency.
 This is what we would expect given that the original analyis shows a `Adj. R-Squared: 0.927`. Although the trendline in the model does show a clear positive correlation between the two, which matches a sanity check.
 
+## Comparison: 2011 vs 2014 Data
 
+To understand how well regression models generalize across time, we compare three scenarios using data from 2011 ("Old") and 2014 ("Latest"). This cross-temporal analysis reveals whether the relationships between predictors and life expectancy remain stable over time.
+
+The 2011 model achieves `R² = 0.892` on its own test data, demonstrating strong predictive power for that year. The 2014 model, trained on data three years later, shows `R² = 0.786` on its test set—still a good result, explaining nearly 79% of the variance, though noticeably lower than the 2011 model. This difference could reflect changes in data quality, sample size, or the relationships between variables over time.  
+
+```{python}
+# | label: comparison-models
+# | fig-cap: "Comparing 2014 vs Latest Year Models"
+# | echo: false
+
+# Prepare old data
+reg_df_old = df.dropna(subset=[LECol.LIFE_EXPECTANCY])
+X_old = reg_df_old.select_dtypes(include=['number']).drop(columns=[LECol.LIFE_EXPECTANCY])
+y_old = reg_df_old[LECol.LIFE_EXPECTANCY]
+
+# Prepare latest year data
+reg_df_latest = df_latest.dropna(subset=[LECol.LIFE_EXPECTANCY])
+X_latest = reg_df_latest.select_dtypes(include=['number']).drop(columns=[LECol.LIFE_EXPECTANCY])
+y_latest = reg_df_latest[LECol.LIFE_EXPECTANCY]
+
+# Train/test split for both datasets
+X_train_old, X_test_old, y_train_old, y_test_old = train_test_split(
+    X_old, y_old, test_size=0.2, random_state=42
+)
+X_train_latest, X_test_latest, y_train_latest, y_test_latest = train_test_split(
+    X_latest, y_latest, test_size=0.2, random_state=42
+)
+
+# Fit old model
+model_old = LinearRegression()
+model_old.fit(X_train_old, y_train_old)
+y_pred_old_on_old = model_old.predict(X_test_old)
+
+# Fit latest year model
+model_latest = LinearRegression()
+model_latest.fit(X_train_latest, y_train_latest)
+y_pred_latest_on_latest = model_latest.predict(X_test_latest)
+
+# Apply old model to latest year data (cross-temporal prediction)
+y_pred_old_on_latest = model_old.predict(X_test_latest)
+
+# Calculate metrics for old model on its own data
+r2_old_on_old = r2_score(y_test_old, y_pred_old_on_old)
+rmse_old_on_old = np.sqrt(mean_squared_error(y_test_old, y_pred_old_on_old))
+
+# Calculate metrics for latest model on its own data
+r2_latest_on_latest = r2_score(y_test_latest, y_pred_latest_on_latest)
+rmse_latest_on_latest = np.sqrt(mean_squared_error(y_test_latest, y_pred_latest_on_latest))
+
+# Calculate metrics for old model applied to latest data
+r2_old_on_latest = r2_score(y_test_latest, y_pred_old_on_latest)
+rmse_old_on_latest = np.sqrt(mean_squared_error(y_test_latest, y_pred_old_on_latest))
+
+# Create comparison dataframe
+comparison = pd.DataFrame({
+    'Model': ['Old → Old test', 'Latest → Latest test', 'Old → Latest test'],
+    'R² Score': [r2_old_on_old, r2_latest_on_latest, r2_old_on_latest],
+    'RMSE': [rmse_old_on_old, rmse_latest_on_latest, rmse_old_on_latest],
+    'Training Size': [len(y_train_old), len(y_train_latest), len(y_train_old)],
+    'Test Size': [len(y_test_old), len(y_test_latest), len(y_test_latest)]
+})
+
+print("\nModel Performance Comparison:")
+print(comparison.to_string(index=False))
+```
+
+```{python}
+# | label: comparison-plots
+# | fig-cap: "Comparison of Model Predictions: 2014 Model on Both Datasets"
+# | echo: false
+
+fig = plt.figure(figsize=(8, 8))
+gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+ax1 = fig.add_subplot(gs[0, 0])
+ax2 = fig.add_subplot(gs[0, 1])
+ax3 = fig.add_subplot(gs[1, :])
+
+# Old model on old data
+ax1.scatter(y_test_old, y_pred_old_on_old, alpha=0.5)
+ax1.plot([y_test_old.min(), y_test_old.max()], 
+         [y_test_old.min(), y_test_old.max()], 'r--', lw=2)
+ax1.set_xlabel('Actual Life Expectancy')
+ax1.set_ylabel('Predicted Life Expectancy')
+ax1.set_title(f'Old Model on Old Data\n(R² = {r2_old_on_old:.3f})')
+ax1.grid(True, alpha=0.3)
+
+# Latest model on latest data
+ax2.scatter(y_test_latest, y_pred_latest_on_latest, alpha=0.5, color='green')
+ax2.plot([y_test_latest.min(), y_test_latest.max()], 
+         [y_test_latest.min(), y_test_latest.max()], 'r--', lw=2)
+ax2.set_xlabel('Actual Life Expectancy')
+ax2.set_ylabel('Predicted Life Expectancy')
+ax2.set_title(f'Latest Model on Latest Data\n(R² = {r2_latest_on_latest:.3f})')
+ax2.grid(True, alpha=0.3)
+
+# Old model on latest data (cross-temporal)
+ax3.scatter(y_test_latest, y_pred_old_on_latest, alpha=0.5, color='orange')
+ax3.plot([y_test_latest.min(), y_test_latest.max()], 
+         [y_test_latest.min(), y_test_latest.max()], 'r--', lw=2)
+ax3.set_xlabel('Actual Life Expectancy (2014)')
+ax3.set_ylabel('Predicted Life Expectancy (2011 Model)')
+ax3.set_title(f'Old Model on Latest Data\n(R² = {r2_old_on_latest:.3f})')
+ax3.grid(True, alpha=0.3)
+
+plt.show()
+```
+
+The comparison reveals the temporal stability of our predictive models:
+
+- **Old → Old test** (R² = 0.892): Strong baseline performance when the 2011 model predicts 2011 data
+- **Latest → Latest test** (R² = 0.786): Good performance when the 2014 model predicts 2014 data, though lower than the 2011 baseline
+- **Old → Latest test** (R² = 0.862): Surprisingly strong cross-temporal prediction—the 2011 model predicts 2014 data better than the 2014 model predicts its own data
+
+The third scenario is particularly noteworthy: the 2011 model achieves R² = 0.862 when predicting 2014 data, which exceeds the 2014 model's performance on its own test set (0.786). This suggests that the relationships between health, economic, and social factors learned from 2011 data generalized remarkably well to 2014, indicating relatively stable predictive patterns over this three-year period. The superior performance could also reflect better data quality or a larger sample size in the 2011 dataset, allowing the model to learn more robust relationships.
