@@ -275,7 +275,9 @@ The last noteworthy outliers are Ukraine, Venezuela and Bolivia. All countries w
 
 ### Predictive capabilities
 
-To test some predictive capabilites we decided to perform some single variable analyses, here we chose `income_composition_of_resources` because of it's coefficient of `7.0218`, which is the highest besides the constant which cant model anything itself.
+To test some predictive capabilities we decided to perform some single variable analyses, here we chose `Schooling` because it showed the strongest univariate relationship with life expectancy (R² = 0.601) among features that don't suffer from data leakage.
+
+**Note on HDI Exclusion**: While Human Development Index showed the highest R² (0.799) in initial analysis, it was excluded from predictive modeling because HDI is calculated using life expectancy as one of its three components. Using HDI to predict life expectancy would constitute data leakage—using the target variable to predict itself—which artificially inflates performance and produces unreliable models.
 
 ```{python}
 # | label: pred-plot-function
@@ -317,20 +319,19 @@ def pred_plot(model, feature_col, df):
     plt.show()
 ```
 ```{python}
-# | label: prediction-income-composition
-# | fig-cap: prediction_icr
+# | label: prediction-schooling
+# | fig-cap: prediction_schooling
 # | echo: false
 
-pred = f"{LECol.HDI}"
+pred = f"{LECol.SCHOOLING}"
 model = sm.formula.ols(f"life_expectancy ~ {pred}", data=df).fit()
 
 print(model.summary())
-pred_plot(model, LECol.HDI, df)
+pred_plot(model, LECol.SCHOOLING, df)
 
 ```
 
-In the plot for income composition of resources we see a very narrow 95% CI which would be good if it weren't for the majority of the daty lies outside of this bound meaning that this predicter alone is not sufficient to estimate life expectency.
-This is what we would expect given that the original analyis shows a `Adj. R-Squared: 0.927`. Although the trendline in the model does show a clear positive correlation between the two, which matches a sanity check.
+In the plot for schooling we see a reasonably strong positive relationship with life expectancy. While the 95% confidence interval is relatively narrow, there is still considerable scatter around the regression line, indicating that schooling alone explains only about 60% of the variance (R² = 0.601). This demonstrates that while education is an important predictor, other factors are necessary for a comprehensive model of life expectancy. The clear positive trend confirms our expectation that countries with higher education levels tend to have longer life expectancies.
 
 ## Comparison: 2011 vs 2014 Data
 
@@ -460,8 +461,13 @@ To evaluate how well individual features predict life expectancy, we apply the 2
 data_to_analyse = [
     LECol.ALCOHOL,
     LECol.SCHOOLING,
-    LECol.HDI,
+    LECol.BMI,
     LECol.TOTAL_EXPENDITURE,
+    LECol.PERCENTAGE_EXPENDITURE,
+    LECol.GDP,
+    LECol.POPULATION,
+    LECol.HIV_AIDS,
+    LECol.MEASLES,
     "Baby Deaths",
     "Child Thinness",
     "Immunisation",
@@ -517,17 +523,24 @@ plt.show()
 The monovariate regression analysis reveals distinct patterns in how individual features predict life expectancy:
 
 **Strong Predictors (R² > 0.5):**
-- **Human Development Index (R² = 0.799)**: The strongest single predictor, showing a clear positive linear relationship. HDI combines income, education, and health indicators, making it naturally well-correlated with life expectancy.
-- **Schooling (R² = 0.601)**: Education shows a strong positive relationship, confirming that countries with higher average years of schooling tend to have longer life expectancies.
+- **Schooling (R² = 0.601)**: The strongest valid single predictor, showing a clear positive relationship. Education consistently correlates with better health outcomes, as countries with higher average years of schooling tend to have longer life expectancies.
+
+**Note**: Human Development Index was initially observed to have the highest R² (0.799), but was excluded from analysis because it incorporates life expectancy as one of its components, creating data leakage that would artificially inflate model performance.
 
 **Moderate Predictors (0.1 < R² < 0.5):**
+- **BMI (R² = 0.381)**: Shows a positive relationship with life expectancy. Higher average BMI typically indicates better nutrition and food security.
+- **HIV/AIDS (R² = 0.388)**: Strong negative correlation—higher HIV/AIDS prevalence significantly reduces life expectancy.
+- **Percentage Expenditure (R² = 0.244)**: Healthcare spending as a percentage of GDP shows moderate predictive power.
 - **Child Thinness (R² = 0.203)**: Negative correlation as expected—higher malnutrition rates are associated with lower life expectancy, though the relationship is weaker than anticipated.
 - **Alcohol (R² = 0.175)**: Surprisingly shows a positive relationship, possibly because wealthier nations with better healthcare also have higher alcohol consumption, creating a confounding effect.
 
 **Weak Predictors (R² < 0.1):**
 - **Immunisation (R² = 0.091)**: Despite being health-critical, immunization alone shows weak predictive power in isolation. Most countries have reached high vaccination rates, reducing variance.
 - **Baby Deaths (R² = 0.044)**: Very weak relationship, likely because this raw count is influenced by population size rather than mortality rates.
+- **Measles (R² = 0.014)**: Very weak negative correlation, suggesting measles cases have minimal direct linear impact on life expectancy.
 - **Total Expenditure (R² = 0.002)**: Essentially no linear relationship, suggesting health spending alone doesn't predict outcomes—how funds are allocated matters more than the amount spent.
+- **Population (R² = 0.000)**: No linear relationship with life expectancy.
+- **GDP**: Economic output shows varying relationships depending on development level.
 
 These results highlight why multivariate models (R² = 0.892) outperform single-variable approaches. Features like Total Expenditure and Baby Deaths contribute meaningful information when combined with other predictors, even though they show minimal individual predictive power. The interaction between economic, social, and health factors provides a more complete picture than any single metric.
 
@@ -617,4 +630,105 @@ If we look at the overall positive correlation (R² = 0.175) observed in the com
 
 This demonstrates why univariate analysis can be deceptive—the positive correlation disappears when controlling for development status, revealing alcohol as a poor predictor of life expectancy within similar economic contexts.
 
-## Polyvariate Regression Analysis
+## Multivariate Regression Analysis
+
+After examining individual predictors, we now combine the selected features to build a multivariate regression model. This allows us to see if the combined predictive power exceeds what any single variable can achieve.
+
+```{python}
+# | label: multivariate-analysis
+# | fig-cap: "Multi Variable Regression Analysis using 2011 Data"
+# | echo: false
+
+
+# Prepare data with selected features
+df_multi = df[data_to_analyse + [LECol.LIFE_EXPECTANCY]].dropna()
+X_multi = df_multi[data_to_analyse]
+y_multi = df_multi[LECol.LIFE_EXPECTANCY]
+
+# Train/test split
+X_train_multi, X_test_multi, y_train_multi, y_test_multi = train_test_split(
+    X_multi, y_multi, test_size=0.2, random_state=42
+)
+
+# Fit multivariate model
+model_multi = LinearRegression()
+model_multi.fit(X_train_multi, y_train_multi)
+y_pred_multi = model_multi.predict(X_test_multi)
+
+# Calculate metrics
+r2_multi = r2_score(y_test_multi, y_pred_multi)
+rmse_multi = np.sqrt(mean_squared_error(y_test_multi, y_pred_multi))
+
+print(f"Multivariate Model Performance:")
+print(f"R² Score: {r2_multi:.4f}")
+print(f"RMSE: {rmse_multi:.4f}")
+print(f"Number of features: {len(data_to_analyse)}")
+print(f"Training samples: {len(y_train_multi)}")
+print(f"Test samples: {len(y_test_multi)}")
+
+# Create visualization with wider figure to accommodate labels
+fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+
+# Plot 1: Actual vs Predicted
+axes[0].scatter(y_test_multi, y_pred_multi, alpha=0.6, s=50)
+axes[0].plot([y_test_multi.min(), y_test_multi.max()], 
+             [y_test_multi.min(), y_test_multi.max()], 'r--', lw=2, label='Perfect Prediction')
+axes[0].set_xlabel('Actual Life Expectancy', fontsize=11)
+axes[0].set_ylabel('Predicted Life Expectancy', fontsize=11)
+axes[0].set_title(f'Multivariate Model: Actual vs Predicted\n(R² = {r2_multi:.4f})', fontsize=12, fontweight='bold')
+axes[0].grid(True, alpha=0.3)
+axes[0].legend()
+
+# Plot 2: Feature Coefficients
+coefficients = pd.DataFrame({
+    'Feature': [str(f).replace('_', ' ').title() for f in data_to_analyse],
+    'Coefficient': model_multi.coef_
+}).sort_values('Coefficient', key=abs, ascending=False)
+
+# Create bar chart with adjusted margins
+colors = ['green' if c > 0 else 'red' for c in coefficients['Coefficient']]
+bars = axes[1].barh(coefficients['Feature'], coefficients['Coefficient'], color=colors, alpha=0.7)
+
+# Add value labels on the bars with smart positioning
+for i, (idx, row) in enumerate(coefficients.iterrows()):
+    value = row['Coefficient']
+    
+    # Position labels to the right of bars to avoid overlap
+    if value < 0:
+        x_pos = max(-0.5,value - 0.15)  # Left of negative bars
+        ha = 'right'
+    else:
+        x_pos = min(0.5,value + 0.15)  # Right of positive bars
+        ha = 'left'
+    
+    axes[1].text(x_pos, i, f'{value:.2f}', 
+                va='center', ha=ha,
+                fontsize=9, fontweight='bold', color='black')
+
+axes[1].set_xlabel('Coefficient Value', fontsize=11)
+axes[1].set_title('Feature Importance (Coefficients)', fontsize=12, fontweight='bold')
+axes[1].axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+axes[1].grid(True, alpha=0.3, axis='x')
+# Adjust subplot to prevent label cutoff
+plt.subplots_adjust(left=0.15, right=0.95)
+
+plt.tight_layout()
+plt.show()
+```
+
+**Analysis:**
+
+The multivariate model using the selected features achieves `R² Score: 0.8258`, which represents a substantial improvement over the best individual predictor (Schooling with R² = 0.601). This demonstrates the power of combining multiple features:
+
+**Key Insights:**
+1. **Synergistic Effects**: Features that showed weak individual predictive power (like Total Expenditure, R² = 0.002) contribute meaningfully when combined with other variables, capturing interaction effects that aren't visible in isolation.
+
+2. **Feature Coefficients**: The bar chart shows which features have the strongest positive or negative influence on life expectancy when controlling for other variables. Green bars indicate positive relationships, red bars indicate negative relationships.
+
+3. **Model Comparison**: This focused multivariate model (`R² Score: 0.8258`) can be compared to:
+   - Best univariate model: Schooling (`R² Score: 0.601`)
+   - Full multivariate model from earlier: All features (`R² Score: 0.892`)
+   
+**Note**: HDI (R² = 0.799) was excluded from these comparisons due to data leakage, as it incorporates life expectancy in its calculation.
+   
+The difference reveals how much additional predictive power comes from features beyond our selected 7, suggesting that including more comprehensive health, economic, and demographic indicators improves the model further.
