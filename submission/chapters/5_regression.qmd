@@ -447,3 +447,174 @@ The comparison reveals the temporal stability of our predictive models:
 - **Old → Latest test** (R² = 0.862): Surprisingly strong cross-temporal prediction—the 2011 model predicts 2014 data better than the 2014 model predicts its own data
 
 The third scenario is particularly noteworthy: the 2011 model achieves R² = 0.862 when predicting 2014 data, which exceeds the 2014 model's performance on its own test set (0.786). This suggests that the relationships between health, economic, and social factors learned from 2011 data generalized remarkably well to 2014, indicating relatively stable predictive patterns over this three-year period. The superior performance could also reflect better data quality or a larger sample size in the 2011 dataset, allowing the model to learn more robust relationships.
+
+## Univariate Regression Application (2011)
+
+To evaluate how well individual features predict life expectancy, we apply the 2011 model to perform single-variable regression analysis for each key predictor. This shows the relationship between each feature and life expectancy in isolation.
+
+```{python}
+# | label: monovariate-analysis
+# | fig-cap: "Single Variable Regression Analysis using 2011 Data"
+# | echo: false
+
+data_to_analyse = [
+    LECol.ALCOHOL,
+    LECol.SCHOOLING,
+    LECol.HDI,
+    LECol.TOTAL_EXPENDITURE,
+    "Baby Deaths",
+    "Child Thinness",
+    "Immunisation",
+]
+
+# Calculate number of rows needed (2 columns per row)
+n_features = len(data_to_analyse)
+n_rows = (n_features + 1) // 2  # Ceiling division
+
+fig, axes = plt.subplots(n_rows, 2, figsize=(8, n_rows * 3))
+axes = axes.flatten()  # Flatten to make indexing easier
+
+for idx, feature in enumerate(data_to_analyse):
+    ax = axes[idx]
+    
+    # Prepare data for this feature
+    feature_name = str(feature)
+    df_feature = df[[feature_name, LECol.LIFE_EXPECTANCY]].dropna()
+    
+    # Fit single-variable model
+    X_single = df_feature[[feature_name]]
+    y_single = df_feature[LECol.LIFE_EXPECTANCY]
+    
+    model_single = LinearRegression()
+    model_single.fit(X_single, y_single)
+    y_pred_single = model_single.predict(X_single)
+    
+    # Calculate R² for this feature
+    r2_single = r2_score(y_single, y_pred_single)
+    
+    # Sort for clean line plot
+    sort_idx = X_single[feature_name].argsort()
+    X_sorted = X_single.iloc[sort_idx]
+    y_pred_sorted = y_pred_single[sort_idx]
+    
+    # Plot
+    ax.scatter(X_single, y_single, alpha=0.5, s=30)
+    ax.plot(X_sorted, y_pred_sorted, 'r-', linewidth=2, label=f'Regression Line')
+    ax.set_xlabel(feature_name.replace('_', ' ').title())
+    ax.set_ylabel('Life Expectancy')
+    ax.set_title(f'{feature_name.replace("_", " ").title()}\n(R² = {r2_single:.3f})')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+# Hide any unused subplots
+for idx in range(n_features, len(axes)):
+    axes[idx].set_visible(False)
+
+plt.tight_layout()
+plt.show()
+```
+
+The monovariate regression analysis reveals distinct patterns in how individual features predict life expectancy:
+
+**Strong Predictors (R² > 0.5):**
+- **Human Development Index (R² = 0.799)**: The strongest single predictor, showing a clear positive linear relationship. HDI combines income, education, and health indicators, making it naturally well-correlated with life expectancy.
+- **Schooling (R² = 0.601)**: Education shows a strong positive relationship, confirming that countries with higher average years of schooling tend to have longer life expectancies.
+
+**Moderate Predictors (0.1 < R² < 0.5):**
+- **Child Thinness (R² = 0.203)**: Negative correlation as expected—higher malnutrition rates are associated with lower life expectancy, though the relationship is weaker than anticipated.
+- **Alcohol (R² = 0.175)**: Surprisingly shows a positive relationship, possibly because wealthier nations with better healthcare also have higher alcohol consumption, creating a confounding effect.
+
+**Weak Predictors (R² < 0.1):**
+- **Immunisation (R² = 0.091)**: Despite being health-critical, immunization alone shows weak predictive power in isolation. Most countries have reached high vaccination rates, reducing variance.
+- **Baby Deaths (R² = 0.044)**: Very weak relationship, likely because this raw count is influenced by population size rather than mortality rates.
+- **Total Expenditure (R² = 0.002)**: Essentially no linear relationship, suggesting health spending alone doesn't predict outcomes—how funds are allocated matters more than the amount spent.
+
+These results highlight why multivariate models (R² = 0.892) outperform single-variable approaches. Features like Total Expenditure and Baby Deaths contribute meaningful information when combined with other predictors, even though they show minimal individual predictive power. The interaction between economic, social, and health factors provides a more complete picture than any single metric.
+
+### Alcohol Consumption Analysis
+
+To better understand the surprising positive correlation between alcohol consumption and life expectancy (R² = 0.175), we examine how this relationship differs between developed and developing countries.
+
+```{python}
+# | label: alcohol-by-status
+# | fig-cap: "Alcohol Consumption vs Life Expectancy by Development Status"
+# | echo: false
+
+# Split data by status for alcohol analysis
+df_alcohol = df[[LECol.ALCOHOL, LECol.LIFE_EXPECTANCY, LECol.STATUS]].dropna()
+
+# STATUS: 0 = Developing, 1 = Developed
+df_developed = df_alcohol[df_alcohol[LECol.STATUS] == 1]
+df_developing = df_alcohol[df_alcohol[LECol.STATUS] == 0]
+
+fig, ax = plt.subplots(figsize=(8, 5))
+
+has_data = False
+
+# Fit and plot developed countries
+if len(df_developed) > 1:
+    has_data = True
+    X_dev = df_developed[[LECol.ALCOHOL]]
+    y_dev = df_developed[LECol.LIFE_EXPECTANCY]
+    
+    model_dev = LinearRegression()
+    model_dev.fit(X_dev, y_dev)
+    y_pred_dev = model_dev.predict(X_dev)
+    r2_dev = r2_score(y_dev, y_pred_dev)
+    
+    # Sort for line plot
+    sort_idx = X_dev[LECol.ALCOHOL].argsort()
+    X_sorted = X_dev.iloc[sort_idx]
+    y_pred_sorted = y_pred_dev[sort_idx]
+    
+    # Plot
+    ax.scatter(X_dev, y_dev, alpha=0.6, s=50, color='blue', label='Developed', edgecolors='darkblue', linewidth=0.5)
+    ax.plot(X_sorted, y_pred_sorted, 'b-', linewidth=2.5, label=f'Developed (R²={r2_dev:.3f})')
+
+# Fit and plot developing countries
+if len(df_developing) > 1:
+    has_data = True
+    X_devg = df_developing[[LECol.ALCOHOL]]
+    y_devg = df_developing[LECol.LIFE_EXPECTANCY]
+    
+    model_devg = LinearRegression()
+    model_devg.fit(X_devg, y_devg)
+    y_pred_devg = model_devg.predict(X_devg)
+    r2_devg = r2_score(y_devg, y_pred_devg)
+    
+    # Sort for line plot
+    sort_idx = X_devg[LECol.ALCOHOL].argsort()
+    X_sorted = X_devg.iloc[sort_idx]
+    y_pred_sorted = y_pred_devg[sort_idx]
+    
+    # Plot
+    ax.scatter(X_devg, y_devg, alpha=0.6, s=50, color='orange', label='Developing', edgecolors='darkorange', linewidth=0.5)
+    ax.plot(X_sorted, y_pred_sorted, color='darkorange', linewidth=2.5, label=f'Developing (R²={r2_devg:.3f})')
+
+ax.set_xlabel('Alcohol Consumption (liters per capita)', fontsize=12)
+ax.set_ylabel('Life Expectancy (years)', fontsize=12)
+ax.set_title('Alcohol Consumption vs Life Expectancy by Development Status', fontsize=14, fontweight='bold')
+ax.grid(True, alpha=0.3)
+
+if has_data:
+    ax.legend(fontsize=10)
+
+plt.tight_layout()
+plt.show()
+```
+
+The stratified analysis provides crucial insights into the alcohol-life expectancy relationship:
+
+**Key Findings:**
+- **Developed Countries (Blue, R² = 0.019)**: The regression line is nearly flat with a slight negative slope, and the extremely low R² indicates virtually no predictive relationship. Among developed nations, alcohol consumption does not meaningfully predict life expectancy—these countries cluster at high life expectancy (mostly 75-87 years) regardless of alcohol consumption levels.
+
+- **Developing Countries (Orange, R² = 0.037)**: Shows a weak positive correlation, though still with very low R². The much wider spread in life expectancy (50-85 years) suggests that factors other than alcohol consumption are far more influential in determining outcomes.
+
+If we look at the overall positive correlation (R² = 0.175) observed in the combined data above. When separated by development status, alcohol shows almost no predictive power within each group. The apparent correlation exists primarily because:
+1. Developed countries tend to have both higher alcohol consumption and higher baseline life expectancy due to better healthcare, infrastructure, and living conditions
+2. Within developed countries, increasing alcohol consumption actually shows a slight negative trend (decline in the regression line)
+3. The relationship is driven by confounding socioeconomic factors rather than any beneficial effect of alcohol
+
+This demonstrates why univariate analysis can be deceptive—the positive correlation disappears when controlling for development status, revealing alcohol as a poor predictor of life expectancy within similar economic contexts.
+
+## Polyvariate Regression Analysis
