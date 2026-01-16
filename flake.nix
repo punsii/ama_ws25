@@ -82,20 +82,23 @@
       src = pkgs.nix-gitignore.gitignoreSource [ ] ./.;
       runDev = pkgs.writeShellApplication {
         name = "runDev";
-        text = ''${pythonEnv}/bin/python3 -m streamlit run ./src/app.py'';
+        text = "${pythonEnv}/bin/python3 -m streamlit run ./src/app.py";
       };
       runProd = pkgs.writeShellApplication {
         name = "runProd";
-        text = ''${pythonEnv}/bin/python3 -m streamlit run ${src}/src/app.py'';
+        text = "${pythonEnv}/bin/python3 -m streamlit run ${src}/src/app.py";
       };
+      QUARTO_PYTHON = "${pythonEnv}/bin/python";
+      DATA_DIR = ./_data;
 
       submission = pkgs.stdenv.mkDerivation {
         name = "submission";
         src = ./.;
+        inherit QUARTO_PYTHON DATA_DIR;
         buildPhase = ''
           cd submission
           export HOME=$(mktemp -d)
-          export QUARTO_PYTHON="${pythonEnv}/bin/python"
+          # export QUARTO_PYTHON="${pythonEnv}/bin/python"
 
           mkdir -p $out/var/www/ama/
           ${pkgs.quarto}/bin/quarto render .
@@ -129,7 +132,7 @@
           pythonEnv
           quarto
         ];
-        QUARTO_PYTHON = "${pythonEnv}/bin/python";
+        inherit QUARTO_PYTHON DATA_DIR;
       };
 
       formatter.${system} = treefmtEval.config.build.wrapper;
