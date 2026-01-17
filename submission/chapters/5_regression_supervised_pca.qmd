@@ -1,0 +1,262 @@
+---
+title: "Regression: Supervised PCA"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+execute:
+  warning: false
+  message: false
+---
+
+# Regression: Supervised PCA
+
+This chapter isolates the supervised PCA regression workflow and its interpretation.
+
+```{python}
+# | label: setup
+# | include: false
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from IPython.display import display
+
+from ama_tlbx.analysis import FeatureGroup
+from ama_tlbx.analysis.model_registry import ModelRegistry
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.plotting import plot_biplot_plotly, plot_loadings_heatmap
+from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+
+DEFAULT_PLOT_CFG.apply_global()
+np.random.seed(42)
+
+TRAIN_YEAR = 2014
+HOLDOUT_YEAR = 2011
+STATUS_DUMMY = "status_developed"
+
+def _print_formula(rhs: str, *, target: str = LECol.TARGET) -> None:
+    print(f"Formula: {target} ~ {rhs}")
+```
+
+## Data preparation
+
+```{python}
+# | label: data-prep
+# | code-fold: true
+train_ds = LifeExpectancyDataset.from_csv_updated(
+    aggregate_by_country=TRAIN_YEAR,
+    resolve_nand_pred="carry_forward",
+)
+holdout_ds = LifeExpectancyDataset.from_csv_updated(
+    aggregate_by_country=HOLDOUT_YEAR,
+    resolve_nand_pred="carry_forward",
+)
+
+train_full = train_ds.tf_and_norm().drop(columns=[LECol.YEAR])
+holdout_full = holdout_ds.tf_and_norm().drop(columns=[LECol.YEAR])
+
+if STATUS_DUMMY not in train_full.columns and LECol.STATUS in train_full.columns:
+    train_full = train_full.assign(
+        **{STATUS_DUMMY: train_full[LECol.STATUS].astype(int)}
+    )
+    holdout_full = holdout_full.assign(
+        **{STATUS_DUMMY: holdout_full[LECol.STATUS].astype(int)}
+    )
+
+registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
+```
+
+## Supervised PCA regression
+
+Follow `notebooks/project/06_linear_regression_supervised_pca.ipynb` using `ModelRegistry` and inspect retained PCs.
+
+```{python}
+# | label: supervised-pca
+# | code-fold: true
+corr_result = (
+    LifeExpectancyDataset(df=train_full)
+    .make_correlation_analyzer(standardized=False, include_target=True)
+    .fit()
+    .result()
+)
+
+strong_features = (
+    corr_result.target_correlations.assign(abs_cor=lambda d: d.correlation.abs())
+    .query("abs_cor > 0.25")
+    .feature.tolist()
+)
+strong_features = [
+    f for f in strong_features if f not in [LECol.STATUS, LECol.HDI, LECol.ADULT_MORTALITY]
+]
+print(strong_features)
+```
+
+```{python}
+# | label: supervised-pca-fit
+# | code-fold: true
+feature_groups = [FeatureGroup(name="supervised", features=strong_features)]
+
+pca_result = (
+    LifeExpectancyDataset(df=train_full)
+    .make_pca_dim_reduction_analyzer(
+        feature_groups=feature_groups,
+        standardized=True,
+        min_var_explained=1.0,
+    )
+    .fit()
+    .result()
+)
+
+pc_train = pca_result.reduced_df
+pc_holdout = pca_result.transform(holdout_full)
+
+train_pca_df = pc_train.assign(**train_full[[LECol.TARGET]])
+holdout_pca_df = pc_holdout.assign(**holdout_full[[LECol.TARGET]])
+
+rhs_pca = " + ".join(pc_train.columns.astype(str))
+_print_formula(rhs_pca)
+spca_diag = registry.fit(
+    train_pca_df,
+    name="m_spca",
+    rhs=rhs_pca,
+)
+
+sig_pcs = [
+    term
+    for term, pval in spca_diag.model.pvalues.items()
+    if term.startswith("supervised_PC") and float(pval) < 0.05
+]
+if not sig_pcs:
+    sig_pcs = pc_train.columns.tolist()
+
+rhs_pca_reduced = " + ".join(sig_pcs)
+_print_formula(rhs_pca_reduced)
+spca_reduced = registry.fit(
+    train_pca_df,
+    name="m_spca_reduced",
+    rhs=rhs_pca_reduced,
+    refit=True,
+)
+display(spca_reduced)
+```
+
+```{python}
+# | label: supervised-pca-diagnostics
+# | fig-cap: "Supervised PCA regression diagnostics."
+spca_reduced.plot_residual_diags()
+```
+
+## Holdout evaluation and bootstrap CIs
+
+```{python}
+# | label: supervised-pca-eval
+# | tbl-cap: "Holdout-year performance (2011) for supervised PCA model."
+eval_holdout = registry.evaluate_on(
+    "m_spca_reduced",
+    holdout_pca_df,
+    label=f"year{HOLDOUT_YEAR}",
+)
+eval_holdout
+```
+
+```{python}
+# | label: supervised-pca-eval-ci
+# | tbl-cap: "Bootstrap CIs for holdout metrics (B=1000)."
+eval_holdout.bootstrap_ci(n_bootstrap=1000, random_state=42)
+```
+
+```{python}
+# | label: supervised-pca-calibration
+# | fig-cap: "Holdout calibration (2011) with bootstrap 95% CIs for binned means."
+plt.figure(figsize=(7, 5))
+eval_holdout.plot_calibration(bins=10, bootstrap=300, random_state=42)
+plt.show()
+```
+
+```{python}
+# | label: supervised-pca-eval-years
+# | tbl-cap: "Supervised PCA evaluation across multiple years (same PCA mapping)."
+years_eval = [2010, 2011, 2012, 2013, 2014]
+rows = []
+for year in years_eval:
+    yr_ds = LifeExpectancyDataset.from_csv(
+        aggregate_by_country=year,
+        resolve_nand_pred="carry_forward",
+    )
+    yr_full = yr_ds.tf_and_norm().drop(columns=[LECol.YEAR])
+    if STATUS_DUMMY not in yr_full.columns and LECol.STATUS in yr_full.columns:
+        yr_full = yr_full.assign(**{STATUS_DUMMY: yr_full[LECol.STATUS].astype(int)})
+    yr_pca = pca_result.transform(yr_full)
+    yr_df = yr_pca.assign(**yr_full[[LECol.TARGET]])
+    metrics = registry.evaluate_on("m_spca_reduced", yr_df, label=f"year{year}")
+    rows.append(
+        {"year": year, "rmse": metrics.rmse, "mae": metrics.mae, "r2": metrics.r2, "n_obs": metrics.n_obs}
+    )
+
+pd.DataFrame(rows)
+```
+
+## Loadings and biplots (retained PCs)
+
+```{python}
+# | label: supervised-pca-loadings
+# | fig-cap: "Loadings heatmap for retained supervised PCs."
+group_res = pca_result.group_results[0]
+kept_pcs_prefixed = sig_pcs if sig_pcs else group_res.pc_scores.columns.tolist()
+kept_pc_names = [
+    pc.split(f"{group_res.group.name}_", 1)[1] for pc in kept_pcs_prefixed
+]
+
+plot_loadings_heatmap(
+    group_res,
+    pc_subset=kept_pc_names,
+    top_n_features=15,
+    figsize=(14, 8),
+)
+```
+
+```{python}
+# | label: supervised-pca-biplot
+# | fig-cap: "Biplot for the first two retained supervised PCs."
+pc_axes = kept_pc_names[:2] if len(kept_pc_names) >= 2 else kept_pc_names
+if pc_axes:
+    biplot_fig = plot_biplot_plotly(
+        group_res,
+        dims=min(2, len(pc_axes)),
+        pc_axes=pc_axes,
+        top_features=12,
+        color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
+    )
+    biplot_fig.show()
+```
+
+```{python}
+# | label: supervised-pca-biplot-2d
+# | fig-cap: "2D biplot for supervised PCs 4, 5."
+pc_axes_3d = [pc for pc in ["PC4", "PC5"] if pc in kept_pc_names]
+biplot_fig_3d = plot_biplot_plotly(
+    group_res,
+    dims=2,
+    pc_axes=pc_axes_3d,
+    top_features=10,
+    color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
+).show()
+```
+
+```{python}
+# | label: supervised-pca-biplot-3d
+# | fig-cap: "3D biplot for supervised PCs 5, 7, 8 (if available)."
+pc_axes_3d = [pc for pc in ["PC5", "PC7", "PC8"] if pc in kept_pc_names]
+if len(pc_axes_3d) == 3:
+    biplot_fig_3d = plot_biplot_plotly(
+        group_res,
+        dims=3,
+        pc_axes=pc_axes_3d,
+        top_features=10,
+        color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
+    )
+    biplot_fig_3d.show()
+```
+
+**Interpretation guidance:** Use the PCA loadings to interpret each significant PC. Do not interpret PC signs without loadings. Include a short paragraph linking top loadings to life expectancy dynamics.
