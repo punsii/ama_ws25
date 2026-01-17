@@ -101,6 +101,12 @@ hdr_gni = undp_df.loc[:, [UNDPCol.ISO3, UNDPCol.YEAR, UNDPCol.GNI_PC]].dropna(
 hdr_le = undp_df.loc[:, [UNDPCol.ISO3, UNDPCol.YEAR, UNDPCol.LE]].dropna(
     subset=[UNDPCol.LE],
 )
+hdr_eys = undp_df.loc[:, [UNDPCol.ISO3, UNDPCol.YEAR, UNDPCol.EYS]].dropna(
+    subset=[UNDPCol.EYS],
+)
+hdr_mys = undp_df.loc[:, [UNDPCol.ISO3, UNDPCol.YEAR, UNDPCol.MYS]].dropna(
+    subset=[UNDPCol.MYS],
+)
 ```
 
 ```{python}
@@ -241,15 +247,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-Table @tbl-hdi-metrics shows a near‑identity mapping: the slope is essentially 1 (≈ 1.01) with a small negative intercept (≈ −0.026). The mean bias is about −0.022 and the MAE ≈ 0.025, so most matched pairs differ by only a few hundredths on a [0, 1] index. The residual distribution in @fig-hdi-diff supports this conclusion: differences are concentrated around zero with a slight negative shift, consistent with the intercept and bias. In short, `income_composition_of_resources` behaves like the UNDP HDI, not a distinct income‑only index.
+Table @tbl-hdi-metrics shows a near‑identity mapping: the slope is essentially 1 (≈ 1.003) with a small negative intercept (≈ −0.024). The mean bias is about −0.022 and the MAE ≈ 0.025, so most matched pairs differ by only a few hundredths on a [0, 1] index. The residual distribution in @fig-hdi-diff supports this conclusion: differences are concentrated around zero with a slight negative shift, consistent with the intercept and bias. In short, `income_composition_of_resources` behaves like the UNDP HDI, not a distinct income‑only index.
 
 # HDI vs income-only index
 
-If `income_composition_of_resources` were only the income component, it should align more closely with the UNDP income index $I_{\text{income}}$ derived from GNIpc via:
-
-$$
-I_{\text{income}} = \frac{\ln(\mathrm{GNIpc}) - \ln(100)}{\ln(75{,}000) - \ln(100)}
-$$
+If `income_composition_of_resources` were only the income component, it should align more closely with the UNDP income index $I_{\text{income}}$ derived from GNIpc as per @eq-hdi-def.
 
 ```{python}
 # | label: hdi-disambiguation-setup
@@ -286,106 +288,26 @@ corr_tbl.style.hide(axis="index")
 
 The correlation with UNDP HDI ($r \approx 0.993$) is substantially higher than with the income‑only index ($r \approx 0.941$; Table @tbl-hdi-disambiguation). That gap is large relative to typical measurement noise and clearly favors the composite HDI interpretation. If the Kaggle variable were only the income component, we would expect a tighter match to $I_{\text{income}}$ and a noticeably weaker match to HDI; we observe the opposite.
 
-# HDI and life expectancy in the Kaggle panel
 
-Because UNDP’s HDI includes the health index $I_{\text{health}}$, which is a rescaled version of life expectancy, HDI is mechanically linked to $\mathrm{LE}$. In the Kaggle panel we therefore expect a strong positive association between `human_development_index` (HDI) and `life_expectancy`.
+# Regression of life expectancy on HDI and components
 
-```{python}
-# | label: hdi-target-setup
-# | code-fold: true
-# | output: false
-
-target_col = str(LECol.TARGET)
-hdi_col = str(LECol.HDI)
-
-le_hdi_target = (
-    le_df.loc[:, [hdi_col, target_col]]
-    .assign(hdi_raw=lambda d: pd.to_numeric(d[hdi_col], errors="coerce"))
-    .assign(hdi=lambda d: d["hdi_raw"].replace({0.0: np.nan}))
-    .assign(le=lambda d: pd.to_numeric(d[target_col], errors="coerce"))
-    .dropna(subset=["hdi", "le"])
-    .assign(i_health=lambda d: (d["le"] - 20) / (85 - 20))
-)
-
-ihealth_diag = model_registry.fit(
-    le_hdi_target,
-    rhs="hdi",
-    target_col="i_health",
-)
-ihealth_slope, ihealth_intercept = ihealth_diag.coef_and_intercept("hdi")
-r_hdi_le_diag = model_registry.fit(
-    le_hdi_target,
-    rhs="hdi",
-    target_col="le",
-)
-r_hdi_le = r_hdi_le_diag.pearson_r("hdi")
-r_hdi_ihealth = ihealth_diag.pearson_r("hdi")
-
-hdi_target_corr_tbl = pd.DataFrame(
-    {
-        "target": ["Life expectancy (years)", "ihealth (UNDP)"],
-        "n": [int(len(le_hdi_target)), int(len(le_hdi_target))],
-        "pearson_r": [r_hdi_le, r_hdi_ihealth],
-    }
-)
-
-hdi_ihealth_ols_tbl = pd.DataFrame(
-    {
-        "n": [int(ihealth_diag.metrics.n_obs or len(le_hdi_target))],
-        "pearson_r": [r_hdi_ihealth],
-        "r2": [float(ihealth_diag.metrics.r2)],
-        "ols_slope": [ihealth_slope],
-        "ols_intercept": [ihealth_intercept],
-    }
-)
-```
-
-```{python}
-# | label: tbl-hdi-target-corr
-# | tbl-cap: "Correlation between Kaggle HDI and life expectancy (and $I_{\text{health}}$), 2000–2015; zeros treated as missing."
-hdi_target_corr_tbl.style.hide(axis="index")
-```
-
-As expected, HDI is strongly correlated with life expectancy (Table @tbl-hdi-target-corr). The correlation is unchanged when transforming life expectancy to $I_{\text{health}}$, because $I_{\text{health}}$ is an affine transformation of $\mathrm{LE}$. This confirms the mechanical link: any model that uses HDI to predict life expectancy will bake in part of the target by construction.
-
-```{python}
-# | label: tbl-hdi-ihealth-ols
-# | tbl-cap: "OLS regression of $I_{\text{health}}$ on Kaggle HDI, 2000–2015; zeros treated as missing."
-hdi_ihealth_ols_tbl.style.hide(axis="index")
-```
-
-The OLS fit quantifies this link on the index scale (Table @tbl-hdi-ihealth-ols). The slope is ≈ 0.79 with an intercept ≈ 0.25, and the fit is strong (R² ≈ 0.79). While this regression is purely descriptive, it underscores that HDI should not be used as a predictor of life expectancy in multivariate models because it already embeds the health component.
-
-## Regression with $y=\mathrm{LE}$
-
-We also fit univariate OLS models with $y=\mathrm{LE}$ (life expectancy, years) and a single predictor. This is descriptive: it summarizes the bivariate association and does not adjust for confounding.
+We also fit two univariate OLS models with $y=\mathrm{LE}$, either predicted by HDI or by the income-only index $I_{\text{income}}$. This aims to qantify the respective bivariate associations.
 
 ```{python}
 # | label: hdi-le-regression-setup
 # | code-fold: true
 # | output: false
 
-le_diag_hdi = r_hdi_le_diag
+target_col = str(LECol.TARGET)
+hdi_col = str(LECol.HDI)
 
 le_kaggle_iso = (
-    le_ds.with_iso3().loc[:, [country_col, year_col, target_col, "iso3"]]
+    le_ds.with_iso3()
+    .loc[:, [country_col, year_col, target_col, "iso3"]]
     .assign(year=lambda d: d[year_col].dt.year.astype(int))
     .assign(le=lambda d: pd.to_numeric(d[target_col], errors="coerce"))
     .loc[:, ["iso3", "year", "le"]]
     .dropna(subset=["iso3", "le"])
-)
-
-le_kaggle_ihealth = (
-    le_kaggle_iso.merge(hdr_le, on=["iso3", "year"], how="inner")
-    .dropna(subset=["le", "le_undp"])
-    .assign(i_health_undp=lambda d: (d["le_undp"] - 20) / (85 - 20))
-)
-
-le_diag_ihealth = model_registry.fit(
-    le_kaggle_ihealth,
-    rhs="i_health_undp",
-    target_col="le",
-    name="le~i_health_undp",
 )
 
 le_kaggle_iincome = (
@@ -402,10 +324,16 @@ le_diag_iincome = model_registry.fit(
     name="le~i_income",
 )
 
-le_hdi_slope, le_hdi_intercept = le_diag_hdi.coef_and_intercept("hdi")
-le_ihealth_slope, le_ihealth_intercept = le_diag_ihealth.coef_and_intercept(
-    "i_health_undp",
+le_diag_hdi = model_registry.fit(
+    le_kaggle_iso.merge(hdr_hdi, on=["iso3", "year"], how="inner").dropna(
+        subset=["le", "hdi"]
+    ),
+    rhs="hdi",
+    target_col="le",
+    name="le~hdi",
 )
+
+le_hdi_slope, le_hdi_intercept = le_diag_hdi.coef_and_intercept("hdi")
 le_iincome_slope, le_iincome_intercept = le_diag_iincome.coef_and_intercept(
     "i_income",
 )
@@ -415,78 +343,31 @@ target_ols_tbl = pd.DataFrame(
         {
             "predictor": "HDI (Kaggle)",
             "n": int(le_diag_hdi.metrics.n_obs or len(le_hdi_target)),
-            "pearson_r": le_diag_hdi.pearson_r("hdi"),
             "r2": float(le_diag_hdi.metrics.r2),
-            "ols_slope": le_hdi_slope,
+            "ols_coeff": le_hdi_slope,
             "ols_intercept": le_hdi_intercept,
             "rmse_years": float(le_diag_hdi.metrics.rmse),
         },
         {
-            "predictor": r"ihealth (UNDP)",
-            "n": int(le_diag_ihealth.metrics.n_obs or len(le_kaggle_ihealth)),
-            "pearson_r": le_diag_ihealth.pearson_r("i_health_undp"),
-            "r2": float(le_diag_ihealth.metrics.r2),
-            "ols_slope": le_ihealth_slope,
-            "ols_intercept": le_ihealth_intercept,
-            "rmse_years": float(le_diag_ihealth.metrics.rmse),
-        },
-        {
             "predictor": r"GNIpc (UNDP)",
             "n": int(le_diag_iincome.metrics.n_obs or len(le_kaggle_iincome)),
-            "pearson_r": le_diag_iincome.pearson_r("i_income"),
             "r2": float(le_diag_iincome.metrics.r2),
-            "ols_slope": le_iincome_slope,
+            "ols_coeff": le_iincome_slope,
             "ols_intercept": le_iincome_intercept,
             "rmse_years": float(le_diag_iincome.metrics.rmse),
         },
     ]
-)
+).reset_index(drop=True)
 
-def _assumption_row(diag, label: str) -> dict[str, object]:
-    a = diag.assumptions
-    n_obs = int(diag.metrics.n_obs or len(diag.y))
-    max_vif = float(a.vif.max()) if hasattr(a.vif, "max") and len(a.vif) > 0 else float("nan")
-    cooks_thresh = 4 / n_obs if n_obs else float("nan")
-    cooks_exceed = int(np.sum(a.cooks_distance > cooks_thresh)) if n_obs else 0
-    return {
-        "model": label,
-        "n": n_obs,
-        "dw": float(a.durbin_watson),
-        "jb_p": float(a.jarque_bera_pvalue),
-        "shapiro_p": float(a.shapiro_pvalue),
-        "bp_p": float(a.breusch_pagan_pvalue),
-        "white_p": float(a.white_pvalue),
-        "cond_num": float(a.condition_number),
-        "max_vif": max_vif,
-        "max_cook": float(np.max(a.cooks_distance)),
-        "cooks>4/n": cooks_exceed,
-    }
-
-
-assumption_tbl = pd.DataFrame(
-    [
-        _assumption_row(le_diag_hdi, "LE ~ HDI"),
-        _assumption_row(le_diag_ihealth, "LE ~ I_health (UNDP LE)"),
-        _assumption_row(le_diag_iincome, "LE ~ I_income (UNDP GNIpc)"),
-    ],
-)
 ```
 
 ```{python}
 # | label: tbl-hdi-le-ols
 # | tbl-cap: "Univariate OLS regressions with $y=\\mathrm{LE}$ (years), 2000–2015; zeros treated as missing."
-target_ols_tbl.style.hide(axis="index")
+target_ols_tbl
 ```
 
-```{python}
-# | label: tbl-hdi-le-assumptions
-# | tbl-cap: "Assumption checks for univariate $y=\\mathrm{LE}$ models (p-values; small values indicate violations)."
-assumption_tbl.style.hide(axis="index")
-```
-
-For HDI, the fitted slope is about 51 years per HDI unit (Table @tbl-hdi-le-ols), i.e., an increase of 0.1 in HDI corresponds to $\approx 5.1$ years higher life expectancy on average. For $I_{\text{health}}$, note that it is defined from life expectancy (not from GNIpc). We therefore compute $I_{\text{health}}$ from UNDP’s life expectancy series and regress the Kaggle life expectancy on that index. As expected from the definition, the fitted slope is close to 65 and the intercept close to 20 (Table @tbl-hdi-le-ols); the fit is very strong (R² ≈ 0.93, RMSE ≈ 2.45 years) but not perfect because UNDP and Kaggle life expectancy values are not identical. Finally, the income-only index $I_{\text{income}}$ (computed from UNDP GNIpc) is also positively associated with life expectancy, but explains less variance than HDI (R² ≈ 0.65 vs 0.79; Table @tbl-hdi-le-ols), consistent with HDI combining multiple development dimensions.
-
-Table @tbl-hdi-le-assumptions summarizes diagnostics for the univariate LE models. The Durbin–Watson statistics are well below 2 (roughly 0.24–0.80), which would indicate positive autocorrelation in a time series; here it more likely reflects unmodeled structure in cross‑sectional country data (e.g., regional clustering), so we do not interpret it as serial dependence. Normality tests (Jarque–Bera and Shapiro/AD) yield $p < 0.001$ across models, consistent with heavy‑tailed or skewed residuals. The Breusch–Pagan and White tests also return $p < 0.001$, indicating heteroscedasticity and suggesting that standard errors from these univariate fits are optimistic. Condition numbers are small ($<12$) and VIFs equal 1, so multicollinearity is not a concern in these one‑predictor models. A non‑trivial number of observations exceed Cook’s $4/n$ heuristic (roughly 160–220 points), and the $I_{\text{health}}$ model in particular has a large maximum Cook’s distance ($\approx 1.28$). Practically, this implies that a handful of countries/years exert disproportionate influence; downstream multivariate models should report robust standard errors and/or check sensitivity to high‑influence points.
+Predicting life expectancy from HDI yields a strong bivariate association ($R^2 \approx 0.79$), with a fitted slope of about 51 years per HDI unit. In contrast, the income-only index $I_{\text{income}}$ (computed from UNDP GNIpc as per @eq-hdi-def) explains a significantly smaller share of variance ($R^2 \approx 0.65$). This aligns with our suspicion that `income_composition_of_resources` is HDI rather than an income-only index.
 
 # Conclusion and modeling implication
 
