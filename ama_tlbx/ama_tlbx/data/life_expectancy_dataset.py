@@ -1,9 +1,11 @@
 """Refactored dataset class focused on data loading and preprocessing only."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, Self
 from warnings import warn
 
 import pandas as pd
@@ -12,6 +14,10 @@ from ama_tlbx.utils.paths import get_dataset_path
 
 from .base_dataset import BaseDataset
 from .life_expectancy_columns import LifeExpectancyColumn as Col
+
+
+if TYPE_CHECKING:
+    from .undp_hdr_dataset import UNDPHDRDataset
 
 
 _COLNAME_DELIMS_RE = re.compile(r"[\s/\-]+")
@@ -27,6 +33,25 @@ def _normalize_col_name(name: object) -> str:
 
 
 _RAW_COLNAME_TO_ENUM: dict[str, str] = {_normalize_col_name(col.metadata().original_name): str(col) for col in Col}
+_UPDATED_COLNAME_REMAP: dict[str, str] = {
+    "alcohol_consumption": str(Col.ALCOHOL),
+    "incidents_hiv": str(Col.HIV_AIDS),
+    "gdp_per_capita": str(Col.GDP),
+    "population_mln": str(Col.POPULATION),
+    "thinness_ten_nineteen_years": str(Col.THINNESS_1_19_YEARS),
+    "thinness_five_nine_years": str(Col.THINNESS_5_9_YEARS),
+}
+_ISO3_OVERRIDES: dict[str, str] = {
+    "Bolivia (Plurinational State of)": "BOL",
+    "Democratic Republic of the Congo": "COD",
+    "Iran (Islamic Republic of)": "IRN",
+    "Micronesia (Federated States of)": "FSM",
+    "Republic of Korea": "KOR",
+    "Swaziland": "SWZ",
+    "The former Yugoslav republic of Macedonia": "MKD",
+    "Turkey": "TUR",
+    "Venezuela (Bolivarian Republic of)": "VEN",
+}
 
 
 class LifeExpectancyDataset(BaseDataset):
@@ -67,27 +92,67 @@ class LifeExpectancyDataset(BaseDataset):
 
     def with_iso3(self, *, overwrite: bool = False) -> pd.DataFrame:
         """Return a copy of the dataset with ISO3 codes derived from country names."""
-        return self.add_iso3(country_col=Col.COUNTRY, iso3_col="iso3", overwrite=overwrite)
+        df = self.df.copy()
+        country_key = str(Col.COUNTRY)
+        iso_key = "iso3"
+
+        if country_key in df.columns:
+            df = self.add_iso3(country_col=Col.COUNTRY, iso3_col=iso_key, df=df, overwrite=overwrite)
+            country_series = df[country_key]
+        elif country_key in df.index.names:
+            country_values = df.index.get_level_values(country_key) if country_key in df.index.names else df.index
+            country_series = pd.Series(country_values, index=df.index, name=country_key)
+            if iso_key not in df.columns or overwrite:
+                import pycountry  # local import to avoid hard dependency on module import
+
+                def to_iso3(name: object) -> str | None:
+                    if not isinstance(name, str) or not name.strip():
+                        return None
+                    try:
+                        return pycountry.countries.lookup(name.strip()).alpha_3
+                    except LookupError:
+                        return None
+
+                df = df.assign(iso3=country_series.map(to_iso3))
+        else:
+            raise KeyError(f"Country column '{country_key}' not found in dataset columns or index.")
+
+        if iso_key in df.columns:
+            df = df.assign(iso3=lambda d: d[iso_key].fillna(country_series.map(_ISO3_OVERRIDES)))
+        return df
 
     def merge_undp(
         self,
-        undp_dataset: "UNDPHDRDataset",
+        undp_dataset: UNDPHDRDataset | pd.DataFrame,
         *,
         how: str = "inner",
         add_iso3: bool = True,
-    ) -> pd.DataFrame:
+    ) -> Self:
         """Merge Life Expectancy data with UNDP HDR data on ISO3 + year."""
         from .undp_hdr_columns import UNDPHDRColumn as UCol
         from .undp_hdr_dataset import UNDPHDRDataset
 
-        if not isinstance(undp_dataset, UNDPHDRDataset):
-            raise TypeError("undp_dataset must be a UNDPHDRDataset instance.")
+        if not isinstance(undp_dataset, (UNDPHDRDataset, pd.DataFrame)):
+            raise TypeError("undp_dataset must be a UNDPHDRDataset instance or pd.DataFrame.")
 
         le_df = self.df
         if add_iso3:
             le_df = self.with_iso3()
-        le_df = le_df.assign(year=lambda d: d[Col.YEAR].dt.year.astype(int))
-        return le_df.merge(undp_dataset.df, on=[UCol.ISO3, UCol.YEAR], how=how)
+        if Col.YEAR not in le_df.columns:
+            raise KeyError(f"Expected '{Col.YEAR}' column for UNDP merge, but it was not found.")
+        year_series = le_df[Col.YEAR]
+        if pd.api.types.is_datetime64_any_dtype(year_series):
+            year_values = year_series.dt.year.astype(int)
+        else:
+            year_values = year_series.astype(int)
+        le_df = le_df.assign(year=year_values)
+        return self.__class__(
+            df=le_df.merge(
+                undp_dataset.df if isinstance(undp_dataset, UNDPHDRDataset) else undp_dataset,
+                on=[UCol.ISO3, UCol.YEAR],
+                how=how,
+            )
+        )
 
     @classmethod
     def from_csv(
@@ -97,7 +162,7 @@ class LifeExpectancyDataset(BaseDataset):
         aggregate_by_country: bool | str | int | Callable | None = True,
         drop_missing_target: bool = True,
         resolve_nand_pred: Literal["drop", "median", "mean", "carry_forward"] | bool = "carry_forward",
-    ) -> "LifeExpectancyDataset":
+    ) -> LifeExpectancyDataset:
         """Load and preprocess the Life Expectancy dataset from a CSV file.
 
         - Normalize column names
@@ -107,7 +172,7 @@ class LifeExpectancyDataset(BaseDataset):
             csv_path: Path to the CSV file
             aggregate_by_country: aggregate data by country (mean over years, label for other agg fn, or selected year).
                 When ``True`` (default), the most recent valid year in the dataset is used.
-            drop_missing_target: If True, drop rows with missing life expectancy values
+            drop_missing_target: If True, drop rows with missing life expectancy values. This affects 10 countries that only appear in 2013. This should generally be left as True!
             resolve_nand_pred: Strategy for remaining NaNs in predictors (applied after aggregation if enabled).
                 - "carry_forward": forward-fill missing values per country using last valid observation
                 - "drop": drop rows with any missing predictor/target
@@ -117,6 +182,12 @@ class LifeExpectancyDataset(BaseDataset):
         Returns:
             LifeExpectancyDataset instance with loaded and cleaned data
         """
+        if not drop_missing_target:
+            warn(
+                "from_csv(): drop_missing_target=False may lead to unexpected results ",
+                stacklevel=2,
+            )
+
         csv_path = get_dataset_path("life_expectancy") if csv_path is None else Path(csv_path)
         assert csv_path.exists(), f"CSV file not found at: {csv_path}"
 
@@ -132,6 +203,129 @@ class LifeExpectancyDataset(BaseDataset):
                 le_df,
                 strategy="carry_forward",
                 drop_remaining=True,
+            )
+
+        if aggregate_by_country:
+            agg_by = (
+                cls._latest_valid_year(
+                    le_df,
+                    target_col=Col.TARGET if drop_missing_target else None,
+                )
+                if isinstance(aggregate_by_country, bool)
+                else aggregate_by_country
+            )
+            le_df = cls._aggregate_by_country(
+                le_df,
+                agg_by=agg_by,
+            )
+            le_df.index.name = Col.COUNTRY
+
+        if resolve_nand_pred and not apply_carry_forward_pre_agg:
+            le_df = cls._resolve_missing_predictors(le_df, strategy=resolve_nand_pred)
+
+        return cls(df=le_df)
+
+    @classmethod
+    def from_csv_updated(
+        cls,
+        *,
+        csv_path: str | Path | None = None,
+        aggregate_by_country: bool | str | int | Callable | None = True,
+        drop_missing_target: bool = True,
+        resolve_nand_pred: Literal["drop", "median", "mean", "carry_forward"] | bool = "carry_forward",
+        merge_original_expenditure: bool = True,
+    ) -> LifeExpectancyDataset:
+        """Load and preprocess the cleaned Life Expectancy dataset (updated Kaggle version).
+
+        The updated dataset uses slightly different column names and encodes
+        development status as dummy columns. This loader maps fields to the
+        canonical schema, rescales population (millions -> absolute), and can
+        optionally merge the original Kaggle expenditure columns.
+        """
+        if not drop_missing_target:
+            warn(
+                "from_csv_updated(): drop_missing_target=False may lead to unexpected results ",
+                stacklevel=2,
+            )
+
+        csv_path = get_dataset_path("life_expectancy_updated") if csv_path is None else Path(csv_path)
+        assert csv_path.exists(), f"CSV file not found at: {csv_path}"
+
+        le_df = pd.read_csv(csv_path).pipe(cls._normalize_col_names)
+
+        has_population_mln = "population_mln" in le_df.columns
+        if "incidents_hiv" in le_df.columns:
+            warn(
+                "from_csv_updated(): mapping incidents_hiv (HIV incidence) to hiv_aids for schema "
+                "compatibility; semantics differ from HIV/AIDS deaths.",
+                stacklevel=2,
+            )
+
+        le_df = le_df.rename(columns=_UPDATED_COLNAME_REMAP)
+
+        status = None
+        if "economy_status_developed" in le_df.columns:
+            developed = pd.to_numeric(le_df["economy_status_developed"], errors="coerce")
+            status = (developed == 1).astype("Int64")
+        elif "economy_status_developing" in le_df.columns:
+            developing = pd.to_numeric(le_df["economy_status_developing"], errors="coerce")
+            status = (developing == 0).astype("Int64")
+        if status is not None:
+            le_df = le_df.assign(status=status)
+
+        le_df = le_df.drop(
+            columns=["economy_status_developed", "economy_status_developing"],
+            errors="ignore",
+        )
+
+        le_df = le_df.assign(
+            year=pd.to_datetime(le_df[Col.YEAR].astype(str), format="%Y", errors="coerce"),
+        )
+
+        non_numeric_cols = {Col.COUNTRY, Col.YEAR}
+        if "region" in le_df.columns:
+            non_numeric_cols.add("region")
+
+        numeric_cols = le_df.columns.difference(list(non_numeric_cols))
+        if len(numeric_cols) > 0:
+            le_df.loc[:, numeric_cols] = le_df.loc[:, numeric_cols].apply(
+                lambda s: pd.to_numeric(s, errors="coerce"),
+            )
+
+        if has_population_mln and Col.POPULATION in le_df.columns:
+            le_df.loc[:, Col.POPULATION] = le_df[Col.POPULATION] * 1_000_000
+
+        if merge_original_expenditure:
+            orig_df = LifeExpectancyDataset.from_csv(
+                aggregate_by_country=False,
+                drop_missing_target=False,
+                resolve_nand_pred=False,
+            ).with_iso3()
+            orig_df = orig_df.assign(year_key=lambda d: d[Col.YEAR].dt.year.astype(int))
+
+            upd_df = LifeExpectancyDataset(df=le_df).with_iso3()
+            upd_df = upd_df.assign(year_key=lambda d: d[Col.YEAR].dt.year.astype(int))
+
+            extra_cols = [Col.PERCENTAGE_EXPENDITURE, Col.TOTAL_EXPENDITURE]
+            extra = orig_df.loc[:, ["iso3", "year_key", *extra_cols]]
+            le_df = upd_df.merge(extra, on=["iso3", "year_key"], how="left").drop(
+                columns=["year_key", "iso3"],
+                errors="ignore",
+            )
+
+        if drop_missing_target:
+            le_df = le_df.dropna(subset=[Col.TARGET])
+
+        apply_carry_forward_pre_agg = resolve_nand_pred == "carry_forward" and isinstance(
+            aggregate_by_country,
+            int,
+        )
+        if apply_carry_forward_pre_agg:
+            # For year-specific slices, carry-forward needs the full panel history.
+            le_df = cls._resolve_missing_predictors(
+                le_df,
+                strategy="carry_forward",
+                drop_remaining=False,
             )
 
         if aggregate_by_country:
@@ -326,7 +520,7 @@ class LifeExpectancyDataset(BaseDataset):
             extra_include=extra_include or status_cols,
         )
 
-    def tf_and_norm(self, tf_map: dict[Col, Callable] | None = None) -> pd.DataFrame:
+    def tf_and_norm(self, features: list[Col] | None = None, tf_map: dict[Col, Callable] | None = None) -> pd.DataFrame:
         """Apply per-column transformations then z-score numeric columns.
 
         - Uses the default transforms from :class:`LifeExpectancyColumn` metadata.
@@ -334,6 +528,8 @@ class LifeExpectancyDataset(BaseDataset):
         - Never standardizes the year column or status dummy columns.
 
         Args:
+            features: Optional list of ``LifeExpectancyColumn`` to retain after
+                transformations. If ``None`` (default), all columns are kept.
             tf_map: Optional mapping from ``LifeExpectancyColumn`` to a callable that
                 accepts and returns a ``pd.Series``. Custom entries override defaults.
 
@@ -342,6 +538,9 @@ class LifeExpectancyDataset(BaseDataset):
             (mean=0, std=1) except for ``year`` and status dummy columns.
         """
         df = self.tf_only(tf_map=tf_map)
+
+        if features is not None:
+            df = df[[str(col) for col in features if str(col) in df.columns]]
 
         status_dummy_cols = [col for col in df.columns if col.startswith("status_")]
 

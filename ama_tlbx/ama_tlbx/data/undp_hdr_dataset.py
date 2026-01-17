@@ -24,7 +24,7 @@ class UNDPHDRDataset(BaseDataset):
         *,
         csv_path: str | Path | None = None,
         years: Iterable[int] = range(2000, 2016),
-    ) -> "UNDPHDRDataset":
+    ) -> UNDPHDRDataset:
         """Load UNDP HDR time series data and return long-format dataset.
 
         Args:
@@ -36,14 +36,17 @@ class UNDPHDRDataset(BaseDataset):
 
         years_set = {int(y) for y in years}
 
+        prefix_map = Col.time_series_prefix_map()
+
         def usecols(col: str) -> bool:
             c = col.lower()
-            if c in ("iso3", "country"):
+            if c in ("iso3", "country", "hdicode", "region"):
                 return True
-            for prefix in ("hdi_", "gnipc_", "le_"):
-                if not c.startswith(prefix):
+            for prefix in prefix_map:
+                prefix_token = f"{prefix}_"
+                if not c.startswith(prefix_token):
                     continue
-                suffix = c.removeprefix(prefix)
+                suffix = c.removeprefix(prefix_token)
                 if not suffix.isdigit():
                     return False
                 return int(suffix) in years_set
@@ -51,24 +54,39 @@ class UNDPHDRDataset(BaseDataset):
 
         hdr_df = pd.read_csv(csv_path, encoding="latin1", usecols=usecols).rename(columns=str.lower)
 
-        hdr_hdi = cls._to_long(hdr_df, prefix="hdi_", value_name=Col.HDI)
-        hdr_gni = cls._to_long(hdr_df, prefix="gnipc_", value_name=Col.GNI_PC, positive_only=True)
-        hdr_le = cls._to_long(hdr_df, prefix="le_", value_name=Col.LE)
+        positive_only = {str(Col.GNI_PC), str(Col.GNI_PC_F), str(Col.GNI_PC_M)}
+        series_frames: list[pd.DataFrame] = []
+        for prefix, col in prefix_map.items():
+            series_frames.append(
+                cls._to_long(
+                    hdr_df,
+                    prefix=f"{prefix}_",
+                    value_name=str(col),
+                    positive_only=str(col) in positive_only,
+                ),
+            )
 
-        base = hdr_df[["iso3", "country"]].drop_duplicates()
-        merged = (
-            hdr_hdi.merge(hdr_gni, on=[Col.ISO3, Col.YEAR], how="outer")
-            .merge(hdr_le, on=[Col.ISO3, Col.YEAR], how="outer")
-            .merge(base, on=Col.ISO3, how="left")
-        )
+        base_cols = [c for c in ["iso3", "country", "hdicode", "region"] if c in hdr_df.columns]
+        base = hdr_df[base_cols].drop_duplicates()
 
-        merged = merged.loc[:, [Col.ISO3, Col.COUNTRY, Col.YEAR, Col.HDI, Col.GNI_PC, Col.LE]]
+        if not series_frames:
+            merged = base
+        else:
+            merged = series_frames[0]
+            for frame in series_frames[1:]:
+                merged = merged.merge(frame, on=[Col.ISO3, Col.YEAR], how="outer")
+            if not base.empty:
+                merged = merged.merge(base, on=Col.ISO3, how="left")
+
+        ordered_cols = [Col.ISO3, Col.COUNTRY, Col.HDICODE, Col.REGION, Col.YEAR]
+        ordered_cols += list(prefix_map.values())
+        merged = merged.loc[:, [c for c in ordered_cols if c in merged.columns]]
+
+        numeric_cols = [str(col) for col in prefix_map.values() if str(col) in merged.columns]
         merged = merged.assign(
             **{
                 Col.YEAR: pd.to_numeric(merged[Col.YEAR], errors="coerce").astype("Int64"),
-                Col.HDI: pd.to_numeric(merged[Col.HDI], errors="coerce"),
-                Col.GNI_PC: pd.to_numeric(merged[Col.GNI_PC], errors="coerce"),
-                Col.LE: pd.to_numeric(merged[Col.LE], errors="coerce"),
+                **{col: pd.to_numeric(merged[col], errors="coerce") for col in numeric_cols},
             },
         )
         merged = merged.dropna(subset=[Col.YEAR]).assign(**{Col.YEAR: merged[Col.YEAR].astype(int)})
@@ -100,7 +118,7 @@ class UNDPHDRDataset(BaseDataset):
 
     def merge_life_expectancy(
         self,
-        le_dataset: "LifeExpectancyDataset",
+        le_dataset: LifeExpectancyDataset,
         *,
         how: str = "inner",
         add_iso3: bool = True,
@@ -117,4 +135,3 @@ class UNDPHDRDataset(BaseDataset):
             le_df = le_dataset.with_iso3()
         le_df = le_df.assign(year=lambda d: d[LECol.YEAR].dt.year.astype(int))
         return le_df.merge(self.df, on=[Col.ISO3, Col.YEAR], how=how)
-

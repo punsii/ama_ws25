@@ -7,6 +7,7 @@ __all__ = ["get_data_dir", "get_dataset_path"]
 
 _DATASET_MAP: dict[str, str] = {
     "life_expectancy": "life_expectancy_data.csv",
+    "life_expectancy_updated": "Life-Expectancy-Data-Updated.csv",
     "milk": "milk.csv",
     "siebenkampf": "siebenkampf.csv",
     "undp_hdr": "HDR25_Composite_indices_complete_time_series.csv",
@@ -25,7 +26,7 @@ def get_data_dir() -> Path:
 
 
 def get_dataset_path(
-    filename: Literal["life_expectancy", "milk", "siebenkampf", "undp_hdr"] | str,
+    filename: Literal["life_expectancy", "life_expectancy_updated", "milk", "siebenkampf", "undp_hdr"] | str,
 ) -> Path:  # noqa: PYI051
     """Get the full path to a dataset file in the data directory.
 
