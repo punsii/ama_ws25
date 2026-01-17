@@ -342,7 +342,7 @@ target_ols_tbl = pd.DataFrame(
     [
         {
             "predictor": "HDI (Kaggle)",
-            "n": int(le_diag_hdi.metrics.n_obs or len(le_hdi_target)),
+            "n": int(le_diag_hdi.metrics.n_obs),
             "r2": float(le_diag_hdi.metrics.r2),
             "ols_coeff": le_hdi_slope,
             "ols_intercept": le_hdi_intercept,
@@ -350,7 +350,7 @@ target_ols_tbl = pd.DataFrame(
         },
         {
             "predictor": r"GNIpc (UNDP)",
-            "n": int(le_diag_iincome.metrics.n_obs or len(le_kaggle_iincome)),
+            "n": int(le_diag_iincome.metrics.n_obs),
             "r2": float(le_diag_iincome.metrics.r2),
             "ols_coeff": le_iincome_slope,
             "ols_intercept": le_iincome_intercept,
