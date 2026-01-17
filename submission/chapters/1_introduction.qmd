@@ -433,13 +433,13 @@ For precise definitions and the default transforms used downstream, see the colu
 ```{python}
 # | label: tbl-intro-predictor-demography-2014
 # | tbl-cap: "Demography & mortality summary statistics (2014 cross-section; numeric features)."
-predictor_stats_2014_by_group["Demography & mortality"].round(2).rename_axis("Feature").style
+predictor_stats_2014_by_group["Demography & mortality"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
 # | label: tbl-intro-predictor-demography-panel
 # | tbl-cap: "Demography & mortality summary statistics (2000–2015 panel; numeric features)."
-predictor_stats_panel_by_group["Demography & mortality"].round(2).rename_axis("Feature").style
+predictor_stats_panel_by_group["Demography & mortality"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
@@ -485,19 +485,23 @@ plt.show()
 ```{python}
 # | label: tbl-intro-predictor-immunization-2014
 # | tbl-cap: "Immunization & infectious disease summary statistics (2014 cross-section; numeric features)."
-predictor_stats_2014_by_group["Immunization & infectious disease burden"].round(2).rename_axis("Feature").style
+predictor_stats_2014_by_group["Immunization & infectious disease burden"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
 # | label: tbl-intro-predictor-immunization-panel
 # | tbl-cap: "Immunization & infectious disease summary statistics (2000–2015 panel; numeric features)."
-predictor_stats_panel_by_group["Immunization & infectious disease burden"].round(2).rename_axis("Feature").style
+predictor_stats_panel_by_group["Immunization & infectious disease burden"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
 # | label: fig-intro-predictor-immunization
 # | fig-cap: "Immunization & infectious disease: univariate distributions (left) and scatter vs life expectancy (right) for 2014."
-group_cols = [col for col in predictor_groups["Immunization & infectious disease burden"] if col != LECol.STATUS]
+group_cols = [
+    col
+    for col in predictor_groups["Immunization & infectious disease burden"]
+    if col != LECol.STATUS
+]
 n_features = len(group_cols)
 fig, axes = plt.subplots(
     n_features,
@@ -529,6 +533,7 @@ for i, col in enumerate(group_cols):
 plt.tight_layout()
 plt.show()
 ```
+
 :::
 
 ::: {.callout-note collapse="true"}
@@ -537,13 +542,13 @@ plt.show()
 ```{python}
 # | label: tbl-intro-predictor-socioecon-2014
 # | tbl-cap: "Socio-economic & investment summary statistics (2014 cross-section; numeric features)."
-predictor_stats_2014_by_group["Socio-economic & investment"].round(2).rename_axis("Feature").style
+predictor_stats_2014_by_group["Socio-economic & investment"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
 # | label: tbl-intro-predictor-socioecon-panel
 # | tbl-cap: "Socio-economic & investment summary statistics (2000–2015 panel; numeric features)."
-predictor_stats_panel_by_group["Socio-economic & investment"].round(2).rename_axis("Feature").style
+predictor_stats_panel_by_group["Socio-economic & investment"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
@@ -589,13 +594,13 @@ plt.show()
 ```{python}
 # | label: tbl-intro-predictor-nutrition-2014
 # | tbl-cap: "Nutrition summary statistics (2014 cross-section; numeric features)."
-predictor_stats_2014_by_group["Nutrition & development status"].round(2).rename_axis("Feature").style
+predictor_stats_2014_by_group["Nutrition & development status"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
 # | label: tbl-intro-predictor-nutrition-panel
 # | tbl-cap: "Nutrition summary statistics (2000–2015 panel; numeric features)."
-predictor_stats_panel_by_group["Nutrition & development status"].round(2).rename_axis("Feature").style
+predictor_stats_panel_by_group["Nutrition & development status"].round(2).rename_axis("Feature").style.hide(axis="index")
 ```
 
 ```{python}
