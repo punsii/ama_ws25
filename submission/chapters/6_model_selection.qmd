@@ -3,140 +3,55 @@ title: "Model Selection"
 format:
   html:
     toc: true
+    code-fold: true
 ---
 
-# Motivation
-
-Model selection balances **fit** and **parsimony**: we want models that explain life expectancy well, but avoid overfitting by adding unnecessary predictors. In this project the candidate set is large and correlated (see [Correlation Analysis](3_correlation.qmd)), so transparent selection rules are essential before interpreting coefficients in [Regression Analysis](5_regression.qmd).
-
-# Criteria for model quality
-
-We summarize the criteria used in the course material (slides 17–20) and in `ama_tlbx` for linear regression model choice. The key idea is to trade off goodness of fit against model complexity. Lower values are preferred for information criteria, while higher is better for adjusted $R^2$ [@Menzel2025_ModelSelection, p. 17-20].
-
-## $R^2$ and adjusted $R^2$
-
-The coefficient of determination is
-
-$$
-R^2 = 1 - \frac{SS_{\mathrm{res}}}{SS_{\mathrm{tot}}}.
-$$
-
-Adjusted $R^2$ penalizes additional predictors (with $n$ observations and $p$ predictors):
-
-$$
-\bar{R}^2 = 1 - (1 - R^2)\frac{n - 1}{n - p - 1}.
-$$
-
-$R^2$ and even adjusted $R^2$ can still favor overly complex models; $\bar{R}^2$ can increase even when the added predictor is only weakly related to the target, so it is **not recommended as the sole selection criterion** [@Menzel2025_ModelSelection, p. 17]. For general background see [Wikipedia :: Adjusted R-squared](https://en.wikipedia.org/wiki/Coefficient_of_determination#Adjusted_R2).
-
-## Akaike and Bayesian information criteria (AIC/BIC)
-
-For a model with log-likelihood $\ell(\hat{\theta})$, $k$ estimated parameters (including the intercept), and $n$ observations, the information criteria are defined as [@Menzel2025_ModelSelection, p. 18].
-
-$$
-\mathrm{AIC} = 2k - 2\,\ell(\hat{\theta}),
-$$
-
-$$
-\mathrm{BIC} = k\ln(n) - 2\,\ell(\hat{\theta}).
-$$
-
-Both criteria are **lower-is-better** trade-offs between fit and complexity; BIC uses a stronger penalty that grows with $n$, so it tends to select smaller models than AIC. AIC is rooted in information theory, whereas BIC is related to Bayesian model comparison [@Menzel2025_ModelSelection, p. 18]. For more context, see [Wikipedia :: Akaike information criterion](https://en.wikipedia.org/wiki/Akaike_information_criterion) and [Wikipedia :: Bayesian information criterion](https://en.wikipedia.org/wiki/Bayesian_information_criterion).
-
-## Mallows' $C_p$
-
-For OLS, Mallows' $C_p$ compares a candidate model to the full model via a variance estimate from the full model:
-
-$$
-C_p = \frac{\mathrm{RSS}}{\hat{\sigma}^2} + 2k - n.
-$$
-
-Small $C_p$ values are preferred, with well-fitting models typically yielding $C_p \approx k$ (i.e., $p+1$) when underfitting is not severe [@Menzel2025_ModelSelection, p. 19]. For background, see [Wikipedia :: Mallows's Cp](https://en.wikipedia.org/wiki/Mallows%27s_Cp).
-
-# Search strategies
-
-Given $K$ candidate predictors, exhaustive search evaluates all $2^K$ subsets, which is often infeasible for moderate $K$. Greedy procedures are recommended in this setting [@Menzel2025_ModelSelection, p. 21-22].
-
-1. **Forward selection**: start with an intercept-only model, then add the predictor that yields the best improvement (e.g., lowest AIC). Stop when the criterion no longer improves or a test threshold is violated [@Menzel2025_ModelSelection, p. 21].
-2. **Backward selection**: start with the full model, then remove the predictor whose exclusion improves the criterion most. Stop when the criterion worsens or a test threshold is reached [@Menzel2025_ModelSelection, p. 22].
-3. **Stepwise selection**: combines forward and backward moves; at each iteration one can either add or drop a term based on the criterion [@Menzel2025_ModelSelection, p. 22].
-
-These strategies are instances of **stepwise regression** (see [Wikipedia :: Stepwise regression](https://en.wikipedia.org/wiki/Stepwise_regression)).
-
-# Workflow used in this project
-
-We use `ModelRegistry` as the primary interface: it runs the selection routine, stores the best model, and keeps the full selection path for reporting.
-
-```python
-from ama_tlbx.analysis.model_registry import ModelRegistry
-
-registry = ModelRegistry()
-diag = registry.fit_stepwise(
-    df,
-    base_terms=[...],
-    candidates=[...],
-    direction="stepwise",
-    criterion="aic",
-    threshold=1.0,
-    name="stepwise_aic",
-)
-
-path = registry.get("stepwise_aic").selection_path
-best_model_rhs = path.best_step().rhs
-```
-
-## Model-selection API (outward-facing features)
-
-The project exposes a small set of **high‑level, public entry points** for model selection and evaluation:
-
-- `selection_path(...)` (from `ama_tlbx.analysis.model_selection`): run a forward/backward/stepwise search and return a `SelectionPathResult` (full path + best step).
-- `ModelRegistry.fit_stepwise(...)`: run a single selection path and register the **best** model (stored with its diagnostics and `selection_path`).
-- `ModelRegistry.run_selection_grid(...)`: run a grid of directions/criteria, register the best model per path, and return `(paths, best_map, model_compare)` in one call.
-- `ModelRegistry.register_best_paths(...)`: take precomputed paths and register the best model per path (useful when you want custom path generation).
-- `ModelRegistry.compare(...)`: build a tidy comparison table of all registered models (fit metrics + any evaluations).
-- `ModelRegistry.evaluate_all(...)`: evaluate every registered model on a holdout dataset (adds `yearXXXX_*` columns in `compare`).
-- `ModelRegistry.assumptions_table(...)`: summarize assumption diagnostics (DW, JB/Shapiro, BP/White, VIF, leverage, Cook’s).
-- `collect_selection_paths(...)`: produce a tidy DataFrame of all steps across paths (for tables/plots).
-- `plot_selection_path(...)` (from `ama_tlbx.plotting.regression_plots`): visualize the evolution of a metric across steps.
-
-These are the only functions you need to reproduce the full workflow in this chapter: build paths, register best models, evaluate holdout performance, and interpret diagnostics.
-
-In the regression chapter, we **do not rely on a single criterion**. Instead, we compare AIC/BIC, adjusted $R^2$, and out-of-sample performance (year-based holdout and optional cross-validation) to balance interpretability with generalization. This aligns with the stated trade-off between model fit and complexity [@Menzel2025_ModelSelection, p. 20].
-
-# Empirical model selection on the 2014 cross-section
-
-We now run stepwise selection on the same training cross-section used in the regression chapter (2014, transformed and standardized). To reduce redundancy, we first compress correlated feature blocks via grouped PCA and then run selection on the reduced predictors.
-
-We **exclude HDI** from the candidate set, as shown in [Investigating HDI Components](2_investigate_hdi.qmd): HDI embeds life expectancy and would induce target leakage. We report an HDI‑only baseline purely as a **reference upper bound** for information criteria, not as a usable model. Table @tbl-model-selection-hdi-baseline reports its fit metrics for context.
+<style>
+  figcaption {
+    text-align: center;
+  }
+</style>
 
 ```{python}
-# | label: model-selection-setup
+# | label: init
+# | include: false
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+from sklearn.model_selection import KFold, train_test_split
+from sklearn.metrics import mean_squared_error
+import statsmodels.api as sm
+from IPython.display import Markdown, display
 
-from ama_tlbx.analysis import FeatureGroup
+from ama_tlbx.analysis import FeatureGroup, ColumnConcatenator
 from ama_tlbx.analysis.model_registry import ModelRegistry
 from ama_tlbx.analysis.model_selection import collect_selection_paths
 from ama_tlbx.data import LECol, LifeExpectancyDataset
-from ama_tlbx.plotting.regression_plots import (
-    plot_leverage_resid_cooks,
-    plot_selection_path,
-)
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
 
-np.random.seed(42)
+np.random.seed(0)
 DEFAULT_PLOT_CFG.apply_global()
 
 TRAIN_YEAR = 2014
-HOLDOUT_YEAR = 2011
-STATUS_DUMMY = "status_developed"
-MAX_MODELS = 512
+
+def get_pretty_name(col_name):
+    """Resolve pretty name from metadata or fallback to title case."""
+    try:
+        return LECol(col_name).metadata().pretty_name
+    except ValueError:
+        return col_name.replace("_", " ").title()
 ```
 
+# Motivation
+
+Model selection balances fit and complexity.
+We want models that explain life expectancy well, but avoid overfitting by adding unnecessary predictors.
+We perform selection on the transformed and standardized 2014 cross-section.
+HDI is excluded from the candidate set to prevent target leakage, as established in previous chapters.
+
 ```{python}
-# | label: model-selection-data
+# | label: data-loading
+# Define Feature Groups
 feature_groups = [
     FeatureGroup(
         name="child_mortality",
@@ -152,522 +67,491 @@ feature_groups = [
     ),
     FeatureGroup(
         name="immunization",
-        features=[LECol.DIPHTHERIA, LECol.HEPATITIS_B, LECol.MEASLES],
+        features=[
+            LECol.DIPHTHERIA,
+            LECol.HEPATITIS_B,
+            LECol.MEASLES,
+            LECol.POLIO,
+        ],
     ),
 ]
 
-reduced_columns = [feature for g in feature_groups for feature in g.features]
-
-train_ds_raw = LifeExpectancyDataset.from_csv(
+# Load and process data
+train_ds_raw = LifeExpectancyDataset.from_csv_updated(
     aggregate_by_country=TRAIN_YEAR,
     resolve_nand_pred="carry_forward",
-)
-holdout_ds_raw = LifeExpectancyDataset.from_csv(
-    aggregate_by_country=HOLDOUT_YEAR,
-    resolve_nand_pred="carry_forward",
+    drop_remaining_nan=True,
 )
 
-df_train_raw = train_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
-df_holdout_raw = holdout_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
-
-pca_groups = (
-    LifeExpectancyDataset(df=df_train_raw)
-    .make_pca_dim_reduction_analyzer(
-        feature_groups,
-        columns=reduced_columns,
-        standardized=False,
-        min_var_explained=1.0,  # retain all components
+# Apply Feature Groups
+cols_to_drop = []
+for group in feature_groups:
+    concatenator = ColumnConcatenator(train_ds_raw)
+    train_ds_raw = concatenator.concatenate(
+        columns=group.features,
+        new_column_name=group.name
     )
-    .fit()
-    .result()
+    cols_to_drop.extend(group.features)
+
+# Transform, Normalize, and drop Year
+df_train = train_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
+
+# Drop HDI and columns of the feature groups
+df_train = df_train.drop(
+    columns=["human_development_index"] + cols_to_drop, 
+    errors="ignore"
+)
+df_train = df_train.select_dtypes(include=["number"])
+
+# Define candidate predictors
+target_col = LECol.TARGET
+candidate_cols = [c for c in df_train.columns if c != target_col]
+```
+
+# Information Criteria
+
+We calculate AIC and BIC using both forward selection and backward selection.
+
+```{python}
+# | label: run-ic-selection
+registry = ModelRegistry()
+
+strategies = ["AIC_Forward", "AIC_Backward", "BIC_Forward", "BIC_Backward"]
+
+# 1. AIC Forward
+registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=candidate_cols,
+    direction="forward",
+    criterion="aic",
+    threshold=-np.inf, 
+    name="AIC_Forward",
 )
 
-pc_train = pca_groups.reduced_df.copy()
-
-# Apply the same PCA transformation to the holdout set
-pc_holdout = pca_groups.transform(df_holdout_raw).copy()
-pc_cols = pc_train.columns.tolist()
-
-df_train = pc_train.assign(**df_train_raw.drop(columns=reduced_columns))
-df_holdout = pc_holdout.assign(**df_holdout_raw.drop(columns=reduced_columns))
-
-model_cols = [
-    LECol.TARGET,
-    STATUS_DUMMY,
-    LECol.ADULT_MORTALITY,
-    LECol.HIV_AIDS,
-    LECol.TOTAL_EXPENDITURE,
-    LECol.SCHOOLING,
-    *pc_cols,
-]
-
-df_train_model = LifeExpectancyDataset(df=df_train).df.loc[:, model_cols].dropna()
-df_holdout_model = LifeExpectancyDataset(df=df_holdout).df.loc[:, model_cols].dropna()
-
-candidate_terms = [
-    str(LECol.ADULT_MORTALITY),
-    str(LECol.HIV_AIDS),
-    str(LECol.TOTAL_EXPENDITURE),
-    str(LECol.SCHOOLING),
-    *pc_cols,
-]
-base_terms = [STATUS_DUMMY]
-
-cv_folds = 5 if len(df_train_model) >= 5 else None
-```
-
-```{python}
-# | label: model-selection-hdi-baseline
-
-baseline_df = (
-    df_train_raw.loc[:, [LECol.TARGET, LECol.HDI]]
-    .dropna(subset=[LECol.TARGET, LECol.HDI])
-    .copy()
-)
-baseline_registry = ModelRegistry()
-baseline_diag = baseline_registry.fit(
-    baseline_df,
-    rhs=str(LECol.HDI),
-    target_col=str(LECol.TARGET),
-    name="baseline_hdi",
+# 2. AIC Backward
+registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=candidate_cols,
+    direction="backward",
+    criterion="aic",
+    threshold=-np.inf,
+    name="AIC_Backward",
 )
 
-baseline_metrics = pd.DataFrame(
-    {
-        "model": ["HDI-only (leakage baseline)"],
-        "n": [int(baseline_diag.metrics.n_obs or len(baseline_df))],
-        "aic": [float(baseline_diag.metrics.aic)],
-        "bic": [float(baseline_diag.metrics.bic)],
-        "adj_r2": [float(baseline_diag.metrics.adj_r2)],
-        "rmse": [float(baseline_diag.metrics.rmse)],
-    }
-)
-```
-
-```{python}
-# | label: tbl-model-selection-hdi-baseline
-# | tbl-cap: "HDI-only baseline (reference only; not used for selection)."
-baseline_metrics.style.hide(axis="index")
-```
-
-We always include `status_developed` as a baseline control (base term) and treat the remaining standardized predictors and PCA components as candidates for selection.
-
-## Stepwise paths under different criteria
-
-We compare **forward**, **backward**, and **stepwise** searches under multiple criteria (AIC, AICc, BIC, MDL, Cp, and adjusted $R^2$). Each path stores the full sequence of models and diagnostics. To allow deeper exploration while keeping runtime bounded, we cap the total number of model fits at `MAX_MODELS`.
-
-```{python}
-# | label: model-selection-paths
-criteria = ["aic", "aicc", "bic", "mdl", "cp", "adj_r2"]
-directions = ["forward", "backward", "stepwise"]
-thresholds = {
-    "aic": 1.0,
-    "aicc": 1.0,
-    "bic": 1.0,
-    "mdl": 1.0,
-    "cp": 1.0,
-    "adj_r2": 0.0,
-}
-
-registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
-paths, best_map, model_compare = registry.run_selection_grid(
-    df_train_model,
-    base_terms=base_terms,
-    candidates=candidate_terms,
-    target_col=str(LECol.TARGET),
-    directions=directions,
-    criteria=criteria,
-    thresholds=thresholds,
-    cv_folds=cv_folds,
-    shuffle_cv=True,
-    random_state=42,
-    max_models=MAX_MODELS,
-    name_prefix="best",
-    reuse_path_model=True,
-    refit=True,
-    eval_df=df_holdout_model,
-    eval_label=f"year{HOLDOUT_YEAR}",
-    sort_by="aic",
-)
-```
-
-```{python}
-# | label: tbl-model-selection-best
-# | tbl-cap: "Best step per criterion (2014 training cross-section)."
-best_steps = collect_selection_paths(paths, best_only=True)
-best_steps.sort_values(["direction", "criterion", "step"])
-```
-
-```{python}
-# | label: fig-selection-path-aic
-# | fig-cap: "Stepwise selection paths for multiple criteria."
-stepwise_labels = [label for label in paths if label.startswith("STEPWISE-")]
-stepwise_metrics = {
-    "AIC": "aic",
-    "AICC": "aicc",
-    "BIC": "bic",
-    "MDL": "mdl",
-    "CP": "cp",
-    "ADJ_R2": "adj_r2",
-}
-
-n_cols = 3
-n_rows = int(np.ceil(len(stepwise_labels) / n_cols))
-fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, max(4, 3 * n_rows)))
-axes = np.atleast_1d(axes).flatten()
-idx = 0
-for label in stepwise_labels:
-    metric_key = label.split("-")[1]
-    metric = stepwise_metrics.get(metric_key)
-    if metric is None:
-        continue
-    plot_selection_path(paths[label], metric=metric, ax=axes[idx])
-    axes[idx].set_title(f"{label} ({metric})")
-    idx += 1
-
-for ax in axes[idx:]:
-    ax.axis("off")
-
-plt.tight_layout()
-plt.show()
-```
-
-```{python}
-# | label: model-selection-path-interpretation
-# | results: asis
-from IPython.display import Markdown, display
-
-stepwise_paths = {label: path for label, path in paths.items() if label.startswith("STEPWISE-")}
-metric_map = {
-    "AIC": "aic",
-    "AICC": "aicc",
-    "BIC": "bic",
-    "MDL": "mdl",
-    "CP": "cp",
-    "ADJ_R2": "adj_r2",
-}
-
-rows = []
-for label, path in stepwise_paths.items():
-    metric_key = label.split("-")[1]
-    metric = metric_map.get(metric_key)
-    if metric is None:
-        continue
-    table = path.summary_table()
-    if metric not in table.columns:
-        continue
-    start_val = table.loc[0, metric]
-    best_val = table.loc[path.best_index, metric]
-    if metric == "adj_r2":
-        delta = best_val - start_val
-        direction = "increase"
-    else:
-        delta = start_val - best_val
-        direction = "decrease"
-    rows.append(
-        {
-            "criterion": metric_key,
-            "best_step": int(path.best_index),
-            "start": float(start_val),
-            "best": float(best_val),
-            "delta": float(delta),
-            "direction": direction,
-        },
-    )
-
-summary = pd.DataFrame(rows).sort_values("criterion")
-if not summary.empty:
-    bullets = []
-    for _, r in summary.iterrows():
-        bullets.append(
-            f"- **{r['criterion']}**: best at step {int(r['best_step'])} with a {r['direction']} of "
-            f"{r['delta']:.2f} (from {r['start']:.2f} to {r['best']:.2f})."
-        )
-    display(
-        Markdown(
-            "The stepwise paths show large early gains followed by smaller incremental improvements:\n\n"
-            + "\n".join(bullets)
-        ),
-    )
-```
-
-## Holdout evaluation of selected models
-
-We refit the best step per criterion on the 2014 training data and evaluate on the 2011 holdout year to compare generalization.
-
-```{python}
-# | label: tbl-model-selection-holdout
-# | tbl-cap: "Holdout evaluation for best-per-criterion models (2011 holdout)."
-model_compare
-```
-
-```{python}
-# | label: model-selection-compare-interpretation
-# | results: asis
-from IPython.display import Markdown, display
-
-holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
-holdout_r2_col = f"year{HOLDOUT_YEAR}_r2"
-comp = model_compare.dropna(subset=["aic", holdout_rmse_col]).copy()
-if holdout_r2_col not in comp.columns:
-    comp[holdout_r2_col] = np.nan
-
-best_row = comp.loc[comp[holdout_rmse_col].idxmin()] if not comp.empty else None
-rmse_range = (
-    (comp[holdout_rmse_col].min(), comp[holdout_rmse_col].max())
-    if not comp.empty
-    else (np.nan, np.nan)
-)
-aic_range = (comp["aic"].min(), comp["aic"].max()) if not comp.empty else (np.nan, np.nan)
-aic_rmse_corr = comp["aic"].corr(comp[holdout_rmse_col]) if not comp.empty else np.nan
-adj_holdout_corr = (
-    comp["adj_r2"].corr(comp[holdout_r2_col]) if not comp.empty else np.nan
+# 3. BIC Forward
+registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=candidate_cols,
+    direction="forward",
+    criterion="bic",
+    threshold=-np.inf,
+    name="BIC_Forward",
 )
 
-best_method = None
-best_label = None
-if best_row is not None:
-    best_method = best_row.get("label", None) or best_row.get("direction", None)
-    best_label = best_row.get("label", None)
-
-text = [
-    "Across the evaluated models, holdout RMSE spans "
-    f"{rmse_range[0]:.2f}–{rmse_range[1]:.2f} years and AIC spans "
-    f"{aic_range[0]:.1f}–{aic_range[1]:.1f}.",
-    f"The correlation between AIC and holdout RMSE is {aic_rmse_corr:.2f},"
-    " indicating that lower in‑sample information criteria generally—but not always—track better generalization.",
-    f"The correlation between adjusted $R^2$ and holdout $R^2$ is {adj_holdout_corr:.2f},"
-    " which the faceted scatterplot visualizes as a mostly monotone but noisy relationship.",
-]
-if best_row is not None:
-    text.append(
-        "The best holdout model is "
-        f"`{best_row['model']}` ({best_label or best_method}), "
-        f"with RMSE {best_row[holdout_rmse_col]:.2f} and R² {best_row[holdout_r2_col]:.2f}."
-    )
-
-if not comp.empty and "direction" in comp.columns:
-    best_by_direction = (
-        comp.sort_values(holdout_rmse_col)
-        .groupby("direction", as_index=False)
-        .first()
-    )
-    method_lines = []
-    for _, r in best_by_direction.iterrows():
-        method_lines.append(
-            f"{r['direction']}: RMSE {r[holdout_rmse_col]:.2f}, R² {r[holdout_r2_col]:.2f} ({r['model']})"
-        )
-    if method_lines:
-        text.append("Best per direction — " + "; ".join(method_lines) + ".")
-display(Markdown(" ".join(text)))
-```
-
-```{python}
-# | label: model-selection-best-summaries
-from IPython.display import Markdown, display
-
-best_candidates = model_compare.loc[model_compare["label"].notna()].copy()
-best_candidates["method"] = best_candidates["direction"]
-
-holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
-if holdout_rmse_col in best_candidates.columns:
-    best_by_method = (
-        best_candidates.sort_values(holdout_rmse_col)
-        .groupby("method", as_index=False)
-        .first()
-    )
-else:
-    best_by_method = (
-        best_candidates.sort_values("aic")
-        .groupby("method", as_index=False)
-        .first()
-    )
-
-for _, row in best_by_method.iterrows():
-    name = row["model"]
-    entry = registry.get(name)
-    display(Markdown(f"#### Best {row['method']} model: `{name}`"))
-    display(Markdown(f"*RHS:* `{entry.rhs}`"))
-    print(entry.diag.model.summary())
-```
-
-## Model comparison visuals
-
-We now visualize the trade-offs between in-sample information criteria and holdout performance using the `model_compare` table.
-
-```{python}
-# | label: fig-model-compare-scatter
-# | fig-cap: "AIC vs holdout RMSE (size = number of terms, hue = criterion)."
-holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
-
-plot_df = model_compare.dropna(subset=["aic", holdout_rmse_col]).copy()
-if "n_terms" in plot_df.columns:
-    plot_df["n_terms"] = pd.to_numeric(plot_df["n_terms"], errors="coerce")
-
-fig, ax = plt.subplots(figsize=(7.5, 5))
-sns.scatterplot(
-    data=plot_df,
-    x="aic",
-    y=holdout_rmse_col,
-    hue="criterion",
-    style="direction",
-    size="n_terms",
-    sizes=(40, 200),
-    alpha=0.75,
-    ax=ax,
+# 4. BIC Backward
+registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=candidate_cols,
+    direction="backward",
+    criterion="bic",
+    threshold=-np.inf,
+    name="BIC_Backward",
 )
-ax.set_xlabel("AIC (lower is better)")
-ax.set_ylabel(f"Holdout RMSE ({HOLDOUT_YEAR})")
-ax.set_title("Fit vs generalization trade-off")
-ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0)
-plt.tight_layout()
-plt.show()
+
+path_dict = {name: registry.get(name).selection_path for name in strategies}
+df_paths = collect_selection_paths(path_dict)
 ```
 
+The plot below shows the evolution of the information criteria.
+The vertical alignment of markers shows that for AIC and BIC, the forward and backward selection each produce very similar paths and lead to the same optimal model.
+
 ```{python}
-# | label: fig-model-compare-box
-# | fig-cap: "Holdout RMSE by criterion and search direction."
-if holdout_rmse_col in model_compare.columns:
-    fig, ax = plt.subplots(figsize=(8, 5))
-    sns.stripplot(
-        data=model_compare,
-        x="criterion",
-        y=holdout_rmse_col,
-        hue="direction",
-        dodge=True,
-        jitter=0.15,
+# | label: plot-ic-paths
+# | fig-cap: "AIC and BIC scores vs Number of Features for Forward and Backward selection."
+
+fig, ax = plt.subplots()
+
+colors = ["tab:blue", "tab:cyan", "tab:red", "tab:orange"]
+markers = ["o", "x", "o", "x"]
+
+for name, color, marker in zip(strategies, colors, markers):
+    subset = df_paths[df_paths["label"] == name].sort_values("n_terms")
+    metric_name = subset["criterion"].iloc[0]
+    
+    ax.plot(
+        subset["n_terms"],
+        subset[metric_name],
+        label=name,
+        color=color,
+        marker=marker,
         alpha=0.7,
-        ax=ax,
     )
-    ax.set_xlabel("Selection criterion")
-    ax.set_ylabel(f"Holdout RMSE ({HOLDOUT_YEAR})")
-    ax.set_title("Holdout performance by criterion and search")
-    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0)
-    plt.tight_layout()
-    plt.show()
+
+min_features = int(df_paths["n_terms"].min())
+max_features = int(df_paths["n_terms"].max())
+
+ax.set_xticks(np.arange(min_features, max_features + 1))
+ax.set_xlabel("Number of Features (n_terms)")
+ax.set_ylabel("Score (AIC / BIC)")
+ax.set_title("Information Criteria vs Model Complexity")
+ax.legend()
+ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+
+plt.show()
+```
+## Results Summary
+
+In the analysis above, AIC Forward and Backward selection converged to the identical model.
+Similarly, BIC Forward and Backward converged to the same, sparser model.
+Because the strategies converged, we report the results in a combined table below.
+The values represent the standardized coefficients from the final models.
+Features are sorted by their impact in the AIC model.
+
+```{python}
+# | label: feature-comparison-table
+
+coefficients = {}
+representative_strategies = {"AIC": "AIC_Forward", "BIC": "BIC_Forward"}
+
+for label, strategy_key in representative_strategies.items():
+    path_res = registry.get(strategy_key).selection_path
+    best_step = path_res.best_step()
+    # Normalize intercept name to "Intercept" to handle both 'const' and 'Intercept'
+    params = best_step.model.params.rename(index={"const": "Intercept"})
+    coefficients[label] = params
+
+df_compare = pd.DataFrame(coefficients)
+
+# Reindex to include ALL candidate columns + Intercept
+# ensuring we capture the intercept value correctly
+all_candidates = ["Intercept"] + candidate_cols
+df_compare = df_compare.reindex(all_candidates)
+
+df_compare["sort_key"] = df_compare["AIC"].abs().fillna(0)
+df_compare = df_compare.sort_values("sort_key", ascending=False).drop(columns="sort_key")
+
+# Format names
+def format_index(idx):
+    if idx == "Intercept":
+        return "Intercept"
+    if idx == "hiv_aids":
+        return "HIV/AIDS prevalence"
+    return get_pretty_name(idx)
+
+df_compare.index = [format_index(idx) for idx in df_compare.index]
+
+styled_table = (
+    df_compare.style
+    .format("{:.3f}", na_rep="")
+    .set_caption("Selected Features and Standardized Weights")
+)
+
+display(styled_table)
+```
+
+BIC penalizes model complexity more heavily than AIC, leading to a simpler model with only 5 features compared to the 7 features selected using AIC.
+
+## Removing Mortality Indicators
+
+'Adult Mortality' and 'Child Mortality' are by definition highly correlated with life expectancy and are the largest contributors to the previous models.
+To understand what other factors drive life expectancy, we replicate the AIC and BIC selection process after removing these features from the candidate set.
+
+```{python}
+# | label: run-ic-selection-alt
+exclude_vars = ["adult_mortality", "child_mortality"]
+alt_candidate_cols = [c for c in candidate_cols if c not in exclude_vars]
+alt_registry = ModelRegistry()
+alt_strategies = ["AIC_Forward", "AIC_Backward", "BIC_Forward", "BIC_Backward"]
+
+# 1. AIC Forward
+alt_registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=alt_candidate_cols,
+    direction="forward",
+    criterion="aic",
+    threshold=-np.inf, 
+    name="AIC_Forward",
+)
+
+# 2. AIC Backward
+alt_registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=alt_candidate_cols,
+    direction="backward",
+    criterion="aic",
+    threshold=-np.inf,
+    name="AIC_Backward",
+)
+
+# 3. BIC Forward
+alt_registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=alt_candidate_cols,
+    direction="forward",
+    criterion="bic",
+    threshold=-np.inf,
+    name="BIC_Forward",
+)
+
+# 4. BIC Backward
+alt_registry.fit_stepwise(
+    df_train,
+    base_terms=[],
+    candidates=alt_candidate_cols,
+    direction="backward",
+    criterion="bic",
+    threshold=-np.inf,
+    name="BIC_Backward",
+)
+
+alt_path_dict = {name: alt_registry.get(name).selection_path for name in alt_strategies}
+df_alt_paths = collect_selection_paths(alt_path_dict)
 ```
 
 ```{python}
-# | label: fig-model-compare-heatmap
-# | fig-cap: "Standardized comparison of top models (lower AIC/BIC/RMSE, higher adj-$R^2$)."
-metric_cols = [
-    "aic",
-    "aicc",
-    "bic",
-    "mdl",
-    "adj_r2",
-    "rmse",
-    holdout_rmse_col,
-]
-available_cols = [c for c in metric_cols if c in model_compare.columns]
-top_models = (
-    model_compare.dropna(subset=available_cols)
-    .sort_values("aic")
-    .head(12)
-    .set_index("model")
+# | label: plot-ic-paths-alt
+# | fig-cap: "Alternative Model: AIC/BIC vs Number of Features (No Mortality Indicators)."
+
+fig, ax = plt.subplots()
+
+for name, color, marker in zip(alt_strategies, colors, markers):
+    subset = df_alt_paths[df_alt_paths["label"] == name].sort_values("n_terms")
+    metric_name = subset["criterion"].iloc[0]
+    
+    ax.plot(
+        subset["n_terms"],
+        subset[metric_name],
+        label=name,
+        color=color,
+        marker=marker,
+        alpha=0.7,
+    )
+
+min_feat = int(df_alt_paths["n_terms"].min())
+max_feat = int(df_alt_paths["n_terms"].max())
+
+ax.set_xticks(np.arange(min_feat, max_feat + 1))
+ax.set_xlabel("Number of Features")
+ax.set_ylabel("Score (AIC / BIC)")
+ax.set_title("Alternative Model: Information Criteria vs Complexity")
+ax.legend()
+ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+
+plt.show()
+```
+
+## Results without Mortality Indicators
+
+```{python}
+# | label: feature-comparison-table-alt
+
+alt_coefficients = {}
+
+for label, strategy_key in representative_strategies.items():
+    if strategy_key in alt_registry.models:
+        path_res = alt_registry.get(strategy_key).selection_path
+        best_step = path_res.best_step()
+        params = best_step.model.params.rename(index={"const": "Intercept"})
+        alt_coefficients[label] = params
+
+df_alt_compare = pd.DataFrame(alt_coefficients)
+
+all_alt_candidates = ["Intercept"] + alt_candidate_cols
+df_alt_compare = df_alt_compare.reindex(all_alt_candidates)
+
+df_alt_compare["sort_key"] = df_alt_compare["AIC"].abs().fillna(0)
+df_alt_compare = df_alt_compare.sort_values("sort_key", ascending=False).drop(columns="sort_key")
+
+df_alt_compare.index = [format_index(idx) for idx in df_alt_compare.index]
+
+styled_alt_table = (
+    df_alt_compare.style
+    .format("{:.3f}", na_rep="")
+    .set_caption("Alternative Model: Selected Features and Weights")
 )
 
-scaled = top_models[available_cols].copy()
-scaled["adj_r2"] = -scaled["adj_r2"]
-scaled = (scaled - scaled.mean()) / scaled.std()
+display(styled_alt_table)
+```
 
-fig, ax = plt.subplots(figsize=(9, 5))
-sns.heatmap(
-    scaled,
-    cmap="vlag",
-    center=0,
-    linewidths=0.5,
-    ax=ax,
+This time the forward and backward selection take the exact same paths. 
+BIC still results in 5 selected features and the AIC model uses 6.
+The columns 'HIV/AIDS prevalence' as well as 'Schooling' are the most significant factors, despite not being part of the previous models.
+This indicates that they are the best replacements for the now missing 'Adult Mortality' and 'Child Mortality' respectively.
+
+# Forward selection using cross validation
+
+To evaluate the generalization performance of our models, we compare two different error estimates:
+
+1.  **In-Sample MSE**: The error on the same data used to fit the model. This naturally decreases as more variables are added.
+2.  **Cross-Validation MSE**: The average error across 10 folds. This provides a robust estimate of the test error by using all available data for both training and testing.
+
+```{python}
+# | label: cv-comparison
+# | fig-cap: "Comparison of In-Sample and 10-Fold Cross-Validation Error."
+
+# Helper function to evaluate a selection path
+def evaluate_path(train_df, test_df, candidate_cols, name):
+    reg = ModelRegistry()
+    reg.fit_stepwise(
+        train_df,
+        base_terms=[],
+        candidates=candidate_cols,
+        direction="forward",
+        criterion="aic",
+        threshold=-np.inf,
+        name=name,
+    )
+    path = reg.get(name).selection_path
+    
+    results = []
+    target = LECol.TARGET
+    
+    for step in path.steps:
+        features = step.terms
+        n_feats = len(features)
+        
+        # Prepare Design Matrices
+        if n_feats == 0:
+            X_train = sm.add_constant(pd.DataFrame(index=train_df.index))
+            X_test = sm.add_constant(pd.DataFrame(index=test_df.index))
+        else:
+            X_train = sm.add_constant(train_df[features])
+            X_test = sm.add_constant(test_df[features])
+            
+        y_train = train_df[target]
+        y_test = test_df[target]
+        
+        # Refit OLS on training data
+        model = sm.OLS(y_train, X_train).fit()
+        
+        # Predict on test (or train for in-sample)
+        preds = model.predict(X_test)
+        mse = mean_squared_error(y_test, preds)
+        
+        results.append({"n_terms": n_feats, "mse": mse})
+        
+    return pd.DataFrame(results)
+
+df_insample = evaluate_path(df_train, df_train, candidate_cols, "insample")
+
+n_folds = 10
+kf = KFold(n_splits=n_folds, shuffle=True, random_state=0)
+cv_results_list = []
+
+fold_idx = 1
+for train_idx, val_idx in kf.split(df_train):
+    cv_train = df_train.iloc[train_idx].copy()
+    cv_val = df_train.iloc[val_idx].copy()
+    
+    fold_res = evaluate_path(cv_train, cv_val, candidate_cols, f"fold_{fold_idx}")
+    fold_res["fold"] = fold_idx
+    cv_results_list.append(fold_res)
+    fold_idx += 1
+
+df_cv_all = pd.concat(cv_results_list)
+df_cv_agg = df_cv_all.groupby("n_terms")["mse"].mean().reset_index()
+
+df_insample_plot = df_insample[df_insample["n_terms"] >= 1]
+df_cv_plot = df_cv_agg[df_cv_agg["n_terms"] >= 1]
+
+fig, ax = plt.subplots()
+
+ax.plot(
+    df_insample_plot["n_terms"], 
+    df_insample_plot["mse"], 
+    color="black", 
+    label="In-sample", 
+    linewidth=1.5
 )
-ax.set_title("Z-scored metrics (adj-$R^2$ inverted)")
-plt.tight_layout()
+ax.plot(
+    df_cv_plot["n_terms"], 
+    df_cv_plot["mse"], 
+    color="purple", 
+    marker="o", 
+    label="Cross-validated",
+    markersize=4
+)
+
+# Find minimum for CV
+best_row = df_cv_plot.loc[df_cv_plot["mse"].idxmin()]
+min_n_features = int(best_row['n_terms'])
+
+ax.axvline(
+    min_n_features,
+    color="gray",
+    linestyle=":",
+    label=f"Min CV Error (p={min_n_features})",
+)
+
+# Formatting
+x_max = int(df_cv_plot["n_terms"].max())
+ax.set_xticks(np.arange(1, x_max + 1))
+ax.set_xlabel("Number of Features (n_terms)")
+ax.set_ylabel("Mean Squared Error (MSE)")
+ax.set_title("Model Selection: In-Sample vs CV (k >= 1)")
+ax.legend()
+ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+
 plt.show()
 ```
 
 ```{python}
-# | label: fig-model-compare-relplot
-# | fig-cap: "Holdout $R^2$ vs adjusted $R^2$ by search direction."
-holdout_r2_col = f"year{HOLDOUT_YEAR}_r2"
-if holdout_r2_col in model_compare.columns:
-    sns.relplot(
-        data=model_compare.dropna(subset=["adj_r2", holdout_r2_col]),
-        x="adj_r2",
-        y=holdout_r2_col,
-        hue="criterion",
-        col="direction",
-        kind="scatter",
-        height=3.5,
-        aspect=1.1,
-    )
-    plt.show()
+# | label: cv-feature-table
+full_forward_path = registry.get("AIC_Forward").selection_path
+
+models_by_k = {}
+target_k_range = range(3, 13)
+
+for step in full_forward_path.steps:
+    k = len(step.terms)
+    if k in target_k_range:
+        params = step.model.params.rename(index={"const": "Intercept"})
+        models_by_k[f"k={k}"] = params
+
+df_k_comparison = pd.DataFrame(models_by_k)
+all_candidates = ["Intercept"] + candidate_cols
+df_k_comparison = df_k_comparison.reindex(all_candidates)
+
+sort_col = "k=12"
+df_k_comparison["sort_key"] = df_k_comparison[sort_col].abs().fillna(0)
+df_k_comparison = df_k_comparison.sort_values("sort_key", ascending=False).drop(columns="sort_key")
+
+df_k_comparison.index = [format_index(idx) for idx in df_k_comparison.index]
+
+styled_k_table = (
+    df_k_comparison.style
+    .format("{:.3f}", na_rep="")
+    .set_caption("Standardized Coefficients by Model Size (k)")
+)
+
+display(styled_k_table)
 ```
 
-## Diagnostics and statistical tests for selected models
+## Results and Discussion
 
-We report residual diagnostics and classical assumption tests for a subset of the best-performing models.
+## Results and Discussion
 
-```{python}
-# | label: tbl-model-selection-tests
-# | tbl-cap: "Assumption-test p-values and diagnostics for selected best models."
-diagnostic_labels = ["STEPWISE-AIC", "STEPWISE-BIC"]
-diagnostic_models = best_map.loc[
-    best_map["label"].isin(diagnostic_labels),
-    "model",
-].tolist()
+The model selection process yields consistent results across different methodologies.
+This convergence indicates that the findings are robust and do not fluctuate drastically with different metrics.
 
-registry.assumptions_table(names=diagnostic_models)
-```
+To assess generalization, we compared the In-Sample Mean Squared Error against the 10-fold Cross-Validation statistics.
+As expected the in-sample error decreased monotonically as more variables were introduced, while the cross-validation curve showed little sign of overfitting, even when the full set of predictors was included.
 
-```{python}
-# | label: model-selection-diagnostics-interpretation
-# | results: asis
-from IPython.display import Markdown, display
+The analysis highlights a clear trade-off: while the complex model minimizes the absolute error, the simpler model with 5 features is sufficient to capture the vast majority of the predictive signal.
 
-assumptions = registry.assumptions_table(names=diagnostic_models)
-if not assumptions.empty:
-    lines = []
-    for model_name, row in assumptions.iterrows():
-        diag = registry.get(model_name).diag
-        cooks = diag.assumptions.cooks_distance
-        n_obs = len(cooks)
-        cook_thresh = 4 / n_obs if n_obs else np.nan
-        n_influential = int(np.sum(cooks > cook_thresh)) if n_obs else 0
-        lines.append(
-            f"- `{model_name}`: DW={row['durbin_watson']:.2f}, "
-            f"JB p={row['jarque_bera_pvalue']:.3f}, "
-            f"Shapiro/AD p={row['shapiro_pvalue']:.3f}, "
-            f"BP p={row['breusch_pagan_pvalue']:.3f}, "
-            f"White p={row['white_pvalue']:.3f}, "
-            f"max VIF={row['max_vif']:.2f}, "
-            f"influential points (Cook's > 4/n): {n_influential}."
-        )
-    display(
-        Markdown(
-            "Diagnostic tests and plots are interpreted jointly. "
-            "Normality is assessed via JB/Shapiro, heteroscedasticity via BP/White, "
-            "and collinearity via max VIF. Key values:\n\n"
-            + "\n".join(lines)
-        ),
-    )
-```
+The cross-validation error curve reveals distinct minima at $k=5$ and $k=7$.
+The global optimum at $k=5$ aligns with the BIC recommendation, while the local optimum at $k=7$ corresponds to the AIC selection.
+This alignment between different methods and information criteria strengthens the validity of these candidate models.
 
-```{python}
-# | label: fig-model-selection-diags
-# | fig-cap: "Diagnostics for the stepwise AIC and BIC models."
-fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-
-for row, model_name in enumerate(diagnostic_models):
-    diag = registry.get(model_name).diag
-    diag.plot_residuals_vs_fitted(ax=axes[row, 0])
-    diag.plot_qq(ax=axes[row, 1])
-    diag.plot_scale_location(ax=axes[row, 2])
-    plot_leverage_resid_cooks(diag, ax=axes[row, 3])
-    axes[row, 0].set_ylabel(f"{model_name}\\nResiduals vs fitted")
-
-plt.tight_layout()
-plt.show()
-```
-
-# Caveats and interpretation
-
-**Global criteria can yield models with non-significant coefficients**; these criteria minimize prediction error and are not equivalent to hypothesis tests [@Menzel2025_ModelSelection, p. 23]. In addition, stepwise procedures can introduce selection bias, so uncertainty in the final model should be interpreted cautiously; see [Wikipedia :: Stepwise regression](https://en.wikipedia.org/wiki/Stepwise_regression). For this reason, we treat stepwise selection as **exploratory** and confirm decisions with holdout performance and diagnostic checks in the regression chapter.
+Ultimately, the choice of the optimal model depends on the specific use case.
+For maximum predictive accuracy, it is logical to retain highly correlated variables such as adult mortality and employ the larger AIC-favored model.
+However, to understand the underlying drivers of life expectancy, the smaller BIC-favored model is preferable for two key reasons.
+First, its simplicity isolates the most critical factors, making the relationships easier to interpret.
+Second, excluding confounding mortality statistics prevents circular reasoning, allowing us to focus on the socio-economic factors.

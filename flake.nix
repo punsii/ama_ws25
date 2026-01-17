@@ -57,6 +57,7 @@
           ipympl
           ipython
           jupyter
+          jupyter-cache
           jupyterlab
           jupyterlab-widgets
           matplotlib
@@ -77,6 +78,7 @@
           statsmodels
           streamlit
           sympy
+          tabulate
         ];
       pythonEnv = python.withPackages pyPkgs;
 
@@ -123,7 +125,7 @@
       };
 
       packages.${system} = rec {
-        inherit pythonEnv submission;
+        inherit pythonEnv submission ama_tlbx;
         default = submission;
       };
 
