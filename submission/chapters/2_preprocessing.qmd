@@ -21,11 +21,93 @@ Figure @fig-preproc-flow summarizes the pipeline executed by `LifeExpectancyData
 
 The workflow is driven by a schema-as-code layer: all variables are accessed via the `LECol` enum (with `ColumnMetadata`), which defines original names, dtypes, display labels, and default transformations. This makes preprocessing choices explicit and reproducible across chapters.
 
+<!-- ## Known issues in the raw Kaggle dataset
+
+The raw Life Expectancy panel is widely used but has **documented inconsistencies and missingness**. The most important issues for our analysis are:
+
+1. **Substantial predictor missingness** (e.g., population, GDP, HepB coverage, schooling), which reduces the complete‑case sample size.
+2. **Ambiguous or inconsistent units** in several columns. Example: `population` behaves like a mix of absolute counts and scaled values for some countries; `measles` and child deaths look like **counts**, not rates, in many rows.
+3. **Variable definitions differ across sources** (e.g., our `hiv_aids` is a death-related measure, while some cleaned datasets use HIV *incidence* per 1,000). These are not interchangeable.
+4. **Country naming inconsistencies** (e.g., “Bolivia (Plurinational State of)” vs “Bolivia”) which complicate merges with external datasets.
+
+These issues are why we make missingness and unit checks explicit in this chapter and treat all downstream inference as descriptive.
+
+## Reproducing a “cleaned & imputed” version (conceptual recipe)
+
+The updated dataset you provided uses **external sources** (WDI, WHO, OWID), **country/region reclassification**, and **imputation**. If we want to reproduce a similar cleaning pipeline (without switching datasets), the steps would be:
+
+1. **Source updates by variable**
+   - Replace *life expectancy* with WHO series.
+   - Replace *GDP per capita* and *population* with World Bank series (note: their units differ; WDI population is absolute counts, the updated dataset stores population in millions).
+   - Replace *schooling* with OWID (mean years of schooling).
+   - Replace *vaccination coverage* and *mortality* metrics with WHO indicator series.
+   - Replace *HIV variable* consistently (decide on **deaths** vs **incidence** and stick to one).
+
+2. **Country name and ISO3 normalization**
+   - Create a deterministic ISO3 mapping (manual overrides for known mismatches).
+   - Use ISO3 as the merge key across sources.
+
+3. **Imputation policy**
+   - For intermittent gaps: **nearest 3‑year average** (as described in the updated dataset).
+   - For entirely missing series per country: **regional averages**.
+   - Drop countries with **>4 missing columns** (or document the threshold and sensitivity).
+
+4. **Document units and transformations**
+   - Align units (e.g., population in absolute counts vs millions) before merging.
+   - Explicitly record any re‑scaling in metadata (`LECol`).
+
+We do **not** apply this full pipeline in the current report to avoid mixing sources mid‑analysis. Instead, we keep the Kaggle dataset as the primary source and report missingness, transformations, and sensitivity checks transparently. -->
+
 ## Missing Values and analysis views
 
-Missingness in the outcome (`life_expectancy`) is handled separately from missingness in predictors. In the raw panel, 10 of 2,938 country-year rows ($ \approx $ 0.34%) have missing life expectancy; these correspond to 10 countries that appear only once in the dataset. When `drop_missing_target=True`, these rows (and countries) are removed before any further processing.
+In the raw panel, 10 of 2,938 country-year rows have missing life expectancy; these correspond to 10 countries that appear only once in the dataset. When `drop_missing_target=True`, these rows (and countries) are removed before any further processing.
+
+::: {.callout-note collapse="true"}
+### Additional countries in 2013
+
+```{python}
+# | include: false
+import pandas as pd
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+```
+
+```{python}
+# | label: tbl-extra-2013-countries
+# | tbl-cap: "Countries present in 2013 but absent from the 183-country baseline (n=10)."
+panel = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=False,
+    resolve_nand_pred=False,
+    drop_missing_target=False,
+).df
+
+countries_by_year = (
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .query("year != 2013")
+    .groupby("year")[LECol.COUNTRY]
+    .apply(lambda s: frozenset(s.dropna().unique()))
+)
+baseline_countries = countries_by_year.value_counts().idxmax()
+
+countries_2013 = set(
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .query("year == 2013")[LECol.COUNTRY]
+    .dropna()
+    .unique()
+)
+extra_countries_2013 = sorted(countries_2013 - set(baseline_countries))
+
+panel.query("country in @extra_countries_2013 and year == 2013").set_index(
+    LECol.COUNTRY
+)
+```
+
+Given the singular appearance of these ten countries in 2013 only, their missing life expectancy values and addtional high degree of predictor missingness, we exclude them from all analyses by default.
+:::
 
 Predictor missingness is controlled by `resolve_nand_pred`. Some analyses require a fully observed predictor matrix (e.g., PCA, standardized regression), while others can operate on partially observed predictors (e.g., univariate plots of the target). We therefore distinguish the raw 2014 cross-section from complete-case and imputed variants, and we report the effective sample size in each chapter.
+<!-- Population of some countries like Israel, Srilanka are in thousands, while other in millions. -->
+
+
 
 ## Dataset snapshots
 
@@ -33,6 +115,7 @@ Predictor missingness is controlled by `resolve_nand_pred`. Some analyses requir
 # | label: tbl-dataset-snapshots
 # | tbl-cap: "Dataset snapshots under alternative missing-value strategies."
 import pandas as pd
+from matplotlib import pyplot as plt
 
 from ama_tlbx.data import LifeExpectancyDataset
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
@@ -42,17 +125,14 @@ DEFAULT_PLOT_CFG.apply_global()
 snapshots = {
     "panel_raw": LifeExpectancyDataset.from_csv(
         aggregate_by_country=False,
-        drop_missing_target=False,
         resolve_nand_pred=False,
     ).df,
     "xs_2014_raw": LifeExpectancyDataset.from_csv(
         aggregate_by_country=2014,
-        drop_missing_target=False,
         resolve_nand_pred=False,
     ).df,
     "xs_2014_imputed": LifeExpectancyDataset.from_csv(
         aggregate_by_country=2014,
-        drop_missing_target=True,
         resolve_nand_pred="carry_forward",
     ).df,
 }
@@ -76,12 +156,157 @@ for name, df in snapshots.items():
     pd.DataFrame(summary_rows)
     .sort_values("view")
     .assign(pct_missing_numeric=lambda d: d.pct_missing_numeric.round(2))
-    .style.hide(axis="index")
+    .style
     .format({"pct_missing_numeric": "{:.2f}%"})
 )
 ```
 
-@tbl-dataset-snapshots highlights the trade-off between sample size and missing-value handling. In the raw panel, numeric predictors contain 4.36% missing entries; dropping missing targets removes 10 country-year rows and reduces country coverage from 193 to 183 because those countries occur only once. For the 2014 cross-section, life expectancy is observed for all 183 countries, but 2.81% of numeric predictor entries are missing. A complete-case strategy on predictors retains 131 countries (a loss of 52, $\approx$28%), whereas within-year mean imputation retains all 183 countries and yields a fully observed predictor matrix. For the longitudinal panel, the carry-forward strategy (within-country forward fill) retains fewer countries (133) but preserves more country-year observations than complete-case deletion, while global mean imputation maximizes coverage (183 countries, 2,928 country-years) at the cost of stronger assumptions about missingness.
+<!-- QUESTION(PROF): How should we deal with the missing values in predictors when analyzing the dataset? -->
+@tbl-dataset-snapshots highlights the trade-off between sample size and missing-value handling. In the raw panel, numeric predictors contain 4.36% missing entries; dropping missing targets removes 10 country-year rows and reduces country coverage from 193 to 183 because those countries occur only once in 2013. For the 2014 cross-section, life expectancy is observed for all 183 countries, and predictor missingness is modest on the numeric scale (2.81% in the raw cross-section). Carry-forward reduces this only slightly (2.71%), because the remaining missing values are structurally absent in the historical panel (see below). When a fully observed predictor matrix is required, complete-case analyses reduce the 2014 sample to $n=133$.
+
+## Structural missingness after carry-forward
+
+Carry-forward imputation only fills values that exist in earlier years for the same country. To quantify the remaining gaps, we apply carry-forward to the full panel and then inspect the 2014 slice.
+
+```{python}
+# | label: tbl-missing-2014
+# | tbl-cap: "Predictors still missing in the 2014 cross-section after carry-forward (counts across 183 countries)."
+import numpy as np
+import pandas as pd
+
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+
+panel = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=False,
+    resolve_nand_pred=False,
+).df
+
+filled = LifeExpectancyDataset._resolve_missing_predictors(
+    panel,
+    strategy="carry_forward",
+    drop_remaining=False,
+)
+
+df_2014 = filled.assign(year=lambda d: d[LECol.YEAR].dt.year).query("year == 2014")
+pred_cols = df_2014.columns.difference([LECol.COUNTRY, LECol.YEAR])
+
+le_2014 = LifeExpectancyDataset(df=df_2014)
+missing_counts = df_2014[pred_cols].isna().sum().sort_values(ascending=False)
+
+missing_tbl = (
+    missing_counts[missing_counts > 0]
+    .to_frame(name="n_missing_2014")
+    .assign(share_missing_pct=lambda d: d["n_missing_2014"] / len(df_2014) * 100)
+    .assign(feature=lambda d: d.index.map(le_2014.get_pretty_name))
+    .loc[:, ["feature", "n_missing_2014", "share_missing_pct"]]
+    .rename(
+        columns={
+            "feature": "Feature",
+            "n_missing_2014": "Missing (n)",
+            "share_missing_pct": "Missing (%)",
+        }
+    )
+)
+
+missing_tbl.style.format({"Missing (%)": "{:.1f}"})
+```
+
+```{python}
+# | label: tbl-missing-2014-structural
+# | tbl-cap: "Missing predictors in 2014 are structurally absent (never observed pre-2014) for the affected country series."
+le_hist = panel.assign(year=lambda d: d[LECol.YEAR].dt.year).query("year <= 2014")
+
+missing_entries = []
+for _, row in df_2014.iterrows():
+    country = row[LECol.COUNTRY]
+    row_missing = row[pred_cols].isna()
+    if not row_missing.any():
+        continue
+    missing_preds = row_missing[row_missing].index.tolist()
+    hist_country = le_hist[le_hist[LECol.COUNTRY] == country]
+    for pred in missing_preds:
+        ever_obs = hist_country[pred].notna().any()
+        missing_entries.append(
+            {
+                "country": country,
+                "predictor": pred,
+                "ever_observed_pre2014": bool(ever_obs),
+            }
+        )
+
+md = pd.DataFrame(missing_entries)
+summary = pd.DataFrame(
+    {
+        "metric": [
+            "Countries with ≥1 missing predictor (2014)",
+            "Missing predictor entries (country × feature)",
+            "Entries with no prior observation (pre-2014)",
+            "Share of missing entries with no prior observation (%)",
+        ],
+        "value": [
+            int(md["country"].nunique()),
+            int(len(md)),
+            int((~md["ever_observed_pre2014"]).sum()),
+            float((~md["ever_observed_pre2014"]).mean() * 100),
+        ],
+    }
+)
+
+summary["value"] = summary["value"].map(
+    lambda v: f"{v:.1f}" if isinstance(v, (float, np.floating)) else f"{int(v)}"
+)
+summary.style
+```
+
+Table @tbl-missing-2014 shows that missingness in 2014 is concentrated in a small subset of features (notably HepB coverage, HDI, schooling, and GDP). Table @tbl-missing-2014-structural confirms that **all** missing entries in 2014 correspond to predictors that are never observed for those country series in any earlier year; carry-forward therefore cannot fill them. This structural missingness is why the carry-forward strategy only marginally reduces missingness in the 2014 cross-section. For analyses that require complete predictors (e.g., PCA, standardized regression), we explicitly restrict to complete cases and report the resulting sample size.
+
+## Population backfill from UNDP HDR
+
+Population is available in the UNDP HDR time series (`pop_total`). Because we now map all Life Expectancy country names to ISO3, we can **join on ISO3 + year** and use the UNDP population values to fill remaining missing values in the Kaggle `population` column. This does not overwrite existing Kaggle values; it only backfills missing entries.
+
+```{python}
+# | label: tbl-pop-backfill
+# | tbl-cap: "Population missingness before vs after UNDP backfill (panel and 2014 cross-section)."
+import pandas as pd
+
+from ama_tlbx.data import LECol, LifeExpectancyDataset, UNDPCol, UNDPHDRDataset
+
+le_panel = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=False,
+    resolve_nand_pred=False,
+)
+undp = UNDPHDRDataset.from_csv(years=range(2000, 2016))
+
+merged = undp.merge_life_expectancy(le_panel, how="left")
+
+pop_kaggle = merged[LECol.POPULATION]
+pop_undp = merged[str(UNDPCol.POP_TOTAL)]
+
+panel_before = int(pop_kaggle.isna().sum())
+panel_after = int(pop_kaggle.fillna(pop_undp).isna().sum())
+
+merged_2014 = merged.loc[merged[LECol.YEAR] == 2014]
+pop_kaggle_2014 = merged_2014[LECol.POPULATION]
+pop_undp_2014 = merged_2014[str(UNDPCol.POP_TOTAL)]
+
+xs_before = int(pop_kaggle_2014.isna().sum())
+xs_after = int(pop_kaggle_2014.fillna(pop_undp_2014).isna().sum())
+
+pd.DataFrame(
+    [
+        {"view": "Panel (2000–2015)", "missing_before": panel_before, "missing_after": panel_after},
+        {"view": "2014 cross-section", "missing_before": xs_before, "missing_after": xs_after},
+    ]
+).rename(
+    columns={
+        "view": "View",
+        "missing_before": "Missing population (Kaggle)",
+        "missing_after": "Missing after UNDP backfill",
+    },
+)
+```
+
+If this backfill improves coverage (without introducing inconsistencies), it can be adopted as a preprocessing step for analyses that require population. For transparency, we would still retain the original Kaggle values and only fill missing entries with UNDP HDR.
 
 ## Transformations and standardization (`tf_only`, `tf_and_norm`)
 
@@ -94,30 +319,20 @@ from ama_tlbx.data.life_expectancy_columns import LifeExpectancyColumn as Col
 
 rows = []
 for col in Col:
-    tf = col.transform
-    tf_name = tf.__name__ if tf is not None else "none"
     rows.append(
         {
             "original": col.original_name,
             "column": col.value,
             "dtype": col.dtype_name,
             "pretty": col.pretty_name,
-            "transform": tf_name,
+            "transform": Col.transform_label(col),
         }
     )
-
-transform_labels = {
-    "_log1p_under_coverage": "log1p(100 - x)",
-    "_status_dummies": "dummy (developed=1)",
-    "log1p": "log1p(x)",
-    "none": "none",
-}
 
 (
     pd.DataFrame(rows)
     .assign(
         column=lambda d: d["pretty"],
-        transform=lambda d: d["transform"].map(transform_labels).fillna(d["transform"]),
     )
     .loc[:, ["column", "dtype", "transform"]]
     .sort_values("column")
