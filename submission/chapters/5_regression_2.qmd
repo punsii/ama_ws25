@@ -41,6 +41,8 @@ from ama_tlbx.analysis import FeatureGroup
 from ama_tlbx.analysis.model_registry import ModelRegistry
 from ama_tlbx.data import LECol, LifeExpectancyDataset
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+from ama_tlbx.data.undp_hdr_columns import UNDPHDRColumn as HDRCol
+from ama_tlbx.data.undp_hdr_dataset import UNDPHDRDataset
 
 DEFAULT_PLOT_CFG.apply_global()
 np.random.seed(42)
@@ -53,7 +55,8 @@ STATUS_DUMMY = "status_developed"
 ## Data preparation and splits
 
 We use a 2014 cross-section for training and a 2011 cross-section for holdout evaluation. Transformations are applied consistently via `tf_and_norm` (default per-column transforms) and numeric predictors are z-scored on the pooled (2014 + 2011) sample so that model evaluation uses a consistent scale across years. The target stays in years, so coefficients read as **years of life expectancy per 1 SD increase** in the predictor (status dummy is a 0/1 difference).
-<!-- TODO: Does it make sense to use adult mortality as predictive feature? -->
+
+<!-- QUESTION: Does it make sense to use adult mortality as predictive feature? -->
 ```{python}
 # | label: data-prep
 # | code-fold: true
@@ -64,14 +67,12 @@ panel_ds = LifeExpectancyDataset.from_csv_updated(
 )
 
 # Merge UNDP HDR HDI for the two evaluation years (upper-bound baseline; see RQ1 discussion).
-from ama_tlbx.data.undp_hdr_columns import UNDPHDRColumn as HDRCol
-from ama_tlbx.data.undp_hdr_dataset import UNDPHDRDataset
-
 hdr_hdi = (
     UNDPHDRDataset.from_csv(years=[TRAIN_YEAR, HOLDOUT_YEAR])
-    .df[[HDRCol.ISO3, HDRCol.YEAR, HDRCol.HDI]]
+    .df[[str(HDRCol.ISO3), str(HDRCol.YEAR), str(HDRCol.HDI)]]
     .rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
 )
+
 
 panel_df = (
     panel_ds.with_iso3()
@@ -82,35 +83,38 @@ panel_df = (
 # Transform and standardize (pooled across 2014 + 2011)
 years = [TRAIN_YEAR, HOLDOUT_YEAR]
 pooled = panel_df.query("year in @years").copy()
-pooled_ds = LifeExpectancyDataset(df=pooled)
-pooled_norm = pooled_ds.tf_and_norm()
 
-train_raw = pooled_norm.query("year == @TRAIN_YEAR").set_index(LECol.COUNTRY).drop(columns=[LECol.YEAR])
-holdout_raw = pooled_norm.query("year == @HOLDOUT_YEAR").set_index(LECol.COUNTRY).drop(columns=[LECol.YEAR])
+
+df_train = (
+    LifeExpectancyDataset.from_csv_updated(
+        aggregate_by_country=TRAIN_YEAR,
+        resolve_nand_pred="carry_forward",
+    )
+    .merge_undp(hdr_hdi.query("year == @TRAIN_YEAR"))
+    .tf_and_norm()
+    .drop(columns=[LECol.YEAR])
+)
+df_test = (
+    LifeExpectancyDataset.from_csv_updated(
+        aggregate_by_country=HOLDOUT_YEAR,
+        resolve_nand_pred="carry_forward",
+    )
+    .merge_undp(hdr_hdi.query("year == @HOLDOUT_YEAR"))
+    .tf_and_norm()
+    .drop(columns=[LECol.YEAR])
+)
 
 # Ensure a consistent status dummy (if not already present)
-if STATUS_DUMMY not in train_raw.columns:
-    if LECol.STATUS in train_raw.columns:
-        train_raw = train_raw.assign(
-            **{STATUS_DUMMY: train_raw[LECol.STATUS].astype(int)}
-        )
-        holdout_raw = holdout_raw.assign(
-            **{STATUS_DUMMY: holdout_raw[LECol.STATUS].astype(int)}
-        )
-
-# tf_and_norm already standardizes numeric predictors (status/year excluded)
-train_scaled = train_raw.copy()
-holdout_scaled = holdout_raw.copy()
-
-# Keep full feature set for supervised PCA
-train_full = train_scaled.copy()
-holdout_full = holdout_scaled.copy()
+if STATUS_DUMMY not in df_train.columns:
+    if LECol.STATUS in df_train.columns:
+        df_train = df_train.assign(**{STATUS_DUMMY: df_train[LECol.STATUS].astype(int)})
+        df_test = df_test.assign(**{STATUS_DUMMY: df_test[LECol.STATUS].astype(int)})
 ```
 
 ```{python}
 # | label: feature-groups
 # | include: true
-# | code-fold: true
+# | code-fold: false
 feature_groups = [
     FeatureGroup(
         name="child_mortality",
@@ -133,7 +137,7 @@ feature_groups = [
 reduced_columns = [feature for g in feature_groups for feature in g.features]
 
 pca_groups = (
-    LifeExpectancyDataset(df=train_full)
+    LifeExpectancyDataset(df=df_train)
     .make_pca_dim_reduction_analyzer(
         feature_groups=feature_groups,
         standardized=True,
@@ -142,10 +146,28 @@ pca_groups = (
     .fit()
     .result()
 )
+```
 
-train_scaled = pca_groups.reduced_df.assign(**train_full.drop(columns=reduced_columns))
-holdout_scaled = pca_groups.transform(holdout_full).assign(
-    **holdout_full.drop(columns=reduced_columns)
+
+```{python}
+# | label: fig-pca-group-loadings
+# | fig-cap: "Grouped PCA loadings for the reduced feature blocks (training year 2014)."
+pca_groups.plot_group_loadings().show()
+```
+
+```{python}
+# | label: fig-pca-group-variance
+# | fig-cap: "Explained variance by PCA component for the reduced feature blocks (training year 2014)."
+pca_groups.plot_group_variance_summary().show()
+```
+
+```{python}
+# | label: fig-corr-map
+# | fig-cap: "Correlation heatmap of training data after transformations and PCA compression."
+# | code-fold: true
+df_train = pca_groups.reduced_df.assign(**df_train.drop(columns=reduced_columns))
+holdout_scaled = pca_groups.transform(df_test).assign(
+    **df_test.drop(columns=reduced_columns)
 )
 
 pcs_by_group = {
@@ -154,23 +176,64 @@ pcs_by_group = {
 econ_pcs = pcs_by_group.get("economic_development", [])
 immun_pcs = pcs_by_group.get("immunization", [])
 
-scaled_train_ds = LifeExpectancyDataset(df=train_scaled)
+scaled_train_ds = LifeExpectancyDataset(df=df_train)
 scaled_train_ds.make_correlation_analyzer().result().plot_heatmap().show()
-
-display(scaled_train_ds.df_pretty.describe().round(2).T)
 ```
 
 ```{python}
-# | label: pca-group-loadings
-# | fig-cap: "Grouped PCA loadings for the reduced feature blocks (training year 2014)."
-pca_groups.plot_group_loadings().show()
+# | include: false
+def _tf_expr(feature: str | LECol) -> str:
+    name = str(feature)
+    label = LECol.transform_label(feature)
+    if label == "dummy":
+        return f"dummy({name})"
+    if label == "none":
+        return name
+    if label == "_log1p_under_coverage":
+        return f"log1p(100 - {name})"
+    return f"{label}({name})"
+
+
+def _tf_label(col: str) -> str:
+    if col.startswith("status_"):
+        return "dummy"
+    if "_PC" in col:
+        group_name = col.split("_PC", maxsplit=1)[0]
+        features = group_features.get(group_name, [])
+        if features:
+            return f"pca({', '.join(_tf_expr(f) for f in features)})"
+        return "pca"
+    return _tf_expr(col)
+```
+
+
+```{python}
+# | label: tbl-feature-summary
+# | tbl-cap: "Feature summary, transformed and standardized, sorted by correlation with life expectancy."
+# | echo: false
+summary = df_train.describe().T
+target_corr = df_train.corr(numeric_only=True)[LECol.TARGET]
+
+group_features = {g.name: g.features for g in feature_groups}
+
+summary = summary.assign(
+    corr_LE=summary.index.map(lambda c: target_corr.get(str(c), np.nan)),
+).sort_values("corr_LE", key=lambda s: s.abs(), ascending=False)
+transforms = pd.DataFrame(dict(transform=[_tf_label(str(c)) for c in summary.index]))
+summary.index = [scaled_train_ds.get_pretty_name(str(c)) for c in summary.index]
+transforms.index = summary.index
+summary.round(2)
 ```
 
 ```{python}
-# | label: pca-group-variance
-# | fig-cap: "Explained variance by PCA component for the reduced feature blocks (training year 2014)."
-pca_groups.plot_group_variance_summary().show()
+# | label: tbl-transforms
+# | tbl-cap: "Transformations applied to each feature (including PCA inputs)."
+# | echo: false
+with pd.option_context("display.max_colwidth", None):
+    display(transforms)
 ```
+
+
 
 To interpret coefficients that use the PCA-compressed predictors, we inspect the loadings above. In the **economic development** block, PC1 is dominated by GDP and health expenditure, so higher `economic_development_PC1` reflects a more affluent / higher-spending profile (up to sign). In the **immunization** block, PC1 mainly contrasts high vaccination coverage (HepB, DTP3) against measles burden, so `immunization_PC1` acts as a summary “coverage vs outbreaks” factor. Because PCA component signs are arbitrary, we always interpret the *direction* of a PC coefficient jointly with its loadings.
 
@@ -189,7 +252,7 @@ registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
 # Example: adult mortality only
 # rhs_m1 = str(LECol.ADULT_MORTALITY)
 m1 = registry.fit(
-    train_scaled[[LECol.TARGET, LECol.ADULT_MORTALITY]].dropna(),
+    df_train[[LECol.TARGET, LECol.ADULT_MORTALITY]].dropna(),
     name="m1_adult_mortality",
     # rhs=rhs_m1,
 )
@@ -199,7 +262,7 @@ display(m1)
 # HDI upper-bound check (HDI embeds life expectancy).
 rhs_m1_hdi = " + ".join([str(LECol.ADULT_MORTALITY), str(LECol.HDI)])
 m1_hdi = registry.fit(
-    train_scaled[[LECol.TARGET, LECol.ADULT_MORTALITY, LECol.HDI]].dropna(),
+    df_train[[LECol.TARGET, LECol.ADULT_MORTALITY, LECol.HDI]].dropna(),
     name="m1_adult_mortality_hdi",
     rhs=rhs_m1_hdi,
 )
@@ -236,7 +299,7 @@ base_block = [STATUS_DUMMY, LECol.HIV_AIDS]
 if econ_pc1 is not None:
     base_block.append(econ_pc1)
 
-train_base = train_scaled[[LECol.TARGET, *base_block]].dropna()
+train_base = df_train[[LECol.TARGET, *base_block]].dropna()
 
 rhs_immun_base = " + ".join(str(c) for c in base_block)
 base_diag = registry.fit(
@@ -249,7 +312,7 @@ display(base_diag)
 immun_cols = [LECol.TARGET, *base_block, immun_pc1]
 rhs_immun_reduced = " + ".join(str(c) for c in immun_cols if c != LECol.TARGET)
 immun_reduced = registry.fit(
-    train_scaled[immun_cols].dropna(),
+    df_train[immun_cols].dropna(),
     name="m_immunization_reduced",
     rhs=rhs_immun_reduced,
     refit=True,
@@ -290,7 +353,7 @@ if econ_pc1 is not None:
 health = [LECol.ALCOHOL, LECol.BMI]
 
 model_cols = [LECol.TARGET, *controls, *health]
-train_alc = train_scaled[model_cols].dropna()
+train_alc = df_train[model_cols].dropna()
 
 rhs_alc = " + ".join(str(c) for c in model_cols if c != LECol.TARGET)
 alc_diag = registry.fit(
@@ -324,7 +387,7 @@ econ_pc1 = econ_pcs[0] if econ_pcs else None
 immun_pc1 = immun_pcs[0] if immun_pcs else None
 nl_terms = [t for t in (econ_pc1, LECol.TOTAL_EXPENDITURE, immun_pc1) if t is not None]
 nl_base = [LECol.HIV_AIDS, STATUS_DUMMY, *nl_terms]
-nl_df = train_scaled[[LECol.TARGET, *nl_base]].dropna()
+nl_df = df_train[[LECol.TARGET, *nl_base]].dropna()
 
 rhs_linear = " + ".join(str(t) for t in nl_base)
 nl_linear = registry.fit(
@@ -358,7 +421,7 @@ if immun_pc1 is not None:
     main_terms.append(immun_pc1)
 
 rhs_main = " + ".join(str(t) for t in main_terms)
-train_int = train_scaled[[LECol.TARGET, *main_terms]].dropna()
+train_int = df_train[[LECol.TARGET, *main_terms]].dropna()
 
 int_base = registry.fit(
     train_int,
