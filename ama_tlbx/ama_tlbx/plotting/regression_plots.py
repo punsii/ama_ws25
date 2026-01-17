@@ -208,7 +208,7 @@ def plot_observed_vs_fitted(
     return ax
 
 
-def plot_calibration(  # noqa: C901, PLR0913, PLR0914, PLR2004
+def plot_calibration(  # noqa: C901, PLR0913, PLR0914
     metrics: EvalMetrics,
     *,
     ax: plt.Axes | None = None,

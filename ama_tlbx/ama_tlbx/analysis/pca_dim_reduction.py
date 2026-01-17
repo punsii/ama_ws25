@@ -75,6 +75,12 @@ class GroupPCAResult:
     def cumulative_variance_explained(self) -> float:
         return float(self.explained_variance_retained.sum())
 
+    def explained_variance_table(self) -> pd.DataFrame:
+        """Return explained variance with a group/PC MultiIndex."""
+        df = self.explained_variance.copy()
+        df = df.assign(group=self.group.name)
+        return df.set_index(["group", "PC"])
+
 
 @dataclass(frozen=True)
 class PCADimReductionResult:
@@ -115,6 +121,15 @@ class PCADimReductionResult:
         from ama_tlbx.plotting.pca_dim_reduction_plots import plot_group_loadings  # noqa: PLC0415
 
         return plot_group_loadings(self, **kwargs)
+
+    def explained_variance_table(self) -> pd.DataFrame:
+        """Return explained variance for all groups with a group/PC MultiIndex."""
+        frames: list[pd.DataFrame] = []
+        for gr in self.group_results:
+            frames.append(gr.explained_variance_table())
+        if not frames:
+            return pd.DataFrame(columns=["variance", "explained_ratio", "cumulative_ratio"])
+        return pd.concat(frames).sort_index()
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         """Transform new data into the retained group PC scores.

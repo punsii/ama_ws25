@@ -1221,8 +1221,8 @@ class EvalMetrics:
             idx = rng.integers(0, n, n)
             y_b = y[idx]
             pred_b = pred[idx]
-            rmse_boot[i] = float(np.sqrt(np.mean((y_b - pred_b) ** 2)))
-            mae_boot[i] = float(np.mean(np.abs(y_b - pred_b)))
+            rmse_boot[i] = float(root_mean_squared_error(y_b, pred_b))
+            mae_boot[i] = float(mean_absolute_error(y_b, pred_b))
             r2_boot[i] = float(r2_score(y_b, pred_b))
 
         return pd.DataFrame(

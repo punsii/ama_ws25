@@ -151,7 +151,7 @@ class LifeExpectancyDataset(BaseDataset):
                 undp_dataset.df if isinstance(undp_dataset, UNDPHDRDataset) else undp_dataset,
                 on=[UCol.ISO3, UCol.YEAR],
                 how=how,
-            )
+            ),
         )
 
     @classmethod
