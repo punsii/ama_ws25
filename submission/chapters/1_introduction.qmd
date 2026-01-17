@@ -5,7 +5,7 @@ format:
     toc: true
 ---
 
-Life expectancy is a compact summary indicator of population health that reflects mortality across age groups and, indirectly, differences in disease burden, health-system access, and socio-economic conditions. We analyze the [“Life Expectancy (WHO)” dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who) published on Kaggle [@KumarRajarshi]. It is a country-year panel (193 countries, 2000–2015) with the target variable `life_expectancy` (years) and 20 candidate predictors spanning mortality burden, immunization, socio-economic development, and nutrition.
+Life expectancy is a compact summary indicator of population health that reflects mortality across age groups and, indirectly, differences in disease burden, health-system access, and socio-economic conditions. We analyze the [“Life Expectancy (WHO)” dataset](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who) published on Kaggle [@KumarRajarshi]. It is a country-year panel (183 countries, 2000–2015) with the target variable `life_expectancy` (years) and 20 candidate predictors spanning mortality burden, immunization, socio-economic development, and nutrition.
 
 Our main goal is **explanatory and predictive regression**: (i) identify which predictors are most strongly associated with life expectancy (direction and magnitude), and (ii) quantify predictive performance out-of-sample. To reduce within-country temporal dependence, most multivariate analyses use a single cross-section (2014; see [Year Selection](2_preproc_year_selection.qmd)); regression models are evaluated on a separate holdout year (2011) in [Regression](5_regression.qmd), reporting predictive accuracy in years (RMSE) alongside explained variance ($R^2$). All findings are interpreted as descriptive associations in observational data (not causal effects).
 
@@ -301,6 +301,8 @@ predictor_stats_panel_by_group = {
 
 # Dataset snapshot
 
+<!-- TODO: we need to start with a more general overview of the dataset views, and not jus thte coverage as below, what else might we include here? -->
+
 ```{python}
 # | label: tbl-intro-dataset-coverage
 # | tbl-cap: "Dataset coverage summary (raw panel, 2014 cross-section, complete-case subset)."
@@ -310,9 +312,7 @@ dataset_coverage.style.hide(axis="index")
 ```{python}
 # | label: tbl-intro-cross-section-missing
 # | tbl-cap: "Remaining predictor missingness after carry-forward (2014 cross-section)."
-cross_section_missing.assign(
-    share_missing_pct=lambda d: d["share_missing_pct"].round(1),
-).rename(columns={"share_missing_pct": "share_missing_%"}).style.hide(axis="index")
+cross_section_missing.style.hide(axis="index")
 ```
 
 Table @tbl-intro-dataset-coverage summarizes the dataset views used downstream, including how many predictors still contain missing values. In the 2014 cross-section, carry-forward imputation retains $n=183$ countries, but 50 (27.3%) still have at least one missing predictor (Table @tbl-intro-cross-section-missing); complete-case analyses therefore use $n=133$. This distinction matters because univariate target plots and development-status comparisons use the larger cross-section, while correlation-based analyses require the complete-case subset. Missing-value handling and robustness checks are documented in [Data Cleaning & Preprocessing](2_preprocessing.qmd) and [Outlier Detection](2_outlier_detection.qmd).
