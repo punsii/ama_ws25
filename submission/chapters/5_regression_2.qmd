@@ -1,0 +1,525 @@
+---
+title: "Regression: Explaining and Predicting Life Expectancy (Revised Template)"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+execute:
+  warning: false
+  message: false
+---
+
+# Regression: Explaining and Predicting Life Expectancy (Revised Template)
+
+## Research questions (template)
+
+This chapter is structured around explicit research questions. We answer each with a focused model, diagnostics, and interpretation.
+
+1. Which predictors have the strongest association with life expectancy, and in which direction?
+2. What is the impact of immunization coverage on life expectancy (holding other factors constant)?
+3. Does alcohol consumption (and BMI) have a positive or negative association once economic development is controlled for?
+4. Which interaction effects are supported and interpretable (e.g., status $\times$ immunization, status $\times$ expenditure, status $\times$ alcohol)?
+5. How do outliers / influential observations affect coefficients and conclusions?
+6. How well do models generalize to a holdout year (2011)?
+7. Can we fit a model on the full panel without violating residual autocorrelation assumptions?
+8. Supervised PCA regression and PC interpretation are handled separately in [Regression: Supervised PCA](5_regression_supervised_pca.qmd).
+
+::: {.callout-note}
+**Template guidance:** Each section below should answer one of the research questions above. Keep the model scope narrow per section, use `ModelRegistry` and `RegressionResult` diagnostics, and include short interpretation paragraphs.
+:::
+
+```{python}
+# | label: setup
+# | include: false
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from IPython.display import display
+
+from ama_tlbx.analysis import FeatureGroup
+from ama_tlbx.analysis.model_registry import ModelRegistry
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+
+DEFAULT_PLOT_CFG.apply_global()
+np.random.seed(42)
+
+TRAIN_YEAR = 2014
+HOLDOUT_YEAR = 2011
+STATUS_DUMMY = "status_developed"
+```
+
+## Data preparation and splits
+
+We use a 2014 cross-section for training and a 2011 cross-section for holdout evaluation. Transformations are applied consistently via `tf_and_norm` (default per-column transforms) and numeric predictors are z-scored on the pooled (2014 + 2011) sample so that model evaluation uses a consistent scale across years. The target stays in years, so coefficients read as **years of life expectancy per 1 SD increase** in the predictor (status dummy is a 0/1 difference).
+<!-- TODO: Does it make sense to use adult mortality as predictive feature? -->
+```{python}
+# | label: data-prep
+# | code-fold: true
+# Load full panel (updated dataset merged with original expenditures in loader)
+panel_ds = LifeExpectancyDataset.from_csv_updated(
+    aggregate_by_country=False,
+    resolve_nand_pred="carry_forward",
+)
+
+# Merge UNDP HDR HDI for the two evaluation years (upper-bound baseline; see RQ1 discussion).
+from ama_tlbx.data.undp_hdr_columns import UNDPHDRColumn as HDRCol
+from ama_tlbx.data.undp_hdr_dataset import UNDPHDRDataset
+
+hdr_hdi = (
+    UNDPHDRDataset.from_csv(years=[TRAIN_YEAR, HOLDOUT_YEAR])
+    .df[[HDRCol.ISO3, HDRCol.YEAR, HDRCol.HDI]]
+    .rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
+)
+
+panel_df = (
+    panel_ds.with_iso3()
+    .assign(year=lambda d: d[LECol.YEAR].dt.year.astype(int))
+    .merge(hdr_hdi, on=[HDRCol.ISO3, HDRCol.YEAR], how="left")
+)
+
+# Transform and standardize (pooled across 2014 + 2011)
+years = [TRAIN_YEAR, HOLDOUT_YEAR]
+pooled = panel_df.query("year in @years").copy()
+pooled_ds = LifeExpectancyDataset(df=pooled)
+pooled_norm = pooled_ds.tf_and_norm()
+
+train_raw = pooled_norm.query("year == @TRAIN_YEAR").set_index(LECol.COUNTRY).drop(columns=[LECol.YEAR])
+holdout_raw = pooled_norm.query("year == @HOLDOUT_YEAR").set_index(LECol.COUNTRY).drop(columns=[LECol.YEAR])
+
+# Ensure a consistent status dummy (if not already present)
+if STATUS_DUMMY not in train_raw.columns:
+    if LECol.STATUS in train_raw.columns:
+        train_raw = train_raw.assign(
+            **{STATUS_DUMMY: train_raw[LECol.STATUS].astype(int)}
+        )
+        holdout_raw = holdout_raw.assign(
+            **{STATUS_DUMMY: holdout_raw[LECol.STATUS].astype(int)}
+        )
+
+# tf_and_norm already standardizes numeric predictors (status/year excluded)
+train_scaled = train_raw.copy()
+holdout_scaled = holdout_raw.copy()
+
+# Keep full feature set for supervised PCA
+train_full = train_scaled.copy()
+holdout_full = holdout_scaled.copy()
+```
+
+```{python}
+# | label: feature-groups
+# | include: true
+# | code-fold: true
+feature_groups = [
+    FeatureGroup(
+        name="child_mortality",
+        features=[LECol.INFANT_DEATHS, LECol.UNDER_FIVE_DEATHS],
+    ),
+    FeatureGroup(
+        name="child_nutrition",
+        features=[LECol.THINNESS_5_9_YEARS, LECol.THINNESS_1_19_YEARS],
+    ),
+    FeatureGroup(
+        name="economic_development",
+        features=[LECol.GDP, LECol.PERCENTAGE_EXPENDITURE],
+    ),
+    FeatureGroup(
+        name="immunization",
+        features=[LECol.DIPHTHERIA, LECol.HEPATITIS_B, LECol.POLIO],
+    ),
+]
+
+reduced_columns = [feature for g in feature_groups for feature in g.features]
+
+pca_groups = (
+    LifeExpectancyDataset(df=train_full)
+    .make_pca_dim_reduction_analyzer(
+        feature_groups=feature_groups,
+        standardized=True,
+        min_var_explained=0.8,
+    )
+    .fit()
+    .result()
+)
+
+train_scaled = pca_groups.reduced_df.assign(**train_full.drop(columns=reduced_columns))
+holdout_scaled = pca_groups.transform(holdout_full).assign(
+    **holdout_full.drop(columns=reduced_columns)
+)
+
+pcs_by_group = {
+    gr.group.name: gr.pc_scores.columns.tolist() for gr in pca_groups.group_results
+}
+econ_pcs = pcs_by_group.get("economic_development", [])
+immun_pcs = pcs_by_group.get("immunization", [])
+
+scaled_train_ds = LifeExpectancyDataset(df=train_scaled)
+scaled_train_ds.make_correlation_analyzer().result().plot_heatmap().show()
+
+display(scaled_train_ds.df_pretty.describe().round(2).T)
+```
+
+```{python}
+# | label: pca-group-loadings
+# | fig-cap: "Grouped PCA loadings for the reduced feature blocks (training year 2014)."
+pca_groups.plot_group_loadings().show()
+```
+
+```{python}
+# | label: pca-group-variance
+# | fig-cap: "Explained variance by PCA component for the reduced feature blocks (training year 2014)."
+pca_groups.plot_group_variance_summary().show()
+```
+
+To interpret coefficients that use the PCA-compressed predictors, we inspect the loadings above. In the **economic development** block, PC1 is dominated by GDP and health expenditure, so higher `economic_development_PC1` reflects a more affluent / higher-spending profile (up to sign). In the **immunization** block, PC1 mainly contrasts high vaccination coverage (HepB, DTP3) against measles burden, so `immunization_PC1` acts as a summary “coverage vs outbreaks” factor. Because PCA component signs are arbitrary, we always interpret the *direction* of a PC coefficient jointly with its loadings.
+
+## Baseline: single-predictor benchmark
+
+**RQ1 (signal strength):** establish baseline fit and marginal effects for 1–2 key predictors.
+
+Model: `life_expectancy ~ adult_mortality`
+Model (upper-bound check): `life_expectancy ~ adult_mortality + human_development_index`
+
+```{python}
+# | label: baseline-models
+# | code-fold: true
+registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
+
+# Example: adult mortality only
+# rhs_m1 = str(LECol.ADULT_MORTALITY)
+m1 = registry.fit(
+    train_scaled[[LECol.TARGET, LECol.ADULT_MORTALITY]].dropna(),
+    name="m1_adult_mortality",
+    # rhs=rhs_m1,
+)
+
+display(m1)
+
+# HDI upper-bound check (HDI embeds life expectancy).
+rhs_m1_hdi = " + ".join([str(LECol.ADULT_MORTALITY), str(LECol.HDI)])
+m1_hdi = registry.fit(
+    train_scaled[[LECol.TARGET, LECol.ADULT_MORTALITY, LECol.HDI]].dropna(),
+    name="m1_adult_mortality_hdi",
+    rhs=rhs_m1_hdi,
+)
+display(m1_hdi)
+```
+
+```{python}
+# | label: baseline-diagnostics
+# | fig-cap: "Baseline residual diagnostics (example model)."
+_ = m1.plot_residual_diags()
+```
+
+Adult mortality is (by construction) tightly linked to life expectancy. In the 2014 cross-section, a one-standard-deviation increase in `adult_mortality` is associated with **-7.98 years** (p < 0.001), and the single-predictor model already explains **$R^2 = 0.904$** of the variance (RMSE = **2.49 years**). The residual plots show a slight curvature (systematic structure around fitted values) and a widening spread at lower fitted values, which matches the heteroscedasticity tests (Breusch–Pagan/White p < 0.001). The influence plot highlights a small set of high-leverage countries (e.g., **Lesotho**, **Eswatini**, **South Africa**), so this fit is best treated as a **predictive benchmark**, not an interpretable causal mechanism.
+
+Adding HDI yields a markedly better in-sample fit (**$R^2 = 0.947$**, RMSE = **1.85 years**). The `human_development_index` coefficient is **+2.57 years per 1 SD** (p < 0.001), while the adult-mortality coefficient attenuates to **-5.95 years per 1 SD**. This is not surprising: the HDI is a composite index that includes a health component derived from life expectancy. We therefore treat the `adult_mortality + HDI` fit as an **upper-bound sanity check** (and a caution about target leakage), not as substantive evidence about mechanisms; in the interpretability-focused models below we avoid using HDI.
+
+Diagnostics again indicate heteroscedasticity and a handful of influential observations. For interpretability-focused models below, we exclude `adult_mortality` to avoid a tautological “explanation”.
+
+## Immunization impact
+
+**RQ2:** quantify the effect of immunization coverage (e.g., DTP3, HepB, Polio) controlling for development and mortality burden.
+
+Base model: `life_expectancy ~ status_developed + hiv_aids + economic_development_PC1`
+Immunization model: `life_expectancy ~ status_developed + hiv_aids + economic_development_PC1 + immunization_PC1`
+
+```{python}
+# | label: immunization-model
+# | code-fold: true
+econ_pc1 = econ_pcs[0] if econ_pcs else None
+immun_pc1 = immun_pcs[0] if immun_pcs else None
+if immun_pc1 is None:
+    raise ValueError("Immunization PC group is missing; check `feature_groups` in data prep.")
+base_block = [STATUS_DUMMY, LECol.HIV_AIDS]
+if econ_pc1 is not None:
+    base_block.append(econ_pc1)
+
+train_base = train_scaled[[LECol.TARGET, *base_block]].dropna()
+
+rhs_immun_base = " + ".join(str(c) for c in base_block)
+base_diag = registry.fit(
+    train_base,
+    name="m_immun_base",
+    rhs=rhs_immun_base,
+)
+display(base_diag)
+
+immun_cols = [LECol.TARGET, *base_block, immun_pc1]
+rhs_immun_reduced = " + ".join(str(c) for c in immun_cols if c != LECol.TARGET)
+immun_reduced = registry.fit(
+    train_scaled[immun_cols].dropna(),
+    name="m_immunization_reduced",
+    rhs=rhs_immun_reduced,
+    refit=True,
+)
+display(immun_reduced)
+```
+
+```{python}
+# | label: immunization-diagnostics
+# | fig-cap: "Immunization model diagnostics."
+immun_reduced.plot_residual_diags()
+```
+
+```{python}
+# | label: immunization-compare
+# | tbl-cap: "Immunization block added vs base model."
+registry.compare(sort_by="aic").loc[["m_immun_base", "m_immunization_reduced"]]
+```
+
+Adding `immunization_PC1` improves fit relative to the base model (**$R^2$: 0.730 $\rightarrow$ 0.782**, RMSE: **4.17 $\rightarrow$ 3.75 years**, Table above). The `immunization_PC1` coefficient is **-1.34 years per 1 SD** (p < 0.001), indicating a statistically relevant immunization component after controlling for development status, HIV/AIDS burden, and an economic-development factor. Because PCA components have arbitrary sign, we interpret the *direction* of `immunization_PC1` via its loadings (see the grouped-PC heatmaps above): higher vaccination coverage versus measles burden corresponds to higher life expectancy.
+
+Diagnostics (Figure above) suggest approximate residual normality (JB p = 0.123; Shapiro p = 0.295), but the scale-location plot still shows a mild fan shape, matching heteroscedasticity tests (Breusch–Pagan p < 0.001; White p = 0.004). The influence plot highlights a small set of high-leverage countries (e.g., **Lesotho**, **Eswatini**, **Nigeria**), so the immunization effect should be interpreted as **robust association**, not precise causal magnitude.
+
+## Alcohol and BMI: conditional effects
+
+**RQ3:** test whether alcohol and BMI remain positive once economic development is controlled (and whether signs flip).
+
+Model: `life_expectancy ~ status_developed + total_expenditure + economic_development_PC1 + alcohol + bmi`
+
+```{python}
+# | label: alcohol-bmi-model
+# | code-fold: true
+econ_pc1 = econ_pcs[0] if econ_pcs else None
+controls = [STATUS_DUMMY, LECol.TOTAL_EXPENDITURE]
+if econ_pc1 is not None:
+    controls.append(econ_pc1)
+
+health = [LECol.ALCOHOL, LECol.BMI]
+
+model_cols = [LECol.TARGET, *controls, *health]
+train_alc = train_scaled[model_cols].dropna()
+
+rhs_alc = " + ".join(str(c) for c in model_cols if c != LECol.TARGET)
+alc_diag = registry.fit(
+    train_alc,
+    name="m_alcohol_bmi",
+    rhs=rhs_alc,
+)
+display(alc_diag)
+```
+
+```{python}
+# | label: alcohol-bmi-diagnostics
+# | fig-cap: "Alcohol and BMI model diagnostics."
+_ = alc_diag.plot_residual_diags()
+```
+
+Conditional on development status, total health expenditure, and the economic-development PC, `bmi` remains positively associated with life expectancy (**+2.06 years per 1 SD**, p < 0.001). In contrast, `alcohol` is small in magnitude (**-0.30 years per 1 SD**, p = 0.53) and not statistically distinguishable from zero in this specification. Fit is comparatively weak (**$R^2 = 0.607$**, RMSE = **5.04 years**). The residual plots show heavier tails (QQ deviations in the extremes) and a modest curvature in residuals vs fitted, which aligns with the normality test failures (JB p = 1.6e-05; Shapiro p = 0.002).
+
+The influence plot highlights a small set of countries with disproportionate impact on the fit (Cook’s distance flags **11** countries under the 4/n rule), so any alcohol-related conclusion should be framed as **fragile** in cross-sectional OLS unless it remains stable under sensitivity checks.
+
+## Nonlinearity and thresholds
+
+**RQ3 (continued):** test diminishing returns for GDP, health expenditure, and immunization using simple quadratic terms.
+
+Model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + immunization_PC1`
+
+```{python}
+# | label: nonlinearity-models
+# | code-fold: true
+econ_pc1 = econ_pcs[0] if econ_pcs else None
+immun_pc1 = immun_pcs[0] if immun_pcs else None
+nl_terms = [t for t in (econ_pc1, LECol.TOTAL_EXPENDITURE, immun_pc1) if t is not None]
+nl_base = [LECol.HIV_AIDS, STATUS_DUMMY, *nl_terms]
+nl_df = train_scaled[[LECol.TARGET, *nl_base]].dropna()
+
+rhs_linear = " + ".join(str(t) for t in nl_base)
+nl_linear = registry.fit(
+    nl_df,
+    name="m_nonlinear_linear",
+    rhs=rhs_linear,
+)
+display(nl_linear)
+```
+
+This parsimonious linear specification explains **$R^2 = 0.787$** of the variance (RMSE = **3.71 years**). Key effects (all in years per 1 SD) are: `hiv_aids` **-3.41** (p < 0.001), `status_developed` **+3.37** (p < 0.001), `economic_development_PC1` **+2.71** (p < 0.001), `total_expenditure` **+0.64** (p = 0.037), and `immunization_PC1` **-1.30** (p < 0.001). The residual plots look closer to linear than the alcohol/BMI model, but the scale-location plot still shows increasing spread at lower fitted values, consistent with heteroscedasticity (Breusch–Pagan p < 0.001; White p = 0.006). Cook’s distance flags **13** observations, so we treat this as a **robust baseline association model** rather than precise causal inference.
+
+## Effect modification (interactions)
+
+**RQ4:** test development-status interactions for immunization, expenditure, and alcohol.
+
+Base model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + alcohol + immunization_PC1`
+Interaction model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + alcohol + immunization_PC1 + status_developed:alcohol`
+
+```{python}
+# | label: interaction-models
+# | code-fold: true
+econ_pc1 = econ_pcs[0] if econ_pcs else None
+immun_pc1 = immun_pcs[0] if immun_pcs else None
+
+main_terms = [LECol.HIV_AIDS, STATUS_DUMMY]
+if econ_pc1 is not None:
+    main_terms.append(econ_pc1)
+main_terms.extend([LECol.TOTAL_EXPENDITURE, LECol.ALCOHOL])
+if immun_pc1 is not None:
+    main_terms.append(immun_pc1)
+
+rhs_main = " + ".join(str(t) for t in main_terms)
+train_int = train_scaled[[LECol.TARGET, *main_terms]].dropna()
+
+int_base = registry.fit(
+    train_int,
+    name="m_interactions_base",
+    rhs=rhs_main,
+    refit=True,
+)
+display(int_base)
+
+rhs_int_reduced = " + ".join([rhs_main, f"{STATUS_DUMMY}:{LECol.ALCOHOL}"])
+int_diag = registry.fit(
+    train_int,
+    name="m_interactions_reduced",
+    rhs=rhs_int_reduced,
+    refit=True,
+)
+display(int_diag)
+```
+
+```{python}
+# | label: interaction-slopes
+# | fig-cap: "Interaction plot: predicted alcohol slope by development status."
+from ama_tlbx.plotting.regression_plots import plot_interaction_effect
+
+plt.figure(figsize=(8, 4))
+plot_interaction_effect(
+    int_diag,
+    x=str(LECol.ALCOHOL),
+    by=STATUS_DUMMY,
+    df=train_int,
+)
+plt.show()
+```
+
+```{python}
+# | label: interaction-diagnostics
+# | fig-cap: "Interaction model diagnostics."
+int_diag.plot_residual_diags()
+```
+
+The interaction plot shows **opposing alcohol slopes** by development status: a mildly positive slope for developing countries and a negative slope for developed countries. Quantitatively, the alcohol slope in developing countries is **+0.77 years per 1 SD** (p = 0.041), while the `status_developed:alcohol` term is **-3.58** (p = 0.070), implying a developed-country slope of **-2.81 years per 1 SD**. This term slightly improves model selection (AIC: **987.9 $\rightarrow$ 986.4**) and holdout RMSE (3.96 $\rightarrow$ 3.92), but it is not statistically robust at the 5% level and increases collinearity (max VIF $\approx$ 13). We therefore treat effect modification as **exploratory**, not a stable causal pattern.
+
+Diagnostics still show heteroscedasticity and a small number of influential observations. We interpret magnitudes cautiously and do not use this interaction specification as the chapter’s final interpretable model.
+
+## Influence and outliers
+
+**RQ5:** evaluate sensitivity to influential countries using Cook’s distance and leverage.
+
+Trimmed refit: same formula as the nonlinearity model, estimated after excluding observations with Cook’s distance > 4/n.
+
+```{python}
+# | label: influence-sensitivity
+# | code-fold: true
+final_diag = nl_linear
+cooks = final_diag.assumptions.cooks_distance
+threshold = 4 / len(cooks)
+keep = cooks <= threshold
+
+sens_diag = registry.fit(
+    nl_df.loc[keep],
+    name="m_nonlinear_linear_trimmed",
+    rhs=rhs_linear,
+    refit=True,
+)
+display(sens_diag)
+```
+
+Trimming a small set of influential observations (Cook’s distance > 4/n) is a simple sensitivity check. In our data this removes **13 countries** (179 $\rightarrow$ 166 observations). The largest absolute coefficient change is about **0.86 years** (for `status_developed`), and holdout RMSE changes only marginally (**4.01 $\rightarrow$ 4.02 years**). The influence plots suggest outliers concentrated in a few high-leverage countries (e.g., **Lesotho**, **Eswatini**, **South Africa**, **Nigeria**), but the main coefficient signs remain stable, supporting the qualitative conclusions of the baseline model.
+
+## Generalization and holdout performance
+
+**RQ6:** evaluate predictive performance on 2011.
+
+```{python}
+# | label: holdout-eval
+# | code-fold: true
+eval_map = {
+    "m1_adult_mortality": holdout_scaled,
+    "m_immun_base": holdout_scaled,
+    "m_immunization_reduced": holdout_scaled,
+    "m_alcohol_bmi": holdout_scaled,
+    "m_nonlinear_linear": holdout_scaled,
+}
+
+for name, df_eval in eval_map.items():
+    registry.evaluate_on(
+        name,
+        df_eval,
+        label=f"year{HOLDOUT_YEAR}",
+    )
+
+compare_tbl = registry.compare(sort_by=f"year{HOLDOUT_YEAR}_rmse")
+compare_tbl.loc[list(eval_map.keys())].round(3)
+```
+
+On the 2011 holdout year, the `adult_mortality` benchmark yields the lowest RMSE (**2.61 years**), which is expected because it is very close to the definition of life expectancy. Among the interpretability-focused models, the **nonlinearity** and **immunization** specifications generalize similarly well (RMSE **4.01** vs **4.03** years), while the alcohol/BMI model performs worst (RMSE **5.71** years). The calibration plot shows a mild **S‑shape**: the model tends to **underpredict** life expectancy for the lowest predicted values and slightly **overpredict** around the mid‑range, while high-end predictions are close to the diagonal. This supports using the burden + development + immunization block as a **parsimonious** generalizable model, but also signals some remaining nonlinear structure.
+
+```{python}
+# | label: holdout-calibration
+# | fig-cap: "Observed vs predicted life expectancy on holdout year (best interpretable model)."
+holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
+candidate_models = [
+    "m_immunization_reduced",
+    "m_nonlinear_linear",
+    "m_alcohol_bmi",
+]
+best_name = (
+    compare_tbl.loc[candidate_models, holdout_rmse_col].dropna().idxmin()
+    if candidate_models
+    else compare_tbl[holdout_rmse_col].dropna().idxmin()
+)
+
+metrics = registry.get(best_name).eval_metrics_by_label[f"year{HOLDOUT_YEAR}"]
+plt.figure(figsize=(7, 5))
+metrics.plot_calibration(bins=10, bootstrap=300, random_state=42)
+plt.show()
+```
+
+## Panel regression and autocorrelation
+
+**RQ7:** fit a model on the full panel and evaluate residual autocorrelation (Durbin–Watson). Interpret carefully; panel dependence is expected.
+
+Model: `life_expectancy ~ adult_mortality + hiv_aids + status_developed` (panel)
+
+```{python}
+# | label: panel-model
+# | code-fold: true
+panel_registry = ModelRegistry()
+panel_ds = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=False,
+    resolve_nand_pred="carry_forward",
+)
+
+panel_df = panel_ds.tf_and_norm().drop(columns=[LECol.YEAR])
+if STATUS_DUMMY not in panel_df.columns and LECol.STATUS in panel_df.columns:
+    panel_df = panel_df.assign(**{STATUS_DUMMY: panel_df[LECol.STATUS].astype(int)})
+
+panel_cols = [LECol.TARGET, LECol.ADULT_MORTALITY, LECol.HIV_AIDS, STATUS_DUMMY]
+panel_train = panel_df[panel_cols].dropna()
+
+rhs_panel = " + ".join(str(c) for c in panel_cols if c != LECol.TARGET)
+panel_diag = panel_registry.fit(
+    panel_train,
+    name="m_panel",
+    rhs=rhs_panel,
+)
+display(panel_diag)
+```
+
+The Durbin–Watson statistic is far below 2 (**DW = 0.48**), indicating strong positive autocorrelation in the panel residuals. This violates the OLS independence assumption; standard errors and p-values are therefore not reliable in the pooled panel fit (despite an in-sample $R^2 = 0.709$ and RMSE = 4.71 years). We keep the panel model only as a descriptive sensitivity check and base inference on the cross-sectional models. A rigorous panel treatment would require country-clustered or time-clustered standard errors, or an explicit panel model (fixed effects / random effects / GLS with AR(1) errors), which is outside the scope of this chapter.
+
+## Summary and limitations
+
+Across the 2014 cross-section, we find a clear hierarchy of associations with life expectancy:
+
+- **RQ1 (strongest association):** `adult_mortality` is the single strongest predictor (coef **-7.98 years per 1 SD**, $R^2 = 0.904$), but it is too close to the definition of life expectancy to serve as an interpretable “driver”.
+- **RQ2 (immunization impact):** adding `immunization_PC1` improves fit beyond development status, HIV/AIDS burden, and economic development ($R^2$: 0.730 $\rightarrow$ 0.782; RMSE: 4.17 $\rightarrow$ 3.75 years), with a sizeable immunization component (coef **-1.34 years per 1 SD**, p < 0.001).
+- **RQ3 (alcohol/BMI conditional effects):** `bmi` remains positively associated after controls (coef **+2.06**, p < 0.001), while `alcohol` is not robustly different from zero (coef **-0.30**, p = 0.53).
+- **RQ4 (effect modification):** the status × alcohol point estimate suggests a sign flip, but the interaction term is not statistically robust (coef **-3.58**, p = 0.07) once economic development is controlled for; we treat this as exploratory and do not retain interaction terms in the final model.
+- **RQ5 (influence/outliers):** trimming **13** high-Cook’s observations changes coefficients modestly (max |Δcoef| $\approx$ 0.86 years) and does not materially change holdout RMSE (4.01 $\rightarrow$ 4.02 years).
+- **RQ6 (generalization):** on the 2011 holdout year, the adult-mortality benchmark generalizes best (RMSE **2.61** years); among interpretable models, the nonlinearity model is best (RMSE **4.01** years; immunization 4.03; alcohol/BMI 5.71).
+- **RQ7 (panel autocorrelation):** pooled panel OLS shows strong autocorrelation (DW = 0.48), so inference from the panel model is not reliable without a dedicated panel/cluster-robust treatment.
+
+**Limitations.** All findings are descriptive associations in observational data. Several models violate homoscedasticity, and some violate residual normality; we therefore emphasize effect sizes, diagnostics, and sensitivity checks over marginal p-values. Finally, PCA components are linear combinations with arbitrary sign, so interpreting `*_PC1` coefficients requires inspecting loadings (see PCA-related chapters).
