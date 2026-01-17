@@ -741,3 +741,143 @@ The multivariate model using normalized features achieves **R² = 0.7791**, whic
 3. **Normalization Impact**: The normalized model (R² = 0.7791) differs from the raw data model, as standardization changes how features interact. The coefficient magnitudes now reflect standardized units, making them directly comparable.
    
 The difference reveals how much additional predictive power comes from features beyond our selected 7, suggesting that including more comprehensive health, economic, and demographic indicators improves the model further.
+
+## Multivariate Regression with Outlier Removal
+
+To assess whether extreme observations are disproportionately affecting our model, we now repeat the multivariate analysis after removing outliers based on studentized residuals. Countries with `|studentized residual| > 2` are excluded, which removes observations that deviate significantly from the model's predictions. This approach helps us understand whether the model's performance is driven by a few unusual cases or reflects genuine patterns across the majority of countries.
+
+```{python}
+# | label: multivariate-no-outliers
+# | fig-cap: "Multivariate Regression with Outliers Removed (|y| > 2)"
+# | echo: false
+
+# Fit initial model to identify outliers
+df_multi_clean = df[data_to_analyse + [LECol.LIFE_EXPECTANCY]].dropna()
+X_multi_clean = df_multi_clean[data_to_analyse]
+y_multi_clean = df_multi_clean[LECol.LIFE_EXPECTANCY]
+
+# Fit OLS model to get studentized residuals
+X_multi_clean_sm = sm.add_constant(X_multi_clean)
+ols_model_clean = sm.OLS(y_multi_clean, X_multi_clean_sm).fit()
+
+# Get studentized residuals
+influence = ols_model_clean.get_influence()
+studentized_resids = influence.resid_studentized_internal
+
+# Remove outliers with |studentized residual| > 2
+outlier_mask = np.abs(studentized_resids) <= 2
+n_outliers_removed = (~outlier_mask).sum()
+
+print(f"Outliers removed: {n_outliers_removed} countries (|studentized residual| > 2)")
+print(f"Remaining samples: {outlier_mask.sum()} countries\n")
+
+# Filter data
+X_multi_clean = X_multi_clean[outlier_mask]
+y_multi_clean = y_multi_clean[outlier_mask]
+
+# Train/test split on cleaned data
+X_train_clean, X_test_clean, y_train_clean, y_test_clean = train_test_split(
+    X_multi_clean, y_multi_clean, test_size=0.2, random_state=42
+)
+
+# Fit model on cleaned data
+model_clean = LinearRegression()
+model_clean.fit(X_train_clean, y_train_clean)
+y_pred_clean = model_clean.predict(X_test_clean)
+
+# Calculate metrics
+r2_clean = r2_score(y_test_clean, y_pred_clean)
+rmse_clean = np.sqrt(mean_squared_error(y_test_clean, y_pred_clean))
+
+print(f"Model Performance (without outliers):")
+print(f"R² Score: {r2_clean:.4f}")
+print(f"RMSE: {rmse_clean:.4f}")
+print(f"Training samples: {len(y_train_clean)}")
+print(f"Test samples: {len(y_test_clean)}")
+print(f"\nComparison to original model:")
+print(f"Original R²: {r2_multi:.4f}")
+print(f"Improvement: {(r2_clean - r2_multi):.4f} ({((r2_clean - r2_multi) / r2_multi * 100):.1f}%)")
+
+# Create visualization
+fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+
+# Plot 1: Actual vs Predicted (cleaned data)
+axes[0].scatter(y_test_clean, y_pred_clean, alpha=0.6, s=50, color='steelblue')
+axes[0].plot([y_test_clean.min(), y_test_clean.max()], 
+             [y_test_clean.min(), y_test_clean.max()], 'r--', lw=2, label='Perfect Prediction')
+axes[0].set_xlabel('Actual Life Expectancy', fontsize=11)
+axes[0].set_ylabel('Predicted Life Expectancy', fontsize=11)
+axes[0].set_title(f'Without Outliers: Actual vs Predicted\n(R² = {r2_clean:.4f})', fontsize=12, fontweight='bold')
+axes[0].grid(True, alpha=0.3)
+axes[0].legend()
+
+# Plot 2: Feature Coefficients (cleaned model)
+coefficients_clean = pd.DataFrame({
+    'Feature': [str(f).replace('_', ' ').title() for f in data_to_analyse],
+    'Coefficient': model_clean.coef_
+}).sort_values('Coefficient', key=abs, ascending=False)
+
+colors_clean = ['green' if c > 0 else 'red' for c in coefficients_clean['Coefficient']]
+bars = axes[1].barh(coefficients_clean['Feature'], coefficients_clean['Coefficient'], color=colors_clean, alpha=0.7)
+
+# Add value labels
+for i, (idx, row) in enumerate(coefficients_clean.iterrows()):
+    value = row['Coefficient']
+    
+    if value < 0:
+        x_pos = max(-0.5, value - 0.15)
+        ha = 'right'
+    else:
+        x_pos = min(0.5, value + 0.15)
+        ha = 'left'
+    
+    axes[1].text(x_pos, i, f'{value:.2f}', 
+                va='center', ha=ha,
+                fontsize=9, fontweight='bold', color='black')
+
+axes[1].set_xlabel('Coefficient Value', fontsize=11)
+axes[1].set_title('Feature Importance (Without Outliers)', fontsize=12, fontweight='bold')
+axes[1].axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+axes[1].grid(True, alpha=0.3, axis='x')
+plt.subplots_adjust(left=0.15, right=0.95)
+
+plt.tight_layout()
+plt.show()
+```
+
+**Analysis:**
+
+Removing outliers with studentized residuals `|y| > 2` reveals several important insights about model robustness:
+
+**Model Performance:**
+- The cleaned model achieves **R² = 0.8128** compared to R² = 0.7791 with outliers included
+- This represents a **+0.0337 improvement (+4.3%)** in explained variance
+- The tighter scatter around the perfect prediction line shows reduced prediction errors
+- Removing extreme cases allows the model to better capture the core relationships for typical countries
+
+**Coefficient Changes:**
+
+Comparing the feature importance before and after outlier removal:
+
+| Feature | Original | Without Outliers | Change |
+|---------|----------|------------------|--------|
+| **HIV/AIDS** | -4.76 | -4.70 | +0.06 (stable) |
+| **Schooling** | +3.39 | +3.30 | -0.09 (stable) |
+| **Percentage Expenditure** | +1.85 | +1.88 | +0.03 (stable) |
+| **GDP** | -0.95 | -1.02 | -0.07 (stable) |
+| **Alcohol** | +0.91 | +0.17 | -0.74 (reduced) |
+| **BMI** | +0.31 | +0.62 | +0.31 (increased) |
+| **Total Expenditure** | +0.03 | +0.50 | +0.47 (increased) |
+| **Baby Deaths** | -0.23 | -0.20 | +0.03 (stable) |
+
+**Key Findings:**
+
+1. **Improved Predictive Power**: The R² improvement from 0.7791 to 0.8128 indicates that outliers were introducing noise rather than capturing genuine patterns. The model now explains 81% of variance in typical countries, up from 78%.
+
+2. **Robust Core Predictors**: HIV/AIDS (-4.70), Schooling (+3.30), and Percentage Expenditure (+1.88) maintain their dominance and relative magnitudes. This confirms these relationships are consistent across all country types, not driven by extreme cases.
+
+3. **Outlier-Sensitive Features**: 
+   - **Alcohol** coefficient dropped dramatically from +0.91 to +0.17, suggesting the positive alcohol-longevity relationship was largely driven by outlier countries
+   - **BMI** and **Total Expenditure** became more important (+0.31 and +0.47 increases), indicating outliers were masking their true contributions
+
+4. **Practical Implications**: For policy applications, the cleaned model is more reliable for predicting outcomes in typical development scenarios. The stability of HIV/AIDS, Schooling, and Healthcare Expenditure as top predictors reinforces their importance regardless of country context, while the alcohol relationship appears less robust and may reflect confounding rather than causal effects.
