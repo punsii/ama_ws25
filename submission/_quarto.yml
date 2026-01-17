@@ -35,6 +35,10 @@ website:
             text: Clustering
           - href: chapters/5_regression.qmd
             text: Regression Analysis
+          - href: chapters/5_regression_2.qmd
+            text: Regression Analysis II
+          - href: chapters/5_regression_supervised_pca.qmd
+            text: Regression with Supervised PCA
           - href: chapters/6_model_selection.qmd
             text: Model Selection
 
