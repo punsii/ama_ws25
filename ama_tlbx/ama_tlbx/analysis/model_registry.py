@@ -23,12 +23,19 @@ class ModelEntry:
     """Typed model registry entry for reporting workflows."""
 
     name: str
+    """Registry key identifying the model."""
     rhs: str
+    """RHS of the fitted model formula."""
     diag: RegressionResult
+    """Full diagnostics bundle returned by OLS fitting."""
     metrics: MetricsResult
-    eval_metrics: EvalMetrics | None = None
+    """Primary fit metrics extracted from the diagnostics."""
     eval_metrics_by_label: dict[str, EvalMetrics] = field(default_factory=dict)
+    """Evaluation metrics keyed by a label (e.g., year2011)."""
     selection_path: SelectionPathResult | None = None
+    """Selection-path metadata if the model originates from stepwise search."""
+    data: pd.DataFrame | None = None
+    """Training dataframe used to fit the model (if available)."""
 
 
 @dataclass
@@ -37,6 +44,39 @@ class ModelRegistry:
 
     eval_year: int = 2011
     models: dict[str, ModelEntry] = field(default_factory=dict)
+
+    def _default_label(self, label: str | None) -> str:
+        return label or f"year{self.eval_year}"
+
+    def _ensure_name(self, name: str | None) -> str:
+        return name or f"model_{len(self.models) + 1}"
+
+    def _register(
+        self,
+        *,
+        name: str,
+        rhs: str,
+        diag: RegressionResult,
+        selection_path: SelectionPathResult | None = None,
+        data: pd.DataFrame | None = None,
+    ) -> ModelEntry:
+        entry = ModelEntry(
+            name=name,
+            rhs=rhs,
+            diag=diag,
+            metrics=diag.metrics,
+            eval_metrics_by_label={},
+            selection_path=selection_path,
+            data=data,
+        )
+        self.add(entry, overwrite=True)
+        return entry
+
+    @staticmethod
+    def _frame_from_model(model: object) -> pd.DataFrame | None:
+        """Best-effort extraction of the training DataFrame from a statsmodels result."""
+        data = getattr(getattr(model, "model", None), "data", None)
+        return getattr(data, "frame", None) if data is not None else None
 
     def add(self, entry: ModelEntry, *, overwrite: bool = False) -> None:
         """Add an entry to the registry (optionally overwriting by name)."""
@@ -75,7 +115,7 @@ class ModelRegistry:
             random_state: Random state for reproducibility.
             refit: If True, refit even if model with `name` exists.
         """
-        name = name or f"model_{len(self.models) + 1}"
+        name = self._ensure_name(name)
         if name in self.models and not refit:
             return self.models[name].diag
         if rhs is not None:
@@ -96,15 +136,7 @@ class ModelRegistry:
                 random_state=random_state,
             )
 
-        self.add(
-            ModelEntry(
-                name=name,
-                rhs=rhs,
-                diag=diag,
-                metrics=diag.metrics,
-            ),
-            overwrite=True,
-        )
+        self._register(name=name, rhs=rhs, diag=diag, data=df)
 
         return diag
 
@@ -125,14 +157,13 @@ class ModelRegistry:
             target_col: Name of the target column in `df`.
         """
         entry = self.get(name)
-        label = label or f"year{self.eval_year}"
+        label = self._default_label(label)
         metrics = evaluate_model(
             entry.diag,
             df,
             label=label,
             target_col=target_col,
         )
-        entry.eval_metrics = metrics
         entry.eval_metrics_by_label[label] = metrics
         return metrics
 
@@ -182,7 +213,7 @@ class ModelRegistry:
         - [Wikipedia :: Bayesian information criterion](https://en.wikipedia.org/wiki/Bayesian_information_criterion)
         - [Wikipedia :: Mallows's Cp](https://en.wikipedia.org/wiki/Mallows%27s_Cp)
         """
-        name = name or f"model_{len(self.models) + 1}"
+        name = self._ensure_name(name)
         if name in self.models and not refit:
             return self.models[name].diag
 
@@ -241,6 +272,7 @@ class ModelRegistry:
                 shuffle_cv=shuffle_cv,
                 random_state=random_state,
             )
+            entry_data = df or self._frame_from_model(step.model)
         else:
             if df is None:
                 raise ValueError("df is required when reuse_path_model is False.")
@@ -252,16 +284,14 @@ class ModelRegistry:
                 shuffle_cv=shuffle_cv,
                 random_state=random_state,
             )
+            entry_data = df
 
-        self.add(
-            ModelEntry(
-                name=name,
-                rhs=step.rhs,
-                diag=diag,
-                metrics=diag.metrics,
-                selection_path=path,
-            ),
-            overwrite=True,
+        self._register(
+            name=name,
+            rhs=step.rhs,
+            diag=diag,
+            selection_path=path,
+            data=entry_data,
         )
         return diag
 
@@ -271,25 +301,14 @@ class ModelRegistry:
         for entry in self.models.values():
             row = {"model": entry.name, "rhs": entry.rhs}
             row.update(asdict(entry.metrics))
-            if entry.eval_metrics_by_label:
-                for label, metrics in entry.eval_metrics_by_label.items():
-                    prefix = label or f"year{self.eval_year}"
-                    row.update(
-                        {
-                            f"{prefix}_rmse": metrics.rmse,
-                            f"{prefix}_mae": metrics.mae,
-                            f"{prefix}_r2": metrics.r2,
-                            f"{prefix}_n_obs": metrics.n_obs,
-                        },
-                    )
-            elif entry.eval_metrics is not None:
-                prefix = entry.eval_metrics.label or f"year{self.eval_year}"
+            for label, metrics in entry.eval_metrics_by_label.items():
+                prefix = label or f"year{self.eval_year}"
                 row.update(
                     {
-                        f"{prefix}_rmse": entry.eval_metrics.rmse,
-                        f"{prefix}_mae": entry.eval_metrics.mae,
-                        f"{prefix}_r2": entry.eval_metrics.r2,
-                        f"{prefix}_n_obs": entry.eval_metrics.n_obs,
+                        f"{prefix}_rmse": metrics.rmse,
+                        f"{prefix}_mae": metrics.mae,
+                        f"{prefix}_r2": metrics.r2,
+                        f"{prefix}_n_obs": metrics.n_obs,
                     },
                 )
             rows.append(row)
@@ -343,8 +362,6 @@ class ModelRegistry:
                 refit=refit,
                 reuse_path_model=reuse_path_model,
             )
-            entry = self.get(name)
-            entry.selection_path = path
             rows.append(
                 {
                     "model": name,

@@ -16,10 +16,10 @@ def plot_group_variance_summary(
     figsize: tuple[int, int] = (10, 6),
     annotate: bool = True,
 ) -> Figure:
-    """Plot cumulative explained variance per group.
+    """Plot explained variance per group with stacked bars for retained PCs.
 
-    Each bar shows the cumulative variance explained by the retained PCs
-    for that group. The variance thresholds (min_var_explained) are shown
+    Each bar shows the variance explained by retained PCs for that group,
+    stacked by component. The variance thresholds (min_var_explained) are shown
     as a horizontal reference line when identical, or as annotations when different.
 
     Args:
@@ -33,48 +33,52 @@ def plot_group_variance_summary(
     if not result.group_results:
         raise ValueError("PCADimReductionResult contains no group_results.")
 
-    data: list[dict[str, object]] = []
-    for gr, threshold in zip(result.group_results, result.min_var_explained_per_group, strict=False):
-        data.append(
-            {
-                "group": gr.group.name,
-                "cumulative_explained": gr.cumulative_variance_explained,
-                "threshold": threshold,
-                "n_components": gr.n_components,
-            },
-        )
-
-    df = pd.DataFrame(data)
-
     fig, ax = plt.subplots(figsize=figsize)
-    sns.barplot(
-        data=df,
-        x="group",
-        y="cumulative_explained",
-        ax=ax,
-        color="tab:blue",
-    )
+    group_names = [gr.group.name.replace("_", " ").title() for gr in result.group_results]
+    max_components = max(gr.n_components for gr in result.group_results)
+    colors = sns.color_palette("tab10", max_components)
+    bottoms = np.zeros(len(result.group_results))
+
+    for comp_idx in range(max_components):
+        heights = [
+            float(gr.explained_variance_retained.iloc[comp_idx]) if comp_idx < gr.n_components else 0.0
+            for gr in result.group_results
+        ]
+        ax.bar(
+            group_names,
+            heights,
+            bottom=bottoms,
+            color=colors[comp_idx],
+            label=f"PC{comp_idx + 1}",
+        )
+        bottoms += np.array(heights)
 
     ax.set_ylabel("Cumulative Variance Explained")
     ax.set_xlabel("Feature Group")
     ax.set_ylim(0.0, 1.05)
     ax.set_yticks([i / 10 for i in range(11)])
     ax.set_title("Variance Retained per Feature Group")
+    ax.set_xticklabels(
+        ax.get_xticklabels(),
+        rotation=30,
+        ha="right",
+        rotation_mode="anchor",
+    )
 
     # Annotate with number of PCs
     if annotate:
-        for i, row in df.iterrows():
+        for i, gr in enumerate(result.group_results):
             ax.text(
                 i,
-                row["cumulative_explained"] + 0.02,
-                f"k={row['n_components']}",
+                bottoms[i] + 0.02,
+                f"k={gr.n_components}",
                 ha="center",
                 va="bottom",
                 fontsize=9,
             )
 
     # Show threshold line if all equal
-    unique_thresholds = df["threshold"].unique()
+    unique_thresholds = pd.unique(result.min_var_explained_per_group)
     if len(unique_thresholds) == 1:
         thr = float(unique_thresholds[0])
         ax.axhline(
@@ -85,9 +89,11 @@ def plot_group_variance_summary(
             label=f"min_var_explained={thr:.2f}",
         )
         ax.legend(loc="lower right")
+    else:
+        ax.legend(loc="lower right")
 
-        fig.tight_layout()
-        return fig
+    fig.tight_layout()
+    return fig
 
 
 def plot_group_compression(
@@ -112,19 +118,19 @@ def plot_group_compression(
 
     rows: list[dict[str, object]] = []
     for gr in result.group_results:
-        rows.append(
-            {
-                "group": gr.group.name,
-                "kind": "original_features",
-                "count": gr.n_features,
-            },
-        )
-        rows.append(
-            {
-                "group": gr.group.name,
-                "kind": "retained_pcs",
-                "count": gr.n_components,
-            },
+        rows.extend(
+            [
+                {
+                    "group": gr.group.name,
+                    "kind": "original_features",
+                    "count": gr.n_features,
+                },
+                {
+                    "group": gr.group.name,
+                    "kind": "retained_pcs",
+                    "count": gr.n_components,
+                },
+            ],
         )
 
     df = pd.DataFrame(rows)
@@ -184,7 +190,7 @@ def plot_group_loadings(
 
         n_retained = gr.n_components
         n_total = len(all_loadings.columns)
-        y_labels = [f"{col} (y)" if i < n_retained else f"{col} (n)" for i, col in enumerate(all_loadings.columns)]
+        y_labels = [str(col) for col in all_loadings.columns]
 
         sns.heatmap(
             all_loadings.T,
@@ -203,12 +209,20 @@ def plot_group_loadings(
             ax.axhspan(i, i + 1, facecolor="lightgray", alpha=0.2, zorder=0)
 
         ax.set_title(
-            f"{gr.group.name}\n({gr.cumulative_variance_explained:.1%} var., {n_retained}/{n_total} PCs)",
+            f"{gr.group.name.replace('_', ' ').title()}\n({gr.cumulative_variance_explained:.1%} var., {n_retained}/{n_total} PCs)",
             fontsize=10,
             fontweight="bold",
         )
-        ax.set_ylabel("Principal Component", fontsize=9)
-        ax.tick_params(axis="x", rotation=45, labelsize=9)
+
+        ax.set_xticklabels(
+            ax.get_xticklabels(),
+            rotation=45,
+            ha="right",
+            rotation_mode="anchor",
+        )
+        ax.tick_params(axis="x", labelsize=9)
+        ax.set_yticklabels(ax.get_yticklabels(), rotation=0, ha="right")
+        ax.tick_params(axis="y", labelsize=9, pad=2)
 
     fig.suptitle("Feature Loadings on PC1 by Group", y=1.02, fontsize=12, fontweight="bold")
     fig.tight_layout()

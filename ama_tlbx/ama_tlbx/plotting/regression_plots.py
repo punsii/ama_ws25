@@ -11,8 +11,15 @@ import seaborn as sns
 from statsmodels.graphics.gofplots import qqplot
 from statsmodels.graphics.regressionplots import influence_plot
 
-from ama_tlbx.analysis.ols_helper import cooksd_contours, design_matrix_for_data, design_matrix_from_model
+from ama_tlbx.analysis.ols_helper import (
+    cooksd_contours,
+    design_matrix_for_data,
+    design_matrix_from_model,
+)
 from ama_tlbx.data import LECol
+
+
+_MAX_DISCRETE_LEVELS = 6
 
 
 if TYPE_CHECKING:
@@ -20,7 +27,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
     from ama_tlbx.analysis.model_selection import SelectionPathResult
-    from ama_tlbx.analysis.ols_helper import RegressionResult
+    from ama_tlbx.analysis.ols_helper import EvalMetrics, RegressionResult
 
 
 def plot_residuals_vs_fitted(
@@ -201,6 +208,103 @@ def plot_observed_vs_fitted(
     return ax
 
 
+def plot_calibration(  # noqa: C901, PLR0913, PLR0914, PLR2004
+    metrics: EvalMetrics,
+    *,
+    ax: plt.Axes | None = None,
+    bins: int = 10,
+    bootstrap: int = 300,
+    ci: float = 0.95,
+    random_state: int | None = None,
+    scatter_alpha: float = 0.4,
+    show_binned: bool = True,
+) -> plt.Axes:
+    """Plot observed vs predicted values on an evaluation set with bootstrap CIs.
+
+    The calibration curve is shown as binned averages (by predicted value
+    quantiles) with bootstrap confidence intervals for the mean observed target
+    within each bin.
+
+    Args:
+        metrics: Evaluation metrics containing ``y_true`` and ``y_pred``.
+        ax: Optional matplotlib axis.
+        bins: Number of quantile bins for the calibration curve.
+        bootstrap: Number of bootstrap resamples per bin (0 disables CIs).
+        ci: Confidence level, e.g. 0.95.
+        random_state: RNG seed.
+        scatter_alpha: Alpha for the raw scatter points.
+        show_binned: If True, add binned mean calibration curve.
+    """
+    if not (0 < ci < 1):
+        raise ValueError("ci must be in (0, 1).")
+    if bins < 2:
+        raise ValueError("bins must be >= 2.")
+    if bootstrap < 0:
+        raise ValueError("bootstrap must be >= 0.")
+
+    ax = ax or plt.gca()
+    df_plot = (
+        pd.DataFrame(
+            {
+                "y_pred": pd.Series(metrics.y_pred, name="y_pred").astype(float),
+                "y_true": pd.Series(metrics.y_true, name="y_true").astype(float),
+            },
+        )
+        .dropna()
+        .sort_values("y_pred")
+    )
+
+    sns.scatterplot(data=df_plot, x="y_pred", y="y_true", alpha=scatter_alpha, ax=ax)
+    line_min = float(min(df_plot["y_pred"].min(), df_plot["y_true"].min()))
+    line_max = float(max(df_plot["y_pred"].max(), df_plot["y_true"].max()))
+    ax.plot([line_min, line_max], [line_min, line_max], color="tab:red", linestyle="--", linewidth=1.5)
+
+    if show_binned and not df_plot.empty:
+        pred_vals = df_plot["y_pred"].to_numpy()
+        edges = np.unique(np.quantile(pred_vals, np.linspace(0, 1, bins + 1)))
+        if edges.size >= 3:
+            df_plot = df_plot.assign(
+                pred_bin=pd.cut(df_plot["y_pred"], bins=edges, include_lowest=True, duplicates="drop"),
+            )
+            grouped = df_plot.dropna(subset=["pred_bin"]).groupby("pred_bin", observed=True)
+            bin_pred = grouped["y_pred"].mean()
+            bin_obs = grouped["y_true"].mean()
+
+            ax.plot(bin_pred, bin_obs, color="black", marker="o", linewidth=2.0, label="binned mean")
+
+            if bootstrap > 0:
+                rng = np.random.default_rng(random_state)
+                alpha = (1.0 - ci) / 2.0
+                ci_low: list[float] = []
+                ci_high: list[float] = []
+                for _, grp in grouped:
+                    values = grp["y_true"].to_numpy()
+                    n = values.size
+                    if n == 0:
+                        ci_low.append(float("nan"))
+                        ci_high.append(float("nan"))
+                        continue
+                    if n == 1:
+                        ci_low.append(float(values[0]))
+                        ci_high.append(float(values[0]))
+                        continue
+                    boot_means = np.empty(bootstrap, dtype=float)
+                    for b in range(bootstrap):
+                        sample = rng.choice(values, size=n, replace=True)
+                        boot_means[b] = float(np.mean(sample))
+                    ci_low.append(float(np.quantile(boot_means, alpha)))
+                    ci_high.append(float(np.quantile(boot_means, 1 - alpha)))
+
+                ax.fill_between(bin_pred.to_numpy(), ci_low, ci_high, color="black", alpha=0.15, linewidth=0)
+                ax.legend(loc="best")
+
+    label = metrics.label or "eval"
+    ax.set_title(f"Calibration ({label}) — RMSE={metrics.rmse:.2f}, R²={metrics.r2:.3f}")
+    ax.set_xlabel("Predicted life expectancy")
+    ax.set_ylabel("Observed life expectancy")
+    return ax
+
+
 def plot_residual_hist(
     result: RegressionResult,
     *,
@@ -360,7 +464,13 @@ def plot_interaction_effect(  # noqa: C901, PLR0912, PLR0913
     if by in categorical_map:
         by_levels = np.asarray(categorical_map[by])
     elif pd.api.types.is_numeric_dtype(by_series):
-        by_levels = np.quantile(by_series.dropna(), [0.25, 0.5, 0.75])
+        unique = np.sort(pd.unique(by_series.dropna()))
+        # Treat small-cardinality numeric variables (e.g., 0/1 dummies) as discrete levels.
+        by_levels = (
+            unique
+            if unique.size <= _MAX_DISCRETE_LEVELS
+            else np.unique(np.quantile(by_series.dropna(), [0.25, 0.5, 0.75]))
+        )
     else:
         by_levels = by_series.dropna().unique()
 

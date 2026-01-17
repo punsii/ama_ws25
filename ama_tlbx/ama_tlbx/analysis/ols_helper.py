@@ -12,6 +12,8 @@ and domain knowledge.
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, overload
 
@@ -412,6 +414,281 @@ class RegressionResult:
     def max_cooks(self) -> float:
         """Maximum Cook's distance across observations."""
         return np.max(self.assumptions.cooks_distance)
+
+    def __repr__(self) -> str:
+        metrics = self.metrics
+        assumptions = self.assumptions
+
+        def fmt(value: float | None, decimals: int = 3) -> str:
+            if value is None:
+                return "nan"
+            if isinstance(value, float) and np.isnan(value):
+                return "nan"
+            return f"{value:.{decimals}f}"
+
+        n_obs = int(metrics.n_obs) if metrics.n_obs is not None else None
+        k_params = len(self.model.params) if hasattr(self.model, "params") else 0
+        formula = getattr(getattr(self.model, "model", None), "formula", None)
+
+        cv_folds = len(metrics.cv_scores) if metrics.cv_scores is not None else 0
+        cv_block = (
+            f"cv_rmse={fmt(metrics.cv_rmse)}, folds={cv_folds}"
+            if metrics.cv_rmse is not None or metrics.cv_scores is not None
+            else "cv_rmse=nan, folds=0"
+        )
+
+        vif_series = assumptions.vif if isinstance(assumptions.vif, pd.Series) else pd.Series(assumptions.vif)
+        max_vif = float(vif_series.max()) if not vif_series.empty else float("nan")
+        max_cooks = (
+            float(np.max(assumptions.cooks_distance))
+            if hasattr(assumptions.cooks_distance, "__len__") and len(assumptions.cooks_distance) > 0
+            else float("nan")
+        )
+
+        lines = [
+            "RegressionResult",
+            "-" * 72,
+            f"Model      : {self.model.__class__.__name__}",
+            f"Observations: {n_obs}  |  Params: {k_params}",
+        ]
+        if formula:
+            lines.append(f"Formula    : {formula}")
+        lines.extend(
+            [
+                "",
+                "Fit metrics:",
+                f"  r2={fmt(metrics.r2)} | adj_r2={fmt(metrics.adj_r2)} | rmse={fmt(metrics.rmse)}"
+                f" | mae={fmt(metrics.mae)} | mape={fmt(metrics.mape)}",
+                "Information criteria:",
+                f"  aic={fmt(metrics.aic)} | aicc={fmt(metrics.aicc)} | bic={fmt(metrics.bic)} | mdl={fmt(metrics.mdl)}",
+                f"Cross-validation: {cv_block}",
+                "Diagnostics:",
+                f"  dw={fmt(assumptions.durbin_watson)} | jb_p={fmt(assumptions.jarque_bera_pvalue)}"
+                f" | shapiro_p={fmt(assumptions.shapiro_pvalue)} | bp_p={fmt(assumptions.breusch_pagan_pvalue)}"
+                f" | white_p={fmt(assumptions.white_pvalue)} | max_vif={fmt(max_vif)} | max_cooks={fmt(max_cooks)}",
+                "",
+                "Tip: call print_summary() for the full statsmodels output.",
+            ],
+        )
+        return "\n".join(lines)
+
+    def _repr_html_(self) -> str:
+        metrics = self.metrics
+        assumptions = self.assumptions
+
+        def fmt(value: float | None, decimals: int = 3) -> str:
+            if value is None:
+                return "nan"
+            if isinstance(value, float) and np.isnan(value):
+                return "nan"
+            return f"{value:.{decimals}f}"
+
+        def p_class(p_value: float) -> str:
+            if p_value < 0.01:
+                return "rr-bad"
+            if p_value < 0.05:
+                return "rr-warn"
+            return "rr-ok"
+
+        def tf_expr(term: str) -> str:
+            label = LECol.transform_label(term)
+            try:
+                col_enum = LECol(term)
+            except ValueError:
+                col_enum = None
+
+            if label == "dummy":
+                return f"dummy({term})"
+            if label == "custom":
+                return term
+            if label == "none":
+                expr = term
+            elif label == "_log1p_under_coverage":
+                expr = f"log1p(100 - {term})"
+            else:
+                expr = f"{label}({term})"
+
+            if col_enum is not None and col_enum not in {LECol.TARGET, LECol.YEAR, LECol.STATUS}:
+                expr = f"z({expr})"
+            return expr
+
+        def format_formula_with_transforms(raw_formula: str) -> str:
+            if "~" not in raw_formula:
+                return raw_formula
+
+            lhs, rhs = raw_formula.split("~", maxsplit=1)
+            rhs_display = rhs
+
+            candidates = {str(col) for col in LECol}
+            candidates.update({col for col in self.design_matrix.columns if col.startswith("status_")})
+            for col in sorted(candidates, key=len, reverse=True):
+                repl = tf_expr(col)
+                pattern = rf"(?<![\\w\\.]){re.escape(col)}(?![\\w\\.])"
+                rhs_display = re.sub(pattern, repl, rhs_display)
+
+            return f"{lhs.strip()} ~ {rhs_display.strip()}"
+
+        n_obs = int(metrics.n_obs) if metrics.n_obs is not None else None
+        k_params = len(self.model.params) if hasattr(self.model, "params") else 0
+        formula = getattr(getattr(self.model, "model", None), "formula", None)
+        formula_display = format_formula_with_transforms(formula) if formula else ""
+        formula_html = html.escape(formula_display) if formula_display else ""
+
+        cv_folds = len(metrics.cv_scores) if metrics.cv_scores is not None else 0
+        cv_rmse = fmt(metrics.cv_rmse)
+
+        vif_series = assumptions.vif if isinstance(assumptions.vif, pd.Series) else pd.Series(assumptions.vif)
+        max_vif = float(vif_series.max()) if not vif_series.empty else float("nan")
+        max_cooks = (
+            float(np.max(assumptions.cooks_distance))
+            if hasattr(assumptions.cooks_distance, "__len__") and len(assumptions.cooks_distance) > 0
+            else float("nan")
+        )
+
+        try:
+            summary_html = self.model.summary().as_html()
+        except Exception:
+            summary_html = f"<pre>{html.escape(str(self.model.summary()))}</pre>"
+
+        assumptions_text = html.escape(str(assumptions))
+
+        return f"""
+<style>
+  .rr-wrap {{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    border: 1px solid #e3e3e3;
+    border-radius: 6px;
+    padding: 12px 14px;
+    background: #fbfbfb;
+    color: #111;
+  }}
+  .rr-title {{
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 6px;
+  }}
+  .rr-sub {{
+    color: #64748b;
+    margin-bottom: 8px;
+  }}
+  .rr-formula {{
+    margin-bottom: 8px;
+  }}
+  .rr-section {{
+    margin-top: 10px;
+  }}
+  .rr-label {{
+    color: #0f766e;
+    font-weight: 600;
+  }}
+  .rr-kv {{
+    margin: 2px 0;
+  }}
+  .rr-ok {{ color: #0f766e; }}
+  .rr-warn {{ color: #b45309; }}
+  .rr-bad {{ color: #b91c1c; }}
+  .rr-note {{
+    margin-top: 10px;
+    color: #475569;
+  }}
+  .rr-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+  }}
+  .rr-card {{
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 8px 10px;
+    background: #ffffff;
+  }}
+  .rr-card .rr-label {{
+    margin-bottom: 4px;
+  }}
+  .rr-pre {{
+    background: #ffffff;
+    color: #111;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    margin: 6px 0 0 0;
+  }}
+  .rr-summary {{
+    margin-top: 6px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 8px 10px;
+    overflow-x: auto;
+  }}
+  .rr-summary table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }}
+  .rr-summary th, .rr-summary td {{
+    padding: 3px 6px;
+    border-bottom: 1px solid #e5e7eb;
+  }}
+  .rr-summary th {{
+    text-align: left;
+    color: #0f172a;
+  }}
+  details.rr-details {{
+    margin-top: 10px;
+  }}
+  details.rr-details > summary {{
+    cursor: pointer;
+    color: #0f766e;
+    font-weight: 600;
+  }}
+</style>
+<div class="rr-wrap">
+  <div class="rr-title">RegressionResult</div>
+  <div class="rr-sub">Model: {html.escape(self.model.__class__.__name__)} | Observations: {n_obs} | Params: {k_params}</div>
+  {f'<div class="rr-formula"><span class="rr-label">Formula</span>: {formula_html}</div>' if formula else ""}
+
+  <div class="rr-section rr-grid">
+    <div class="rr-card">
+      <div class="rr-label">Fit metrics</div>
+      <div class="rr-kv">r2={fmt(metrics.r2)} | adj_r2={fmt(metrics.adj_r2)}</div>
+      <div class="rr-kv">rmse={fmt(metrics.rmse)} | mae={fmt(metrics.mae)} | mape={fmt(metrics.mape)}</div>
+    </div>
+    <div class="rr-card">
+      <div class="rr-label">Information criteria</div>
+      <div class="rr-kv">aic={fmt(metrics.aic)} | aicc={fmt(metrics.aicc)}</div>
+      <div class="rr-kv">bic={fmt(metrics.bic)} | mdl={fmt(metrics.mdl)}</div>
+    </div>
+    <div class="rr-card">
+      <div class="rr-label">Cross-validation</div>
+      <div class="rr-kv">cv_rmse={cv_rmse} | folds={cv_folds}</div>
+    </div>
+    <div class="rr-card">
+      <div class="rr-label">Diagnostics</div>
+      <div class="rr-kv">dw={fmt(assumptions.durbin_watson)}</div>
+      <div class="rr-kv">jb_p=<span class="{p_class(assumptions.jarque_bera_pvalue)}">{fmt(assumptions.jarque_bera_pvalue)}</span> | shapiro_p=<span class="{p_class(assumptions.shapiro_pvalue)}">{fmt(assumptions.shapiro_pvalue)}</span></div>
+      <div class="rr-kv">bp_p=<span class="{p_class(assumptions.breusch_pagan_pvalue)}">{fmt(assumptions.breusch_pagan_pvalue)}</span> | white_p=<span class="{p_class(assumptions.white_pvalue)}">{fmt(assumptions.white_pvalue)}</span></div>
+      <div class="rr-kv">max_vif={fmt(max_vif)} | max_cooks={fmt(max_cooks)}</div>
+    </div>
+  </div>
+
+  <details class="rr-details" open>
+    <summary>Statsmodels OLS summary</summary>
+    <div class="rr-summary">{summary_html}</div>
+  </details>
+
+  <details class="rr-details" open>
+    <summary>Assumption checks (full)</summary>
+    <pre class="rr-pre">{assumptions_text}</pre>
+  </details>
+
+  <div class="rr-note">Tip: call <code>print_summary()</code> for the full statsmodels output.</div>
+</div>
+"""
 
     # ------------------------------------------------------------------ plotting shortcuts
     def plot_residuals_vs_fitted(self, **kwargs: object) -> Axes:
@@ -847,15 +1124,155 @@ def design_matrix_for_data(
     return matrices[0]
 
 
-@dataclass
+@dataclass(frozen=True)
 class EvalMetrics:
-    """Evaluation metrics computed on a holdout dataset."""
+    """Evaluation metrics and predictions computed on a holdout dataset.
 
+    This result object is intended to be stored in
+    :attr:`ama_tlbx.analysis.model_registry.ModelEntry.eval_metrics_by_label` by
+    :meth:`ama_tlbx.analysis.model_registry.ModelRegistry.evaluate_on`.
+
+    Attributes:
+        y_true: Observed target values aligned to ``y_pred``.
+        y_pred: Model predictions aligned to ``y_true``.
+        rmse: Root mean squared error (in target units).
+        mae: Mean absolute error (in target units).
+        r2: Coefficient of determination :math:`R^2`.
+        n_obs: Number of observations used for evaluation after dropping NAs.
+        label: Optional label for this evaluation (e.g., ``"year2011"``).
+    """
+
+    y_true: pd.Series
+    y_pred: pd.Series
     rmse: float
     mae: float
     r2: float
     n_obs: float
     label: str | None = None
+
+    def __repr__(self) -> str:  # pragma: no cover (presentation helper)
+        label = self.label or "eval"
+        n_obs = int(self.n_obs)
+        return (
+            f"EvalMetrics(label={label!r}, n_obs={n_obs}, rmse={self.rmse:.3f}, mae={self.mae:.3f}, r2={self.r2:.3f})"
+        )
+
+    def _repr_html_(self) -> str:  # pragma: no cover (presentation helper)
+        label = html.escape(self.label or "eval")
+        n_obs = int(self.n_obs)
+        return f"""
+<div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace">
+  <div style="font-weight: 700; margin-bottom: 6px;">EvalMetrics</div>
+  <table style="border-collapse: collapse;">
+    <tr><td style="padding: 2px 8px 2px 0;">label</td><td style="padding: 2px 0;">{label}</td></tr>
+    <tr><td style="padding: 2px 8px 2px 0;">n_obs</td><td style="padding: 2px 0;">{n_obs}</td></tr>
+    <tr><td style="padding: 2px 8px 2px 0;">rmse</td><td style="padding: 2px 0;">{self.rmse:.3f}</td></tr>
+    <tr><td style="padding: 2px 8px 2px 0;">mae</td><td style="padding: 2px 0;">{self.mae:.3f}</td></tr>
+    <tr><td style="padding: 2px 8px 2px 0;">r2</td><td style="padding: 2px 0;">{self.r2:.3f}</td></tr>
+  </table>
+  <div style="margin-top: 6px; font-size: 12px; opacity: 0.8;">
+    Tip: call <code>plot_calibration()</code> for a calibration plot.
+  </div>
+</div>
+"""
+
+    @property
+    def residuals(self) -> pd.Series:
+        """Evaluation residuals ``y_true - y_pred`` aligned to the evaluation index."""
+        return (self.y_true - self.y_pred).rename("residual")
+
+    def bootstrap_ci(
+        self,
+        *,
+        n_bootstrap: int = 500,
+        ci: float = 0.95,
+        random_state: int | None = None,
+    ) -> pd.DataFrame:
+        """Bootstrap confidence intervals for RMSE/MAE/R² on the evaluation set.
+
+        Uses a non-parametric bootstrap over paired observations
+        ``(y_true, y_pred)``. This avoids relying on normality assumptions for
+        residuals, but it does *not* capture model uncertainty from refitting
+        on different training samples.
+
+        Args:
+            n_bootstrap: Number of bootstrap resamples.
+            ci: Confidence level, e.g. 0.95 for a 95% interval.
+            random_state: RNG seed for reproducibility.
+
+        Returns:
+            Tidy DataFrame with point estimates and bootstrap CI bounds.
+        """
+        if not (0 < ci < 1):
+            raise ValueError("ci must be in (0, 1).")
+        if n_bootstrap <= 0:
+            raise ValueError("n_bootstrap must be > 0.")
+
+        y = self.y_true.to_numpy(dtype=float)
+        pred = self.y_pred.to_numpy(dtype=float)
+        n = y.shape[0]
+        rng = np.random.default_rng(random_state)
+        alpha = (1.0 - ci) / 2.0
+
+        rmse_boot = np.empty(n_bootstrap, dtype=float)
+        mae_boot = np.empty(n_bootstrap, dtype=float)
+        r2_boot = np.empty(n_bootstrap, dtype=float)
+        for i in range(n_bootstrap):
+            idx = rng.integers(0, n, n)
+            y_b = y[idx]
+            pred_b = pred[idx]
+            rmse_boot[i] = float(np.sqrt(np.mean((y_b - pred_b) ** 2)))
+            mae_boot[i] = float(np.mean(np.abs(y_b - pred_b)))
+            r2_boot[i] = float(r2_score(y_b, pred_b))
+
+        return pd.DataFrame(
+            [
+                {
+                    "metric": "rmse",
+                    "estimate": self.rmse,
+                    "ci_low": float(np.quantile(rmse_boot, alpha)),
+                    "ci_high": float(np.quantile(rmse_boot, 1 - alpha)),
+                },
+                {
+                    "metric": "mae",
+                    "estimate": self.mae,
+                    "ci_low": float(np.quantile(mae_boot, alpha)),
+                    "ci_high": float(np.quantile(mae_boot, 1 - alpha)),
+                },
+                {
+                    "metric": "r2",
+                    "estimate": self.r2,
+                    "ci_low": float(np.quantile(r2_boot, alpha)),
+                    "ci_high": float(np.quantile(r2_boot, 1 - alpha)),
+                },
+            ],
+        )
+
+    def plot_calibration(self, **kwargs: object):
+        """Plot observed vs predicted calibration on the evaluation set."""
+        from ama_tlbx.plotting.regression_plots import plot_calibration  # noqa: PLC0415
+
+        return plot_calibration(self, **kwargs)
+
+    def plot_calibrtion(self, **kwargs: object):  # pragma: no cover
+        """Backward-compatible alias for :meth:`plot_calibration`."""
+        return self.plot_calibration(**kwargs)
+
+    @staticmethod
+    def collate_to_df(metrics_list: list[EvalMetrics]) -> pd.DataFrame:
+        """Collate a list of EvalMetrics into a tidy DataFrame."""
+        return pd.DataFrame.from_records(
+            [
+                {
+                    "label": em.label,
+                    "rmse": em.rmse,
+                    "mae": em.mae,
+                    "r2": em.r2,
+                    "n_obs": em.n_obs,
+                }
+                for em in metrics_list
+            ],
+        )
 
 
 def evaluate_model(
@@ -868,23 +1285,25 @@ def evaluate_model(
     """Evaluate a fitted model on a new dataset using aligned design matrices."""
     design_info = getattr(getattr(diag.model.model, "data", None), "design_info", None)
     if design_info is not None:
-        pred = pd.Series(diag.model.predict(df), index=df.index)
+        pred = pd.Series(diag.model.predict(df), index=df.index, name="y_pred")
     else:
         exog = design_matrix_for_data(diag.model, df)
-        pred = pd.Series(diag.model.predict(exog), index=exog.index)
-    y = df[target_col].astype(float)
+        pred = pd.Series(diag.model.predict(exog), index=exog.index, name="y_pred")
+    y = df[target_col].astype(float).rename("y_true")
     mask = y.notna() & pred.notna()
-    y = y.loc[mask]
-    pred = pred.loc[mask]
-    rmse = float(np.sqrt(((y - pred) ** 2).mean()))
-    mae = float((y - pred).abs().mean())
-    r2 = float(1.0 - ((y - pred) ** 2).sum() / ((y - y.mean()) ** 2).sum())
+    y_true = y.loc[mask]
+    y_pred = pred.loc[mask]
+    rmse = float(root_mean_squared_error(y_true, y_pred))
+    mae = float(mean_absolute_error(y_true, y_pred))
+    r2 = float(r2_score(y_true, y_pred))
     return EvalMetrics(
+        y_true=y_true,
+        y_pred=y_pred,
         label=label,
         rmse=rmse,
         mae=mae,
         r2=r2,
-        n_obs=float(len(y)),
+        n_obs=float(len(y_true)),
     )
 
 
