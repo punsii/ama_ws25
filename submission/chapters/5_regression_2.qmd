@@ -1,5 +1,5 @@
 ---
-title: "Regression: Explaining and Predicting Life Expectancy (Revised Template)"
+title: "Regression: Explaining and Predicting Life Expectancy"
 format:
   html:
     toc: true
@@ -7,11 +7,11 @@ format:
 execute:
   warning: false
   message: false
+  cache: true
 ---
 
-# Regression: Explaining and Predicting Life Expectancy (Revised Template)
 
-## Research questions (template)
+## Research questions
 
 This chapter is structured around explicit research questions. We answer each with a focused model, diagnostics, and interpretation.
 
@@ -41,6 +41,10 @@ from IPython.display import display
 from ama_tlbx.analysis import FeatureGroup
 from ama_tlbx.analysis.model_registry import ModelRegistry
 from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.data.utils import (
+    DEFAULT_UNDP_SOCIO_COLUMNS,
+    merge_undp_hdr_features,
+)
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
 from ama_tlbx.data.undp_hdr_columns import UNDPHDRColumn as HDRCol
 from ama_tlbx.data.undp_hdr_dataset import UNDPHDRDataset
@@ -70,25 +74,29 @@ panel_ds = LifeExpectancyDataset.from_csv_updated(
     resolve_nand_pred="carry_forward",
 )
 
-# Merge UNDP HDR HDI for the two evaluation years (upper-bound baseline; see RQ1 discussion).
-hdr_hdi = (
-    UNDPHDRDataset.from_csv(years=[TRAIN_YEAR, HOLDOUT_YEAR])
-    .df[[str(HDRCol.ISO3), str(HDRCol.YEAR), str(HDRCol.HDI)]]
-    .rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
-)
+undp_hdr = UNDPHDRDataset.from_csv(years=[TRAIN_YEAR, HOLDOUT_YEAR])
+undp_columns = [str(HDRCol.HDI), *DEFAULT_UNDP_SOCIO_COLUMNS]
 
-panel_df = (
-    panel_ds.with_iso3()
-    .assign(year=lambda d: d[LECol.YEAR].dt.year.astype(int))
-    .merge(hdr_hdi, on=[HDRCol.ISO3, HDRCol.YEAR], how="left")
-)
+
+def _rename_hdi(dataset: LifeExpectancyDataset) -> LifeExpectancyDataset:
+    df = dataset.df
+    if str(LECol.HDI) not in df.columns and str(HDRCol.HDI) in df.columns:
+        df = df.rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
+    return LifeExpectancyDataset(df=df)
+
 
 df_train = (
     LifeExpectancyDataset.from_csv_updated(
         aggregate_by_country=TRAIN_YEAR,
         resolve_nand_pred="carry_forward",
     )
-    .merge_undp(hdr_hdi.query("year == @TRAIN_YEAR"))
+    .pipe(
+        merge_undp_hdr_features,
+        undp_dataset=undp_hdr,
+        years=[TRAIN_YEAR],
+        columns=undp_columns,
+    )
+    .pipe(_rename_hdi)
     .tf_and_norm()
     .set_index("iso3")
     .drop(columns=[LECol.YEAR])
@@ -99,11 +107,21 @@ df_test = (
         aggregate_by_country=HOLDOUT_YEAR,
         resolve_nand_pred="carry_forward",
     )
-    .merge_undp(hdr_hdi.query("year == @HOLDOUT_YEAR"))
+    .pipe(
+        merge_undp_hdr_features,
+        undp_dataset=undp_hdr,
+        years=[HOLDOUT_YEAR],
+        columns=undp_columns,
+    )
+    .pipe(_rename_hdi)
     .tf_and_norm()
     .set_index("iso3")
     .drop(columns=[LECol.YEAR])
 )
+
+# Guard against duplicate ISO3 keys after UNDP merges.
+df_train = df_train[~df_train.index.duplicated(keep="first")]
+df_test = df_test[~df_test.index.duplicated(keep="first")]
 
 display(df_train.head().round(2))
 ```
@@ -330,6 +348,61 @@ Influence diagnostics indicate that a small subset of countries has disproportio
 In the interpretability-focused models below, we therefore **avoid using HDI**. We also treat `adult_mortality` as a near-tautological benchmark predictor: it provides an informative baseline for predictive performance, but it is too close to the outcome’s definition to serve as the central explanatory variable when the goal is to identify modifiable determinants.
 :::
 
+```{python}
+# | label: undp-socio-pca
+# | code-fold: true
+# Build a UNDP socioeconomic PCA block to stabilize the baseline model.
+undp_candidates = [
+    HDRCol.GNI_PC,
+    HDRCol.EYS,
+    HDRCol.MYS,
+    HDRCol.GDI,
+    HDRCol.GII,
+    HDRCol.COEF_INEQ,
+    HDRCol.LOSS,
+    HDRCol.INEQ_EDU,
+    HDRCol.INEQ_INC,
+    HDRCol.POP_TOTAL,
+    HDRCol.CO2_PROD,
+    HDRCol.MMR,
+    HDRCol.ABR,
+    HDRCol.SE_F,
+    HDRCol.SE_M,
+    HDRCol.PR_F,
+    HDRCol.PR_M,
+    HDRCol.LFPR_F,
+    HDRCol.LFPR_M,
+]
+
+undp_features = []
+for col in undp_candidates:
+    name = str(col)
+    if name in df_train.columns:
+        undp_features.append(name)
+
+undp_features = list(dict.fromkeys(undp_features))
+
+if undp_features:
+    undp_group = FeatureGroup(name="undp_socio", features=undp_features)
+    undp_pca = (
+        LifeExpectancyDataset(df=df_train)
+        .make_pca_dim_reduction_analyzer(
+            feature_groups=[undp_group],
+            standardized=True,
+            min_var_explained=0.8,
+        )
+        .fit()
+        .result()
+    )
+    df_train = undp_pca.reduced_df.assign(**df_train.drop(columns=undp_features))
+    holdout_scaled = undp_pca.transform(holdout_scaled).assign(
+        **holdout_scaled.drop(columns=undp_features)
+    )
+    undp_pcs = undp_pca.group_results[0].pc_scores.columns.tolist()
+else:
+    undp_pcs = []
+```
+
 :::{.callout-note collapse="true"}
 
 ### Baseline: Socioeconomic predictors
@@ -341,36 +414,56 @@ Before testing specific hypotheses about immunization, BMI, or alcohol, we estab
 # | code-fold: true
 econ_pc1 = econ_pcs[0] if econ_pcs else None
 econ_pc2 = econ_pcs[1] if len(econ_pcs) > 1 else None
+undp_pc1 = undp_pcs[0] if undp_pcs else None
 
-base_block = [LECol.SCHOOLING]
-if econ_pc1 is not None:
-    base_block.append(econ_pc1)
+if econ_pc1 is None or econ_pc2 is None:
+    raise ValueError("Economic development PCs missing; check `feature_groups`.")
+if undp_pc1 is None:
+    raise ValueError("UNDP socio PC1 missing; check UNDP merge/PCA block.")
 
-if econ_pc2 is not None:
-    base_block.append(econ_pc2)
-
-train_base = df_train[[LECol.TARGET, *base_block]]
-
-base_diag = registry.fit(
-    train_base,
-    name="m_socioeconomic",
-    rhs=" + ".join(str(c) for c in base_block),
+# (1) econ PCs only
+rhs_socio_1 = " + ".join([str(econ_pc1), str(econ_pc2)])
+socio_1 = registry.fit(
+    df_train[[LECol.TARGET, econ_pc1, econ_pc2]],
+    name="m_socio_eco_pcs",
+    rhs=rhs_socio_1,
 )
-display(base_diag)
+display(socio_1)
+
+# (2) add status + UNDP socio PC1
+rhs_socio_2 = " + ".join([STATUS_DUMMY, str(econ_pc1), str(econ_pc2), str(undp_pc1)])
+socio_2 = registry.fit(
+    df_train[[LECol.TARGET, STATUS_DUMMY, econ_pc1, econ_pc2, undp_pc1]],
+    name="m_socio_eco_undp",
+    rhs=rhs_socio_2,
+)
+display(socio_2)
+
+# (3) status + econ PC1 + quadratic UNDP PC1
+rhs_socio_3 = " + ".join(
+    [STATUS_DUMMY, str(econ_pc1), str(undp_pc1), f"I({undp_pc1} ** 2)"]
+)
+socio_3 = registry.fit(
+    df_train[[LECol.TARGET, STATUS_DUMMY, econ_pc1, undp_pc1]],
+    name="m_socio_eco_undp_quad",
+    rhs=rhs_socio_3,
+)
+display(socio_3)
 ```
 
-
-
-display(base_diag)AIC without interaction, with STATUS_DUMMY, no PC2: 987.160
-AIC without interaction, with Status_Dummy, with PC2: 967
-life_expectancy ~ z(schooling) + economic_development_PC1 + economic_development_PC2 + child_mortality_PC1: aic=844.049
-life_expectancy ~ z(schooling) + economic_development_PC1 + child_mortality_PC1: aic=845.5
-life_expectancy ~ z(schooling) + economic_development_PC1 + economic_development_PC2: aix=965, r2:0.7
 ```{python}
 # | label: fig-socioeconomic-diagnostics
 # | fig-cap: "Socioeconomic baseline model diagnostics."
 # | echo: false
-_ = base_diag.plot_residual_diags()
+_ = socio_2.plot_residual_diags()
+```
+
+```{python}
+# | label: tbl-socioeconomic-compare
+# | tbl-cap: "Socioeconomic baselines compared (sorted by AIC)."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_socio_eco_pcs", "m_socio_eco_undp", "m_socio_eco_undp_quad"]]
 ```
 
 :::
@@ -393,7 +486,20 @@ if immun_pc1 is None:
         "Immunization PC group is missing; check `feature_groups` in data prep."
     )
 
-immun_cols = [LECol.TARGET, *base_block, immun_pc1]
+econ_pc1 = econ_pcs[0] if econ_pcs else None
+immun_base_block = [STATUS_DUMMY, LECol.HIV_AIDS]
+if econ_pc1 is not None:
+    immun_base_block.append(econ_pc1)
+
+base_cols = [LECol.TARGET, *immun_base_block]
+base_diag = registry.fit(
+    df_train[base_cols],
+    name="m_immun_base",
+    rhs=" + ".join(str(c) for c in immun_base_block),
+)
+display(base_diag)
+
+immun_cols = [LECol.TARGET, *immun_base_block, immun_pc1]
 rhs_immun_reduced = " + ".join(str(c) for c in immun_cols if c != LECol.TARGET)
 immun_reduced = registry.fit(
     df_train[immun_cols],
@@ -413,7 +519,7 @@ immun_reduced.plot_residual_diags()
 ```{python}
 # | label: fig-immunization-compare
 # | tbl-cap: "Immunization block added vs base model."
-registry.compare(sort_by="aic").loc[["m_socioeconomic", "m_immunization_reduced"]]
+registry.compare(sort_by="aic").loc[["m_immun_base", "m_immunization_reduced"]]
 ```
 
 Adding `immunization_PC1` improves fit relative to the base model (**$R^2$: 0.743 $\rightarrow$ 0.792**, RMSE: **4.11 $\rightarrow$ 3.69 years**, @tbl-immunization-compare). The model is jointly significant (F‑test p < 0.001), and `immunization_PC1` is negative and precise (**-1.17 years per 1 SD**, p < 0.001; 95% CI **[-1.55, -0.80]**). Because PCA component signs are arbitrary, we interpret the *direction* of `immunization_PC1` via its loadings in @fig-pca-group-loadings: higher vaccination coverage corresponds to higher life expectancy.
@@ -586,23 +692,15 @@ Trimming a small set of influential observations (Cook’s distance > 4/n) is a 
 ```{python}
 # | label: holdout-eval
 # | code-fold: true
-eval_map = {
-    "m1_adult_mortality": holdout_scaled,
-    "m_socioeconomic": holdout_scaled,
-    "m_immunization_reduced": holdout_scaled,
-    "m_alcohol_bmi": holdout_scaled,
-    "m_nonlinear_linear": holdout_scaled,
-}
+from ama_tlbx.analysis.ols_helper import EvalMetrics
 
-for name, df_eval in eval_map.items():
-    registry.evaluate_on(
-        name,
-        df_eval,
-        label=f"year{HOLDOUT_YEAR}",
-    )
+eval_results = registry.evaluate_all(holdout_scaled, label=f"year{HOLDOUT_YEAR}")
+eval_tbl = EvalMetrics.collate_to_df(list(eval_results.values()))
+eval_tbl.insert(0, "model", list(eval_results.keys()))
+eval_tbl = eval_tbl.set_index("model").sort_values("rmse")
+eval_tbl.round(3)
 
 compare_tbl = registry.compare(sort_by=f"year{HOLDOUT_YEAR}_rmse")
-compare_tbl.loc[list(eval_map.keys())].round(3)
 ```
 
 On the 2011 holdout year, the `adult_mortality` benchmark yields the lowest RMSE (**2.89 years**), which is expected because it is very close to the definition of life expectancy. Among the interpretability‑focused models, the **nonlinearity** and **immunization** specifications generalize similarly well (RMSE **4.12** vs **4.12** years), while the alcohol/BMI model performs worst (RMSE **5.84** years). The calibration view in @fig-holdout-calibration shows a mild **S‑shape**: the model tends to **underpredict** life expectancy for the lowest predicted values and slightly **overpredict** around the mid‑range, while high‑end predictions are close to the diagonal. This supports using the burden + development + immunization block as a **parsimonious** generalizable model, but also signals some remaining nonlinear structure.
@@ -611,7 +709,7 @@ On the 2011 holdout year, the `adult_mortality` benchmark yields the lowest RMSE
 # | label: tbl-global-compare
 # | tbl-cap: "Global model comparison (train fit + holdout metrics), sorted by holdout RMSE."
 holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
-compare_tbl.loc[list(eval_map.keys())].sort_values(holdout_rmse_col).round(3)
+compare_tbl.dropna(subset=[holdout_rmse_col]).sort_values(holdout_rmse_col).round(3)
 ```
 
 The global comparison in @tbl-global-compare confirms the pattern above: the `adult_mortality` benchmark dominates pure predictive accuracy, while the **nonlinearity** and **immunization** models offer the best interpretability‑performance trade‑off among the multi‑predictor specifications.
@@ -646,7 +744,7 @@ Model: `life_expectancy ~ adult_mortality + hiv_aids + status_developed` (panel)
 # | label: panel-model
 # | code-fold: true
 panel_registry = ModelRegistry()
-panel_ds = LifeExpectancyDataset.from_csv(
+panel_ds = LifeExpectancyDataset.from_csv_updated(
     aggregate_by_country=False,
     resolve_nand_pred="carry_forward",
 )
