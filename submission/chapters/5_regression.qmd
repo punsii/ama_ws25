@@ -559,12 +559,27 @@ To better understand the positive correlation between alcohol consumption and li
 # | fig-cap: "Alcohol Consumption vs Life Expectancy by Development Status"
 # | echo: false
 
-# Split data by status for alcohol analysis - use raw data since STATUS is transformed to dummies in normalized version
-df_alcohol = df_raw[[LECol.ALCOHOL, LECol.LIFE_EXPECTANCY, LECol.STATUS]].dropna()
+# Split data by status for alcohol analysis - use normalized data
+# Note: STATUS is transformed to dummy variables (status_0, status_1) in normalized version
+df_alcohol = df[[LECol.ALCOHOL, LECol.LIFE_EXPECTANCY]].dropna()
 
-# STATUS: 0 = Developing, 1 = Developed
-df_developed = df_alcohol[df_alcohol[LECol.STATUS] == 1]
-df_developing = df_alcohol[df_alcohol[LECol.STATUS] == 0]
+# Get status dummies from normalized dataframe
+# status_0 = Developing (value 1 where true), status_1 = Developed (value 1 where true)
+if 'status_0' in df.columns and 'status_1' in df.columns:
+    df_alcohol = df[[LECol.ALCOHOL, LECol.LIFE_EXPECTANCY, 'status_0', 'status_1']].dropna()
+    # Create mask: status_1 == 1 means Developed
+    df_developed = df_alcohol[df_alcohol['status_1'] == 1].copy()
+    df_developing = df_alcohol[df_alcohol['status_0'] == 1].copy()
+else:
+    # Fallback to raw data if status dummies not found
+    df_alcohol_raw = df_raw[[LECol.ALCOHOL, LECol.LIFE_EXPECTANCY, LECol.STATUS]].dropna()
+    df_developed = df_alcohol_raw[df_alcohol_raw[LECol.STATUS] == 1].copy()
+    df_developing = df_alcohol_raw[df_alcohol_raw[LECol.STATUS] == 0].copy()
+    # Need to normalize the features manually for consistency
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    df_developed[LECol.ALCOHOL] = scaler.fit_transform(df_developed[[LECol.ALCOHOL]])
+    df_developing[LECol.ALCOHOL] = scaler.fit_transform(df_developing[[LECol.ALCOHOL]])
 
 fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -610,9 +625,9 @@ if len(df_developing) > 1:
     ax.scatter(X_devg, y_devg, alpha=0.6, s=50, color='orange', label='Developing', edgecolors='darkorange', linewidth=0.5)
     ax.plot(X_sorted, y_pred_sorted, color='darkorange', linewidth=2.5, label=f'Developing (R²={r2_devg:.3f})')
 
-ax.set_xlabel('Alcohol Consumption (liters per capita)', fontsize=12)
+ax.set_xlabel('Alcohol Consumption (normalized)', fontsize=12)
 ax.set_ylabel('Life Expectancy (years)', fontsize=12)
-ax.set_title('Alcohol Consumption vs Life Expectancy by Development Status', fontsize=14, fontweight='bold')
+ax.set_title('Alcohol Consumption vs Life Expectancy by Development Status\n(Normalized Data)', fontsize=14, fontweight='bold')
 ax.grid(True, alpha=0.3)
 
 if has_data:
@@ -622,19 +637,22 @@ plt.tight_layout()
 plt.show()
 ```
 
-The stratified analysis provides crucial insights into the alcohol-life expectancy relationship:
+The stratified analysis using normalized data provides crucial insights into the alcohol-life expectancy relationship:
 
 **Key Findings:**
-- **Developed Countries (Blue, R² = 0.019)**: The regression line is nearly flat with a slight negative slope, and the extremely low R² indicates virtually no predictive relationship. Among developed nations, alcohol consumption does not meaningfully predict life expectancy—these countries cluster at high life expectancy (mostly 75-87 years) regardless of alcohol consumption levels.
+- **Developed Countries (Blue, R² = 0.019)**: The regression line is nearly flat with a slight negative slope, and the extremely low R² indicates virtually no predictive relationship. Among developed nations (19 countries), alcohol consumption does not meaningfully predict life expectancy—these countries cluster at high life expectancy (mostly 80-87 years) regardless of normalized alcohol consumption levels (ranging from -2 to +1 standard deviations).
 
-- **Developing Countries (Orange, R² = 0.037)**: Shows a weak positive correlation, though still with very low R². The much wider spread in life expectancy (50-85 years) suggests that factors other than alcohol consumption are far more influential in determining outcomes.
+- **Developing Countries (Orange, R² = 0.037)**: Shows a weak positive correlation, though still with very low R². The much wider spread in life expectancy (50-85 years) across developing nations (112 countries) suggests that factors other than alcohol consumption are far more influential in determining outcomes. The normalized alcohol consumption shows greater variability (from -1.5 to +4 standard deviations), yet this explains less than 4% of life expectancy variance.
 
-If we look at the overall positive correlation (R² = 0.175) observed in the combined data above. When separated by development status, alcohol shows almost no predictive power within each group. The apparent correlation exists primarily because:
-1. Developed countries tend to have both higher alcohol consumption and higher baseline life expectancy due to better healthcare, infrastructure, and living conditions
-2. Within developed countries, increasing alcohol consumption actually shows a slight negative trend (decline in the regression line)
-3. The relationship is driven by confounding socioeconomic factors rather than any beneficial effect of alcohol
+**Interpretation:**
 
-This demonstrates why univariate analysis can be deceptive—the positive correlation disappears when controlling for development status, revealing alcohol as a poor predictor of life expectancy within similar economic contexts.
+When we examine the overall positive correlation (R² = 0.144) observed in the normalized combined data, separating by development status reveals that alcohol shows almost no predictive power within each group. The apparent correlation exists primarily because:
+
+1. **Developed countries** (blue points at top) tend to cluster around normalized alcohol values near 0 (average consumption) with consistently high life expectancy (80+ years), showing a nearly flat or slightly negative trend
+2. **Developing countries** (orange points) span a wider range of both alcohol consumption and life expectancy, but the weak positive slope (R² = 0.037) indicates alcohol is not a meaningful predictor
+3. The overall correlation in combined data is driven by the **between-group differences** (developed vs developing) rather than the **within-group relationship** between alcohol and longevity
+
+This demonstrates why stratified analysis is essential—the positive correlation disappears when controlling for development status, revealing alcohol as a poor predictor of life expectancy within similar economic contexts. The relationship is driven by confounding socioeconomic factors (healthcare quality, infrastructure, education) rather than any beneficial effect of alcohol consumption itself.
 
 ## Multivariate Regression Analysis
 
