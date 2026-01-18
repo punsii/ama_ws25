@@ -1,89 +1,30 @@
 ---
-title: "Regression: Explaining and Predicting Life Expectancy"
+title: "Regression"
 format:
   html:
     toc: true
-    toc-depth: 3
-execute:
-  warning: false
-  message: false
 ---
 
-# Regression: Explaining and Predicting Life Expectancy
-
-## Aim and research questions
-
-This chapter uses ordinary least squares (OLS) regression to quantify how country-level predictors relate to life expectancy and how well those predictors generalize to another year. The analysis is structured to answer four questions:
-
-1. Which predictors are important for life expectancy, and what is their direction and magnitude of association?
-2. Which interaction effects are supported by the data, and how should they be interpreted?
-3. Do the OLS assumptions look plausible for the final model (multicollinearity, residual structure, influence)?
-4. How well does the model predict out-of-sample (year-based holdout, with optional cross-validation)?
-
-Because the data are observational, all effects are interpreted as conditional associations rather than causal effects.
-
-## Data, transformations, and PCA-based reduction
-
-We work on the 2014 country cross-section to reduce temporal dependence and align with the earlier chapters. For external validation, we evaluate on 2011 after applying the same transformations and PCA mappings learned from 2014 (Table @tbl-split-summary). Numeric predictors are transformed according to the dataset metadata and standardized within each cross-section using `tf_and_norm` (median imputation + z‑scoring). Development status is dummy-encoded as `status_developed` (1 = developed) and the target remains in years. To reduce redundancy and multicollinearity, four correlated feature blocks are compressed using PCA, retaining the minimum number of components per block required to explain at least 80% of within-block variance (Table @tbl-pca-summary). (We intentionally exclude HDI from predictive models to avoid target leakage; see HDI chapter.)
-
 ```{python}
-# | label: setup
+# | label: init
+# | fig-cap: "Dataset loading function hidden"
 # | include: false
-import numpy as np
+from pathlib import Path
+
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import scipy.stats as stats
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+from statsmodels.graphics.regressionplots import influence_plot
+import statsmodels.api as sm
 
-from ama_tlbx.analysis import FeatureGroup
-from ama_tlbx.analysis.model_registry import ModelRegistry
-from ama_tlbx.analysis.ols_helper import fit_ols_formula
-from ama_tlbx.plotting.regression_plots import plot_observed_vs_fitted
-from ama_tlbx.data import LECol, LifeExpectancyDataset
-from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+from ama_tlbx.data import LifeExpectancyDataset, LECol
 
-DEFAULT_PLOT_CFG.apply_global()
-np.random.seed(42)
-
-TRAIN_YEAR = 2014
-HOLDOUT_YEAR = 2011
-STATUS_DUMMY = "status_developed"
-```
-
-```{python}
-# | label: feature-groups
-# | include: true
-feature_groups = [
-    FeatureGroup(
-        name="child_mortality",
-        features=[LECol.INFANT_DEATHS, LECol.UNDER_FIVE_DEATHS],
-    ),
-    FeatureGroup(
-        name="child_nutrition",
-        features=[LECol.THINNESS_5_9_YEARS, LECol.THINNESS_1_19_YEARS],
-    ),
-    FeatureGroup(
-        name="economic_development",
-        features=[LECol.GDP, LECol.PERCENTAGE_EXPENDITURE],
-    ),
-    FeatureGroup(
-        name="immunization",
-        features=[LECol.DIPHTHERIA, LECol.HEPATITIS_B, LECol.MEASLES],
-    ),
-]
-
-reduced_columns = [feature for g in feature_groups for feature in g.features]
-```
-
-## Baseline OLS (simple aggregate model)
-
-<!-- TODO: refer to chapter 2_investigate_hdi by direct link, also check it out - do two baseline hdi models, one with the transformation to LE as per the equations by the UNDP for ihealth, the other by just using the default transform for hdi! -->
-To anchor the analysis, we start with a compact, transparent baseline on the country‑level mean cross‑section. This mirrors the original regression workflow while using the project’s OLS utilities and registry. We reduce redundancy in the most correlated blocks via PCA (rather than manual aggregation) and keep HDI **excluded** to avoid target leakage (see the HDI investigation). We report an HDI‑only regression only as a leakage baseline for relative information‑criterion context.
-```{python}
-# | label: baseline-setup
-# | code-fold: true
-# | output: false
-baseline_ds = LifeExpectancyDataset.from_csv(
-    aggregate_by_country=TRAIN_YEAR,
+dataset = LifeExpectancyDataset.from_csv(
     resolve_nand_pred="carry_forward",
     aggregate_by_country=2011,
 )
@@ -97,12 +38,9 @@ assert not dataset.df.empty
 assert not dataset_latest.df.empty
 
 
-
-baseline_X = baseline_df.select_dtypes(include=["number"]).drop(
-    columns=[LECol.TARGET, LECol.HDI],
-    errors="ignore",
+from ama_tlbx.analysis import (
+    ColumnConcatenator,
 )
-baseline_rhs = " + ".join(baseline_X.columns.astype(str))
 
 # Concatenate columns for 2014 dataset
 column_concatinator = ColumnConcatenator(dataset)
@@ -114,34 +52,23 @@ dataset2 = column_concatinator.concatenate(
     ],
     new_column_name="Immunisation",
 )
-```
 
-```{python}
-# | label: tbl-baseline-metrics
-# | tbl-cap: "Baseline OLS metrics (country-level mean cross-section; HDI-only is a leakage reference)."
-baseline_compare = baseline_registry.compare(sort_by="aic").rename(
-    index={
-        "baseline_simple": "Baseline (no HDI)",
-        "baseline_hdi": "HDI-only (leakage baseline)",
-    }
+column_concatinator2 = ColumnConcatenator(dataset2)
+dataset3 = column_concatinator2.concatenate(
+    columns=[
+        LECol.THINNESS_1_19_YEARS,
+        LECol.THINNESS_5_9_YEARS,
+    ],
+    new_column_name="Child Thinness",
 )
-# TODO; why unoack metrics? they should be directly "printable" - refer to ols_helper.py
-baseline_compare.loc[:, ["r2", "adj_r2", "rmse", "aic", "bic"]].round(3)
-```
 
-```{python}
-# | label: fig-baseline-fit
-# | fig-cap: "Baseline observed vs fitted (OLS)."
-# TODO: use plotting methods from results classes
-plot_observed_vs_fitted(baseline_diag)
-```
-
-<!-- TODO: entire next cell should be visible -->
-```{python}
-# | label: tbl-baseline-assumptions
-# | tbl-cap: "Baseline OLS assumption checks (simple aggregate model)."
-baseline_registry.assumptions_table(names=["baseline_simple"]).rename(
-    index={"baseline_simple": "Baseline (no HDI)"}
+column_concatinator3 = ColumnConcatenator(dataset3)
+dataset4 = column_concatinator3.concatenate(
+    columns=[
+        LECol.INFANT_DEATHS,
+        LECol.UNDER_FIVE_DEATHS,
+    ],
+    new_column_name="Baby Deaths",
 )
 concat_dataset = dataset4
 
@@ -187,529 +114,164 @@ df = concat_dataset.tf_and_norm()
 df_latest = concat_dataset_latest.tf_and_norm()
 ```
 
-<!--  TODO: Remove this code cell, don't render python to markdown -->
-```{python}
-# | label: baseline-interpretation
-# | results: asis
-from IPython.display import Markdown, display
+# Regression Analysis
 
-baseline_tbl = baseline_compare.loc[:, ["adj_r2", "rmse", "aic", "bic"]].copy()
-if {
-    "Baseline (no HDI)",
-    "HDI-only (leakage baseline)",
-}.issubset(baseline_tbl.index):
-    base = baseline_tbl.loc["Baseline (no HDI)"]
-    hdi = baseline_tbl.loc["HDI-only (leakage baseline)"]
-    delta_rmse = float(hdi["rmse"] - base["rmse"])
-    delta_aic = float(hdi["aic"] - base["aic"])
-    delta_bic = float(hdi["bic"] - base["bic"])
-    text = (
-        f"The no‑HDI baseline achieves adj. $R^2$ {base['adj_r2']:.3f} with RMSE "
-        f"{base['rmse']:.2f} years, while the HDI‑only leakage reference is weaker "
-        f"(ΔRMSE = {delta_rmse:.2f}, ΔAIC = {delta_aic:.1f}, ΔBIC = {delta_bic:.1f}). "
-        "We therefore keep the HDI model only as a context point rather than a candidate."
-    )
+Performing regression on data is a common analysis method often used in attempt to derive and predict the life expectency using similar yet unknown data. Since the project primarely focuses on finding information as it pertains to life expectency, our regression analysis will fucus on predicting life expectency.
+
+## Liniar Regression Analyis
+
+Liniar regession is a common analysis performed on liniar data. Since life expectency is "mostly" liniar data, it is very fitting to use it to predict life expectency. The regression analysis has 5 parts each described in the figure below.
+
+```{python}
+# | label: liniar-reg
+# | fig-cap: "Process for regression"
+
+# 1: Drop rows where target is missing
+target_col = LECol.LIFE_EXPECTANCY
+reg_df = df.dropna(subset=[target_col])
+
+# 2: Select features (numeric only, excluding target)
+X = reg_df.select_dtypes(include=['number']).drop(columns=[target_col])
+y = reg_df[target_col]
+
+# 3: Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 4: Train model
+model = LinearRegression()
+model.fit(X_train, y_train)
+
+# 5: Predict
+y_pred = model.predict(X_test)
+```
+
+The six step process for the regeression analysis is as follows:
+1. Defined the target variable we wish to estimate, here it is the Life expectency stored as an enum. We also drop all NA Columns since they cannot be used in a regression algorithm.
+2. We extract all numeric features from the dataset excluding the target column to ensure contamination of data.
+3. Split the dataset into train and test.
+4. Train the model
+5. Make predictions for analysis.
+
+Afterwards we can perform a summary analysis using the OLS libary to guage our model capabilities.
+
+```{python}
+# | label: regression-summary
+# | fig-cap: "Detailed Regression Summary"
+
+# Fit OLS model with statsmodels for detailed summary
+X_train_sm = sm.add_constant(X_train)
+# Set index to country names for better labeling
+X_train_sm.index = y_train.index
+ols_model = sm.OLS(y_train, X_train_sm).fit()
+# Store country names for later use in influence plot
+country_names = reg_df[LECol.COUNTRY] if LECol.COUNTRY in reg_df.columns else reg_df.index
+
+print(ols_model.summary())
+```
+
+Based on our OLS Regression result we get an `R-Squared: 0.937` Which means that the model explains 93% of the variance of the dataset. `Adj. R-Squared: 0.927` Shows that if you adjust for the number of features the amount still remains high. Showing that the majority of features play a signficant part of the analysis.
+
+```{python}
+# | label: liniar-reg-fig
+# | echo: false
+# | fig-cap: "Plot of how accurate our coefifients are on test data"
+
+
+plt.figure(figsize=(10, 6))
+plt.scatter(y_test, y_pred, alpha=0.5)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+plt.xlabel('Actual Life Expectancy')
+plt.ylabel('Predicted Life Expectancy')
+plt.title('Multivariate Regression: Actual vs Predicted')
+plt.tight_layout()
+plt.show()
+
+```
+
+The graph above tells a similar story showing a comparison between a countries predicted life expectency and it's actual expecetency on the test set, showing a strong fit given the data. The same strong fit that was shown previously.
+
+### Residual Analysis
+
+Performing a residual analysis allows us to analyse and gather an understanding of datapoints lying outside the predictions by the models. Residuals are calculated by subtracting the prediction from the test data. When a regression model is good the residuals should be random indicating that there is no missing data being modelled.
+
+```{python}
+# | label: residual-analysis
+# | fig-cap: "Residual Analysis"
+# | echo: false
+
+residuals = y_test - y_pred
+
+# Plot-Setup
+fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+
+# --- Plot 1: Residuals vs. Test --
+sns.scatterplot(x=y_pred, y=residuals, ax=axes[0], alpha=0.6)
+axes[0].axhline(0, color='red', linestyle='--')
+axes[0].set_xlabel('Predicted Life expectency')
+axes[0].set_ylabel('Residuals')
+axes[0].set_title('Residuals for the Fitted Values\n')
+
+# --- Plot 2: Q-Q Plot ---
+stats.probplot(residuals, dist="norm", plot=axes[1])
+axes[1].set_title('Q-Q Plot\n')
+axes[1].get_lines()[0].set_markerfacecolor('C0')
+axes[1].get_lines()[0].set_markeredgewidth(0)
+
+plt.tight_layout()
+plt.show()
+```
+
+Based on the analysis the residuals looks completly random which is a good look and shows that there is no systematic mispredictions.
+
+Creating an influence plot is a great way to get an idea for which countries and their respective residuals are the cause for the outliers/residuals. Our X axis "Leverage" shows us which residuals have high leverage over our regression analysis and are causes for analysis. The Y represents how much of an outlier the residual is. We aim to avoid `|y| < 2`. The size
+
+```{python}
+# | label: diag-result
+# | fig-cap: "Residual Diagnostics Result"
+# | echo: false
+
+from matplotlib import pyplot as plt
+
+# Create a proper mapping: original dataframe index -> country name
+if LECol.COUNTRY in reg_df.columns:
+    idx_to_country = dict(zip(reg_df.index, reg_df[LECol.COUNTRY]))
 else:
-    text = (
-        "The no‑HDI baseline outperforms the HDI‑only leakage reference across "
-        "fit and information criteria, so HDI is shown only for context."
-    )
+    idx_to_country = {i: str(i) for i in reg_df.index}
 
-# TODO: neither of these conversions and upacking should be necessary. directly print the __repr__ of the assumptionschecksresult or the table!
-assumptions_base = baseline_registry.assumptions_table(names=["baseline_simple"])
-if not assumptions_base.empty:
-    row = assumptions_base.iloc[0]
-    dw = float(row["durbin_watson"])
-    jb_p = float(row["jarque_bera_pvalue"])
-    sh_p = float(row["shapiro_pvalue"])
-    bp_p = float(row["breusch_pagan_pvalue"])
-    white_p = float(row["white_pvalue"])
-    normality = "reject" if min(jb_p, sh_p) < 0.05 else "do not reject"
-    hetero = "evidence" if min(bp_p, white_p) < 0.05 else "limited evidence"
-    text += (
-        f" Baseline diagnostics show DW = {dw:.2f} (little autocorrelation). "
-        f"Normality tests {normality} normal residuals (JB p={jb_p:.3f}, "
-        f"Shapiro p={sh_p:.3f}), and heteroscedasticity tests show {hetero} "
-        f"(BP p={bp_p:.3f}, White p={white_p:.3f})."
-    )
+fig, ax = plt.subplots(figsize=(7, 5))
+influence_plot(ols_model, criterion="cooks", ax=ax)
 
-display(Markdown(text))
-```
+# Process all text labels
+for txt in ax.texts:
+    txt_content = txt.get_text().strip()
 
-```{python}
-# | label: data-prep
-train_ds_raw = LifeExpectancyDataset.from_csv(
-    aggregate_by_country=TRAIN_YEAR,
-    resolve_nand_pred="carry_forward",
-)
+    # Only process if it looks like a pure integer (not a decimal like Cook's distance)
+    if txt_content.isdigit():
+        try:
+            obs_num = int(txt_content)
 
-holdout_ds_raw = LifeExpectancyDataset.from_csv(
-    aggregate_by_country=HOLDOUT_YEAR,
-    resolve_nand_pred="carry_forward",
-)
+            # Try to get country name
+            if obs_num < len(y_train):
+                original_idx = y_train.index[obs_num]
+                country = idx_to_country.get(original_idx, None)
 
-# TODO: direct interaction with the ama-tlbx should always be displayed in the chapter
-df_train_raw = train_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
-df_holdout_raw = holdout_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
+                if country:
+                    txt.set_text(str(country))
+                    txt.set_fontsize(7)
+                else:
+                    # No country found - hide it
+                    txt.set_visible(False)
+            else:
+                # Index out of bounds - hide it
+                txt.set_visible(False)
+        except:
+            # Any error - hide it
+            txt.set_visible(False)
 
-# TODO: direct interaction with the ama-tlbx should always be displayed in the chapter
-pca_groups = (
-    LifeExpectancyDataset(df=df_train_raw)
-    .make_pca_dim_reduction_analyzer(
-        feature_groups,
-        columns=reduced_columns,
-        standardized=False,
-        min_var_explained=0.8,
-    )
-    .fit()
-    .result()
-)
-
-# TODO: direct interaction with the ama-tlbx should always be displayed in the chapter
-pc_train = pca_groups.reduced_df.copy()
-pc_holdout = pca_groups.transform(df_holdout_raw).copy()
-
-# Replace original correlated columns with retained PCs
-pc_cols = pc_train.columns.tolist()
-
-df_train = pc_train.assign(**df_train_raw.drop(columns=reduced_columns))
-df_holdout = pc_holdout.assign(**df_holdout_raw.drop(columns=reduced_columns))
-
-model_cols = [
-    LECol.TARGET,
-    STATUS_DUMMY,
-    LECol.ADULT_MORTALITY,
-    LECol.HIV_AIDS,
-    LECol.TOTAL_EXPENDITURE,
-    *pc_cols,
-]
-
-# TODO: instantiation of the dataset and direct interaction with the ama-tlbx should always be displayed in the chapter
-df_train_model = (
-    LifeExpectancyDataset(df=df_train)
-    .df.loc[:, model_cols]
-    .reset_index(drop=False)
-    .set_index(LECol.COUNTRY)
-)
-
-df_holdout_model = (
-    LifeExpectancyDataset(df=df_holdout)
-    .df.loc[:, model_cols]
-    .reset_index(drop=False)
-    .set_index(LECol.COUNTRY)
-)
-```
-
-```{python}
-# | label: tbl-split-summary
-# | tbl-cap: "Training and holdout cross-sections used in regression."
-split_summary = pd.DataFrame(
-    {
-        "split": ["train", "holdout"],
-        "year": [TRAIN_YEAR, HOLDOUT_YEAR],
-        "n_countries": [int(df_train_model.shape[0]), int(df_holdout_model.shape[0])],
-        "n_features": [
-            int(df_train_model.shape[1] - 1),
-            int(df_holdout_model.shape[1] - 1),
-        ],
-    }
-)
-
-split_summary
-```
-
-```{python}
-# | label: split-summary-interpretation
-# | results: asis
-from IPython.display import Markdown, display
-
-if not split_summary.empty:
-    # TODO: always use query!
-    train_row = split_summary.loc[split_summary["split"] == "train"].iloc[0]
-    hold_row = split_summary.loc[split_summary["split"] == "holdout"].iloc[0]
-    text = (
-        f"The training cross‑section contains {int(train_row['n_countries'])} countries "
-        f"with {int(train_row['n_features'])} predictors; the holdout year has "
-        f"{int(hold_row['n_countries'])} countries with the same {int(hold_row['n_features'])} predictors, "
-        "so comparisons reflect a clean year‑based split rather than a change in feature space."
-    )
-    display(Markdown(text))
-```
-
-```{python}
-# | label: tbl-pca-summary
-# | tbl-cap: "PCA reduction by feature group (trained on 2014)."
-pca_summary = pd.DataFrame(
-    {
-        "group": [gr.group.name for gr in pca_groups.group_results],
-        "n_components": [gr.n_components for gr in pca_groups.group_results],
-        "variance_retained": [gr.cumulative_variance_explained for gr in pca_groups.group_results],
-        "pc1_explained_ratio": [gr.explained_variance_pc1 for gr in pca_groups.group_results],
-    }
-)
-
-pca_summary
-```
-
-<!-- REMOE This cell, all information should be in pca_summary table above -->
-```{python}
-# | label: pca-summary-interpretation
-# | results: asis
-from IPython.display import Markdown, display
-
-if not pca_summary.empty:
-    lines = []
-    for _, row in pca_summary.iterrows():
-        lines.append(
-            f"- **{row['group']}**: {int(row['n_components'])} component(s), "
-            f"variance retained {row['variance_retained']:.3f} (PC1 share {row['pc1_explained_ratio']:.3f})."
-        )
-    display(
-        Markdown(
-            "The grouped PCA compresses each correlated block while retaining most within‑block variance:\n\n"
-            + "\n".join(lines)
-        )
-    )
-```
-
-## Univariate screening
-
-Before building multivariate models, we fit each standardized predictor on its own and record its correlation with life expectancy. This provides a quick sense of which variables carry the strongest marginal signal after transformation and normalization.
-
-<!-- TODO: This looks like boilerplate that should not be necessary when using the ama-tlbx idiomatically -->
-```{python}
-# | label: tbl-univariate-screen
-# | tbl-cap: "Univariate screening: correlation and single‑predictor fits (2014, standardized)."
-pc_pretty = {}
-for gr in pca_groups.group_results:
-    for col in gr.pc_scores.columns:
-        if "_PC" in col:
-            base, pc = col.rsplit("_PC", 1)
-            pc_pretty[col] = f"{base.replace('_', ' ').title()} PC{pc}"
-
-rows = []
-# TODO: this code is really intransparent. data transformations should always be done with method chaining if possible, avoid branches!
-for col in df_train_model.columns:
-    if col == LECol.TARGET:
-        continue
-    tmp = df_train_model[[LECol.TARGET, col]].dropna()
-    if tmp.empty:
-        continue
-    diag = fit_ols_formula(tmp, rhs=str(col), target_col=LECol.TARGET)
-    corr = float(tmp[col].corr(tmp[LECol.TARGET]))
-    pretty = pc_pretty.get(
-        col,
-        train_ds_raw.get_pretty_name(col)
-        if col in train_ds_raw.df.columns
-        else str(col),
-    )
-    # TODO: why unpack metrics? should not be necessary. reread ols_helper.py and model_registry.py and plan how the ama-tlbx can be used more idiomatically!
-    rows.append(
-        {
-            "feature": pretty,
-            "corr": corr,
-            "r2": diag.metrics.r2,
-            "adj_r2": diag.metrics.adj_r2,
-            "rmse": diag.metrics.rmse,
-            "aic": diag.metrics.aic,
-            "bic": diag.metrics.bic,
-            "n": diag.metrics.n_obs,
-        }
-    )
-
-univariate = pd.DataFrame(rows)
-univariate.assign(abs_corr=univariate["corr"].abs()).sort_values(
-    "abs_corr", ascending=False
-).drop(columns=["abs_corr"]).round(3)
-```
-
-<!-- TODO: don't define __repr__ use the functionalities from the ama-tlbx add missing features if you really cannot find the right one! -->
-```{python}
-# | label: univariate-interpretation
-# | results: asis
-from IPython.display import Markdown, display
-
-if not univariate.empty:
-    ranked = (
-        univariate.assign(abs_corr=univariate["corr"].abs())
-        .sort_values("abs_corr", ascending=False)
-        .reset_index(drop=True)
-    )
-    top3 = ranked.head(3)
-    strongest_pos = ranked.loc[ranked["corr"] > 0].head(1)
-    strongest_neg = ranked.loc[ranked["corr"] < 0].head(1)
-    bullets = []
-    for _, row in top3.iterrows():
-        bullets.append(
-            f"- {row['feature']}: corr = {row['corr']:.3f}, adj $R^2$ = {row['adj_r2']:.3f}, "
-            f"RMSE = {row['rmse']:.2f}."
-        )
-    if not strongest_pos.empty:
-        row = strongest_pos.iloc[0]
-        bullets.append(
-            f"- Strongest positive association: {row['feature']} (corr = {row['corr']:.3f})."
-        )
-    if not strongest_neg.empty:
-        row = strongest_neg.iloc[0]
-        bullets.append(
-            f"- Strongest negative association: {row['feature']} (corr = {row['corr']:.3f})."
-        )
-    display(
-        Markdown(
-            "The univariate screen highlights which predictors carry the strongest marginal signal:\n\n"
-            + "\n".join(bullets)
-        )
-    )
-```
-
-## Modeling setup and notation
-
-We estimate linear models of the form
-
-$$
-Y_i = \beta_0 + \sum_{j=1}^p X_{ij}\beta_j + \varepsilon_i,
-$$
-
-and consider interaction effects in the form
-
-$$
-Y_i = \beta_0 + \beta_1 x_i + \beta_2 z_i + \beta_3(x_i z_i) + \varepsilon_i.
-$$
-
-Because all continuous predictors are standardized, coefficients are interpreted as the expected change in life expectancy (in years) per one standard deviation increase in the predictor, holding other variables constant. The `status_developed` coefficient represents the mean difference between developed and developing countries, conditional on the other covariates.
-
-## Stepwise model building
-
-We fit a stepwise sequence that starts with a single socioeconomic predictor and then adds motivated blocks. This follows the course guidance: add complexity only when it improves interpretability, fit, or generalization, and keep interactions only when they are supported by comparison metrics and uncertainty.
-<!-- TODO: this chapter doesn't do stepweise model building! This is done in @6_model_selection.qmd - so remove this -->
-```{python}
-# | label: helper-functions
-# | include: false
-from typing import Iterable
-
-
-def _as_terms(items: Iterable[object]) -> list[str]:
-    return [str(item) for item in items]
-
-
-def _pretty_term(term: str, pretty_map: dict[str, str]) -> str:
-    if term in ("Intercept", "const"):
-        return "Intercept"
-    if ":" in term:
-        parts = term.split(":")
-        return " x ".join(_pretty_term(p, pretty_map) for p in parts)
-    return pretty_map.get(term, term.replace("_", " ").title())
-
-
-def coef_table(result, pretty_map: dict[str, str], alpha: float = 0.05) -> pd.DataFrame:
-    params = result.params
-    conf = result.conf_int(alpha=alpha)
-    conf_arr = np.asarray(conf)
-    if hasattr(params, "index"):
-        terms = list(params.index)
-        param_values = params.values
-    else:
-        terms = list(getattr(result.model, "exog_names", []))
-        param_values = np.asarray(params)
-    ci_low = conf_arr[:, 0] if conf_arr.ndim == 2 else conf_arr
-    ci_high = conf_arr[:, 1] if conf_arr.ndim == 2 else conf_arr
-    out = pd.DataFrame(
-        {
-            "term": terms,
-            "estimate": param_values,
-            "std_err": np.asarray(result.bse),
-            "p_value": np.asarray(result.pvalues),
-            "ci_low": ci_low,
-            "ci_high": ci_high,
-        }
-    )
-    out["term"] = out["term"].astype(str)
-    out["term_pretty"] = out["term"].map(lambda t: _pretty_term(t, pretty_map))
-    out = out.loc[:, ["term_pretty", "estimate", "std_err", "ci_low", "ci_high", "p_value"]]
-    numeric_cols = ["estimate", "std_err", "ci_low", "ci_high", "p_value"]
-    out[numeric_cols] = out[numeric_cols].astype(float).round(3)
-    return out
-
-
-def _term_stats(result, term: str) -> tuple[float, float]:
-    params = result.params
-    pvalues = result.pvalues
-    if hasattr(params, "get"):
-        est = float(params.get(term, np.nan))
-    else:
-        est = float(params[result.model.exog_names.index(term)]) if term in result.model.exog_names else np.nan
-    if hasattr(pvalues, "get"):
-        pval = float(pvalues.get(term, np.nan))
-    else:
-        pval = float(pvalues[result.model.exog_names.index(term)]) if term in result.model.exog_names else np.nan
-    return est, pval
-
-
-# Build pretty-name mapping (metadata for original features + readable names for PCs)
-pretty_ds = train_ds_raw
-pretty_map = {col: pretty_ds.get_pretty_name(col) for col in df_train_model.columns}
-
-pc_pretty = {}
-for gr in pca_groups.group_results:
-    for col in gr.pc_scores.columns:
-        if "_PC" in col:
-            base, pc = col.rsplit("_PC", 1)
-            pc_pretty[col] = f"{base.replace('_', ' ').title()} PC{pc}"
-
-pretty_map.update(pc_pretty)
-pretty_map[STATUS_DUMMY] = "Development status (1 = developed)"
-```
-
-<!-- TODO: remove this: clunky, intransparent, not the right chapter, not our task -->
-```{python}
-# | label: model-specs
-# | include: false
-# Identify PCA columns by group
-pcs_by_group = {
-    gr.group.name: gr.pc_scores.columns.tolist() for gr in pca_groups.group_results
-}
-
-child_mortality_pcs = pcs_by_group.get("child_mortality", [])
-child_nutrition_pcs = pcs_by_group.get("child_nutrition", [])
-econ_pcs = pcs_by_group.get("economic_development", [])
-immun_pcs = pcs_by_group.get("immunization", [])
-
-econ_pc1 = econ_pcs[0] if econ_pcs else None
-econ_rest = econ_pcs[1:] if len(econ_pcs) > 1 else []
-
-if econ_pc1 is None:
-    raise ValueError("Expected at least one PCA component for economic_development.")
-
-# Predictor blocks (HDI excluded to avoid target leakage)
-block_baseline = [econ_pc1]
-block_mortality = [LECol.ADULT_MORTALITY, LECol.HIV_AIDS]
-block_development = [STATUS_DUMMY, LECol.TOTAL_EXPENDITURE, *econ_rest]
-block_child = [*child_mortality_pcs, *child_nutrition_pcs]
-block_immun = [*immun_pcs]
-
-# Build stepwise RHS formulas
-rhs_m0 = " + ".join(_as_terms(block_baseline))
-rhs_m1 = " + ".join(_as_terms([*block_baseline, *block_mortality]))
-rhs_m2 = " + ".join(_as_terms([*block_baseline, *block_mortality, *block_development]))
-rhs_m3 = " + ".join(
-    _as_terms([*block_baseline, *block_mortality, *block_development, *block_child])
-)
-rhs_m4 = " + ".join(
-    _as_terms(
-        [
-            *block_baseline,
-            *block_mortality,
-            *block_development,
-            *block_child,
-            *block_immun,
-        ]
-    )
-)
-
-candidate_interactions = [
-    f"{LECol.ADULT_MORTALITY}:{LECol.HIV_AIDS}",
-    f"{STATUS_DUMMY}:{LECol.HIV_AIDS}",
-    f"{STATUS_DUMMY}:{LECol.TOTAL_EXPENDITURE}",
-]
-if econ_pc1 is not None:
-    candidate_interactions.append(f"{STATUS_DUMMY}:{econ_pc1}")
-
-interaction_tests = []
-for term in candidate_interactions:
-    diag = fit_ols_formula(
-        df_train_model,
-        rhs=f"{rhs_m4} + {term}",
-        target_col=str(LECol.TARGET),
-    )
-    interaction_tests.append(
-        {
-            "interaction": term,
-            "p_value": float(diag.model.pvalues.get(term, float("nan"))),
-        }
-    )
-
-interaction_tests = pd.DataFrame(interaction_tests)
-significant_interactions = (
-    interaction_tests.loc[interaction_tests["p_value"] < 0.05, "interaction"]
-    .astype(str)
-    .tolist()
-)
-rhs_int1 = " + ".join([rhs_m4, *significant_interactions])
-```
-
-<!-- TODO: this should be included / visible! For transparency reasons define the rhs direcly here for *every* model, don't pass default kwargs like cv_folds, shuffle_cv and random_state change default if necessary -->
-```{python}
-# | label: model-fit
-# | include: false
-registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
-
-registry.fit(
-    df_train_model,
-    name="m0_baseline_econ",
-    rhs=rhs_m0,
-    cv_folds=5,
-    shuffle_cv=True,
-    random_state=42,
-)
-registry.fit(
-    df_train_model,
-    name="m1_add_mortality",
-    rhs=rhs_m1,
-    cv_folds=5,
-    shuffle_cv=True,
-    random_state=42,
-)
-registry.fit(
-    df_train_model,
-    name="m2_add_development",
-    rhs=rhs_m2,
-    cv_folds=5,
-    shuffle_cv=True,
-    random_state=42,
-)
-registry.fit(
-    df_train_model,
-    name="m3_add_child_health",
-    rhs=rhs_m3,
-    cv_folds=5,
-    shuffle_cv=True,
-    random_state=42,
-)
-registry.fit(
-    df_train_model,
-    name="m4_add_immunization",
-    rhs=rhs_m4,
-    cv_folds=5,
-    shuffle_cv=True,
-    random_state=42,
-)
-registry.fit(
-    df_train_model,
-    name="m_int1_mortality_hiv",
-    rhs=rhs_int1,
-    cv_folds=5,
-    shuffle_cv=True,
-    random_state=42,
-)
-```
-
-### Step 0: baseline socioeconomic association (M0)
-
-The baseline model includes only the first PCA component of the **economic development** block (GDP and health‑expenditure shares). This establishes a simple reference fit and a first estimate of the macroeconomic gradient without using HDI (to avoid target leakage).
-
-```{python}
-# | label: fig-baseline
-# | fig-cap: "Baseline association between economic development PC1 and life expectancy (2014)."
-plt.figure()
-sns.regplot(
-    x=econ_pc1,
-    y=LECol.TARGET,
-    data=df_train_model,
-    scatter_kws={"alpha": 0.3},
-    line_kws={"linewidth": 2},
-)
-plt.xlabel(pretty_map.get(econ_pc1, econ_pc1))
-plt.ylabel(pretty_map.get(str(LECol.TARGET), "Life expectancy"))
+plt.title("Influence Plot (Cook's Distance)")
+plt.xlabel("Leverage")
+plt.ylabel("Studentized Residuals")
+plt.tight_layout()
 plt.show()
 ```
 
@@ -1083,7 +645,6 @@ After examining individual predictors, we now combine the selected features to b
 # | fig-cap: "Multi Variable Regression Analysis using 2011 Data"
 # | echo: false
 
-### Step 1: add mortality burden (M1)
 
 # Prepare data with selected features
 df_multi = df[data_to_analyse + [LECol.LIFE_EXPECTANCY]].dropna()
