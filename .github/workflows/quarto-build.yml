@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           export QUARTO_PYTHON=$(python -c 'import sys; print(sys.executable)')
-          quarto render ./submission/ --execute
+          quarto render ./submission/ --no-execute --use-freezer
 
       - name: Upload Pages artifact
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
@@ -68,7 +68,7 @@ jobs:
         run: |
           $env:QUARTO_PYTHON = (python -c "import sys; print(sys.executable)")
           Set-Location ${{ github.workspace }}
-          quarto render .\submission\ --execute
+          quarto render .\submission\ --no-execute --use-freezer
 
   deploy:
     name: Deploy to GitHub Pages
