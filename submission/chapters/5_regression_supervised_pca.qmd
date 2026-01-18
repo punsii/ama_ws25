@@ -12,11 +12,15 @@ execute:
 
 # Regression: Supervised PCA
 
-This chapter isolates the supervised PCA regression workflow and its interpretation.
+This chapter evaluates a **supervised PCA regression (SPCA)** workflow for explaining and predicting life expectancy. The motivation is pragmatic: many candidate predictors are strongly correlated (e.g., mortality indicators, immunization rates, and development proxies), so standard OLS on raw features can be unstable and hard to interpret. SPCA compresses the predictor space into **orthogonal components that are pre-screened for outcome relevance**: we (i) screen predictors by their marginal association with life expectancy, (ii) run PCA on the screened subset, and (iii) regress life expectancy on the resulting principal components (PCs). This follows the supervised principal components idea of @Bair01032006.
 
-We follow the supervised principal components (SPCA) idea: screen predictors by their association with the outcome, run PCA on the screened subset, and regress on the resulting PCs. This aligns with the canonical SPCA framework of Bair et al. @Bair01032006.
+We use SPCA to answer four focused questions:
 
-<!-- Motivation: even when n > p (as here), unsupervised PCA can emphasize variance unrelated to the outcome, which can weaken predictive focus and interpretability. SPCA filters predictors by outcome association before PCA, so the resulting components remain low-dimensional but outcome-relevant. The approach highlights important variables and keeps the regression model interpretable while allowing covariates and interaction terms. @Bair01032006 -->
+1. **Model specification:** Do we need additional structure beyond additive PCs (e.g., a small number of PC–PC interactions) to improve fit?
+2. **Diagnostics:** Do the OLS assumptions for the final PC model look acceptable (residual structure, heteroscedasticity, influence, autocorrelation)?
+3. **Generalization:** How well does the fitted PC model transfer to other years, in particular to a holdout year (2011) and across the 2000–2014 range?
+
+The workflow includes screening, AIC-based selection, interaction screening, and Cook’s-distance sensitivity trimming. Therefore, coefficient p-values and confidence intervals are best treated as **post-selection / exploratory inference**, and we emphasize stability, diagnostics, and out-of-sample performance.
 
 ```{python}
 # | label: setup
@@ -74,8 +78,6 @@ registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
 
 ## Supervised PCA regression
 
-
-
 ```{python}
 # | label: supervised-pca
 # | code-fold: false
@@ -126,7 +128,12 @@ pc_holdout = pca_result.transform(holdout_full)
 
 train_pca_df = pc_train.assign(**train_full[[LECol.TARGET]])
 holdout_pca_df = pc_holdout.assign(**holdout_full[[LECol.TARGET]])
+print(f"#PCs: {len(pc_train.columns.tolist())}")
+```
 
+```{python}
+# | label: supervised-pca-initial
+# | code-fold: true
 rhs_pca = " + ".join(pc_train.columns.astype(str))
 spca_diag = registry.fit(
     train_pca_df,
@@ -481,17 +488,17 @@ rmse_by_year.groupby("model")[["rmse", "mae", "r2"]].mean().sort_values("rmse")
 
 ## Conclusions on model choice
 
-**Model selection conclusion (concise).**
-Two candidates emerge: the **Interactions model** (untrimmed) and the **Final model** (trimmed + simplified). The Final model is best **in-sample for 2014** ($R^2=0.981$, RMSE=1.066, AIC=533.2) and has the **most stable diagnostics** (JB p=0.560, Shapiro p=0.774, White p=0.529; BP borderline p=0.048; low VIF~1.7; max Cook's=0.056). Its drawback is **poorer temporal generalization**: mean RMSE across years is 3.403, the worst among candidates. The Interactions model generalizes **best across years** (mean RMSE=3.311; mean MAE=2.791; mean R^2=0.865), with the Final model worse by +0.092 RMSE (+2.79%) and +0.003 MAE (+0.10%). It also shows **less stable inference** (BP p=0.036; max Cook's=0.417; 12 points exceed 4/n), indicating higher influence sensitivity and more heteroscedasticity.
+Two candidates emerge: the **Interactions model** (untrimmed) and the **Final model** (trimmed + simplified). The Final model is best **in-sample for 2014** ($R^2=0.981$, RMSE=1.066, AIC=533.2) and has the **most stable diagnostics** (JB p=0.560, Shapiro p=0.774, White p=0.529; BP borderline p=0.048; low VIF~1.7; max Cook's=0.056). Its drawback is **poorer temporal generalization**: mean RMSE across years is 3.403, the worst among candidates. The Interactions model generalizes **best across years** (mean RMSE=3.311; mean MAE=2.791; mean $R^2=0.865$), with the Final model worse by +0.092 RMSE (+2.79%) and +0.003 MAE (+0.10%). It also shows **less stable inference** (BP p=0.036; max Cook's=0.417; 12 points exceed 4/n), indicating higher influence sensitivity and more heteroscedasticity.
 
 **Conclusion:** If the goal is **explain 2014 cross-sectional structure with stable diagnostics**, report the **Final model** (with a robust-SE/boot CI caveat). If the goal is **prediction across years**, select the **Interactions model** as the best generalizer despite less stable inference.
 
 
-## Loadings and biplots (retained PCs)
+## Interpretation of principal components in the final SPCA model
 
 ```{python}
 # | label: supervised-pca-loadings
 # | fig-cap: "Loadings heatmap for retained supervised PCs."
+# | code-fold: true
 group_res = pca_result.group_results[0]
 kept_pcs_prefixed = sig_pcs if sig_pcs else group_res.pc_scores.columns.tolist()
 kept_pc_names = [
@@ -506,18 +513,51 @@ plot_loadings_heatmap(
 ).show()
 ```
 
-Interpretation of the most impactful PCs (largest |t| values) in terms of original features:
 
-- **PC1 (t $\approx$ -69)**: strong positive loadings for under-five/infant mortality and adult mortality, with negative loadings for schooling and GDP. The negative coefficient implies that higher mortality burden reduces life expectancy, while higher education/wealth increases it.
-- **PC3 (t $\approx$ -20)**: dominated by HIV/AIDS, alcohol, and adult mortality (positive loadings). The negative coefficient indicates this disease-burden axis is strongly associated with lower life expectancy.
-- **PC10 (t $\approx$ -9.7)**: contrasts developed status and BMI (positive) against HIV/AIDS (negative). The negative coefficient reflects the arbitrary sign of PCs; interpreted substantively, this PC separates development/nutrition from HIV burden and contributes meaningfully to life expectancy differences.
-- **PC4 (t $\approx$ -9.0)**: combines BMI and percentage health expenditure (positive) with negative loadings on development status and total expenditure. This axis likely reflects compositional shifts in spending and nutrition; its negative sign suggests higher values on this contrast are associated with lower life expectancy after accounting for other PCs.
-- **PC8 (t $\approx$ +7.7)**: loads on BMI, thinness, and schooling (positive) versus measles and percentage expenditure (negative), capturing an anthropometric/education contrast against infectious disease proxies; its positive coefficient indicates higher scores align with higher life expectancy.
-- **PC5 (t $\approx$ +7.3)**: high on percentage expenditure and GDP but negative on total expenditure and BMI, suggesting a relative spending intensity vs. absolute resource/anthropometry contrast; the positive coefficient indicates higher scores correspond to higher life expectancy in this reduced-PC basis.
+
+The final supervised PCA (SPCA) regression model (`m_final`) uses the additive PCs
+PC1, PC3, PC4, PC5, PC6, PC7, PC8, PC9, PC10, PC11, PC13, PC14, and PC17,
+as well as two interaction terms: PC3:PC4 and PC10:PC4.
+All PCs are computed from standardized predictors after outcome-based screening, so each PC represents
+an **orthogonal axis** in the screened feature space.
+
+### How PCs are interpreted (rule)
+
+A PC is not a “variable”; it is a weighted contrast of original predictors. Interpretation therefore proceeds in two steps:
+
+1. **Loadings → meaning:** identify the dominant positive and negative loadings (top $|loading|$) from the loadings heatmap.
+   These define what a “high” vs “low” score on a PC means in terms of original variables.
+2. **Coefficient sign → association:** given the regression coefficient $\beta_k$, increasing the PC score by one unit changes the prediction by $\beta_k$ years.
+   Hence, the side of the PC axis that increases life expectancy is determined by the joint sign structure of loadings and $\beta_k$.
+
+Because PC signs are arbitrary, we do **not** interpret “positive PC values” per se; we interpret the **direction in original-variable space**
+that corresponds to higher predicted life expectancy.
+
+### Which PCs matter most (relative importance)
+
+The t-statistics indicate that the model is dominated by a small number of axes.
+PC1 is by far the strongest contributor (|t| $\approx 78.5$), followed by PC3, PC4, PC10, PC11, PC14, PC5, and PC8 (all |t| $\gtrsim 8$).
+The remaining retained PCs contribute smaller but still statistically detectable adjustments in orthogonal directions.
+
+### Interpretation of the dominant PCs
+
+**PC1 — “Mortality burden vs socio-economic development” (dominant gradient).**
+Loadings indicate that PC1 increases with mortality indicators (under-five deaths, infant deaths, adult mortality)
+and decreases with development proxies (schooling, GDP). The coefficient is negative ($\beta_{PC1} < 0$),
+so moving toward the mortality-burden side of this axis is associated with lower life expectancy.
+Equivalently, conditional on the other PCs, countries characterized by higher schooling/GDP and lower mortality burden
+lie on the life-expectancy–increasing direction of PC1.
+
+**PC3 — “HIV/AIDS and residual mortality burden beyond the main gradient.”**
+PC3 is dominated by HIV/AIDS and mortality-related loadings (as seen in the loadings heatmap).
+Its coefficient is negative ($\beta_{PC3} < 0$), implying that, *after controlling for the broad PC1 gradient*,
+the HIV/AIDS–related burden captured by PC3 remains strongly associated with reduced life expectancy.
+PC3 also enters an interaction with PC4 (see below), indicating that the strength of this association depends on the level of PC4.
 
 ```{python}
-# | label: supervised-pca-biplot
+# | label: supervised-pca-biplot-pc1-pc3
 # | fig-cap: "Biplot for the first two retained supervised PCs."
+# | code-fold: true
 pc_axes = kept_pc_names[:2] if len(kept_pc_names) >= 2 else []
 if len(pc_axes) == 2:
     biplot_fig = plot_biplot_plotly(
@@ -530,25 +570,101 @@ if len(pc_axes) == 2:
     biplot_fig.show()
 ```
 
+**PC4 — “Health spending / nutrition / development-composition contrast” (moderator axis).**
+PC4 combines expenditure and anthropometric structure (e.g., BMI and expenditure-related variables) against development-status/expenditure composition
+in a way that is orthogonal to PC1 and PC3. Its main-effect coefficient is negative ($\beta_{PC4} < 0$),
+so higher scores along the PC4 direction are associated with lower life expectancy *at the reference levels of other PCs*.
+Crucially, PC4 also appears in both retained interaction terms, so it acts as an effect modifier:
+PC4 changes how strongly PC3 and PC10 relate to life expectancy.
+
+**PC10 — “Development–disease contrast distinct from PC1” (interaction with PC4).**
+PC10 forms another high-impact axis (large |t|), separating a residual development/disease pattern not already captured by PC1.
+Its main coefficient is negative ($\beta_{PC10} < 0$), but the interpretation must be tied to its loadings:
+the direction associated with higher life expectancy is the side of the PC10 axis whose movement yields an increase in $\hat{y}$
+given $\beta_{PC10}$ (i.e., the side opposite the sign of $\beta_{PC10}$).
+PC10 additionally interacts with PC4, so the association of PC10 with life expectancy changes depending on PC4.
+
 ```{python}
-# | label: supervised-pca-biplot-2d
-# | fig-cap: "2D biplot for supervised PCs 4, 5."
-pc_axes_3d = [pc for pc in ["PC4", "PC5"] if pc in kept_pc_names]
-if len(pc_axes_3d) == 2:
-    biplot_fig_3d = plot_biplot_plotly(
+# | label: supervised-pca-biplot-pc4-pc10
+# | fig-cap: "Biplot for the supervised PCs 4 and 10."
+# | code-fold: true
+pc_axes = ["PC4", "PC10"]
+if len(pc_axes) == 2:
+    biplot_fig = plot_biplot_plotly(
         group_res,
         dims=2,
-        pc_axes=pc_axes_3d,
-        top_features=10,
+        pc_axes=pc_axes,
+        top_features=12,
         color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
     )
-    biplot_fig_3d.show()
+    biplot_fig.show()
 ```
+
+**PC5 and PC8 — “Secondary development/health structure axes.”**
+PC5 and PC8 have positive coefficients in the final model, indicating that moving along their life-expectancy–increasing directions
+is associated with higher life expectancy, conditional on the dominant mortality/development gradients.
+Based on the loadings heatmap, these PCs correspond to contrasts mixing development proxies, expenditure structure, nutrition, and infectious disease burden.
+In practice, these axes capture predictable second-order structure: once the main mortality–development gradient (PC1) is accounted for,
+there remains residual variation that separates countries by spending composition, nutrition, and disease patterns.
+
+```{python}
+# | label: supervised-pca-biplot-pc5-pc8
+# | fig-cap: "Biplot for the supervised PCs 5 and 8."
+# | code-fold: true
+pc_axes = ["PC5", "PC8"]
+if len(pc_axes) == 2:
+    biplot_fig = plot_biplot_plotly(
+        group_res,
+        dims=2,
+        pc_axes=pc_axes,
+        top_features=12,
+        color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
+    )
+    biplot_fig.show()
+```
+
+
+### Interactions in the final model (PC3:PC4 and PC10:PC4)
+
+The final model includes two interactions:
+
+- PC3:PC4 with a **positive** coefficient ($\beta_{34} > 0$)
+- PC10:PC4 with a **positive** coefficient ($\beta_{10,4} > 0$)
+
+This implies effect modification. The marginal effects are:
+
+$$
+\frac{\partial \hat{y}}{\partial PC3} = \beta_{PC3} + \beta_{34}\,PC4,\qquad
+\frac{\partial \hat{y}}{\partial PC10} = \beta_{PC10} + \beta_{10,4}\,PC4.
+$$
+
+Since $\beta_{PC3} < 0$ and $\beta_{34} > 0$, the negative association of PC3 with life expectancy is **attenuated** at higher PC4 values
+and **stronger (more negative)** at lower PC4 values. Numerically, a one-unit increase in PC4 changes the marginal effect of PC3 by $\beta_{34}$,
+so PC4 acts as a buffer/moderator of the PC3-related burden axis.
+
+Similarly, since $\beta_{PC10} < 0$ and $\beta_{10,4} > 0$, the negative association of PC10 is also **attenuated** at higher PC4 values.
+Substantively, these interactions mean: the life-expectancy penalty associated with the PC3/PC10 “burden/development contrasts” depends on the structural axis represented by PC4.
+The concrete interpretation should be stated using the top loadings of PC3, PC4, and PC10 (e.g., “HIV/mortality burden is less harmful at higher values of the spending/nutrition axis”, if that is what PC4 encodes).
+
+### Remaining retained PCs (PC6, PC7, PC9, PC11, PC13, PC14, PC17)
+
+The remaining retained PCs represent additional orthogonal directions that are statistically detectable but smaller than the dominant axes above.
+To interpret them without overclaiming, we recommend documenting, for each PCk:
+
+- the **top positive and negative loadings** (top 5–10 by $|loading|$),
+- a short axis label (“immunization coverage contrast”, “nutrition deficiency contrast”, “spending composition contrast”, etc.),
+- and a one-sentence association statement consistent with the coefficient sign:
+  “moving toward the [loading-defined] side of PCk is associated with higher/lower life expectancy (conditional on the other PCs).”
+
+Because these PCs are orthogonal and were selected after screening/selection, they should be treated as refining axes
+rather than standalone causal drivers. In the main text, it is usually sufficient to interpret 3–5 of the most influential PCs
+(PC1, PC3, PC4, PC10, plus one of PC5/PC8), and place the full loading summaries for all PCs into an appendix/callout.
 
 ```{python}
 # | label: supervised-pca-biplot-3d
-# | fig-cap: "3D biplot for supervised PCs 5, 7, 8 (if available)."
-pc_axes_3d = [pc for pc in ["PC5", "PC7", "PC8"] if pc in kept_pc_names]
+# | fig-cap: "3D biplot for supervised PCs 6, 7, 9 (if available)."
+# | code-fold: true
+pc_axes_3d = [pc for pc in ["PC6", "PC7", "PC9"] if pc in kept_pc_names]
 if len(pc_axes_3d) == 3:
     biplot_fig_3d = plot_biplot_plotly(
         group_res,
@@ -560,4 +676,3 @@ if len(pc_axes_3d) == 3:
     biplot_fig_3d.show()
 ```
 
-**Interpretation guidance:** Use the PCA loadings to interpret each significant PC. Do not interpret PC signs without loadings. Include a short paragraph linking top loadings to life expectancy dynamics.
