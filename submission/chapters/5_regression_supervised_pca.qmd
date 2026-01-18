@@ -7,6 +7,7 @@ format:
 execute:
   warning: false
   message: false
+  cache: true
 ---
 
 # Regression: Supervised PCA
@@ -34,9 +35,7 @@ np.random.seed(42)
 TRAIN_YEAR = 2014
 HOLDOUT_YEAR = 2011
 STATUS_DUMMY = "status_developed"
-
-def _print_formula(rhs: str, *, target: str = LECol.TARGET) -> None:
-    print(f"Formula: {target} ~ {rhs}")
+N_BOOTSTAP = 3000
 ```
 
 ## Data preparation
@@ -73,7 +72,7 @@ Follow `notebooks/project/06_linear_regression_supervised_pca.ipynb` using `Mode
 
 ```{python}
 # | label: supervised-pca
-# | code-fold: true
+# | code-fold: false
 corr_result = (
     LifeExpectancyDataset(df=train_full)
     .make_correlation_analyzer(standardized=False, include_target=True)
@@ -87,13 +86,20 @@ strong_features = (
     .feature.tolist()
 )
 strong_features = [
-    f for f in strong_features if f not in [LECol.STATUS, LECol.HDI, LECol.ADULT_MORTALITY]
+    f
+    for f in strong_features
+    if f
+    not in [
+        LECol.HDI,
+    ]
 ]
 print(strong_features)
 ```
 
+:::{.callout-note collapse="true"}
+### Supervised PCA fit
 ```{python}
-# | label: supervised-pca-fit
+# | label: tbl-supervised-pca-fit
 # | code-fold: true
 feature_groups = [FeatureGroup(name="supervised", features=strong_features)]
 
@@ -115,7 +121,6 @@ train_pca_df = pc_train.assign(**train_full[[LECol.TARGET]])
 holdout_pca_df = pc_holdout.assign(**holdout_full[[LECol.TARGET]])
 
 rhs_pca = " + ".join(pc_train.columns.astype(str))
-_print_formula(rhs_pca)
 spca_diag = registry.fit(
     train_pca_df,
     name="m_spca",
@@ -131,7 +136,6 @@ if not sig_pcs:
     sig_pcs = pc_train.columns.tolist()
 
 rhs_pca_reduced = " + ".join(sig_pcs)
-_print_formula(rhs_pca_reduced)
 spca_reduced = registry.fit(
     train_pca_df,
     name="m_spca_reduced",
@@ -140,12 +144,162 @@ spca_reduced = registry.fit(
 )
 display(spca_reduced)
 ```
+:::
+
+The reduced supervised-PCA model explains most variance in life expectancy (R^2 ~ 0.97) with low in-sample error (RMSE ~ 1.36). All retained PCs are statistically significant at 5%, indicating that the supervised PCA basis concentrates signal across multiple orthogonal axes rather than a single dominant factor.
+
+:::{.callout-note collapse="true"}
+
+### Stepwise AIC model selection
+
+```{python}
+# | label: supervised-pca-stepwise
+# | code-fold: false
+stepwise_paths, stepwise_best_map, stepwise_compare = registry.run_selection_grid(
+    train_pca_df,
+    base_terms=[],
+    candidates=pc_train.columns.astype(str).tolist(),
+    criteria=["aic"],
+    thresholds={"aic": 1.0},
+    name_prefix="m_stepwise",
+    refit=True,
+)
+spca_stepwise_name = stepwise_best_map.loc[0, "model"]
+spca_stepwise = registry.get(spca_stepwise_name).diag
+display(spca_stepwise)
+```
+:::
+
+The stepwise AIC model is only marginally different from the reduced model (AIC ~ 645 vs 647), adding PC2 (borderline p ~ 0.052). This suggests the reduced model is already near the AIC optimum while keeping the specification simpler.
+
+:::{.callout-note collapse="true"}
+### Interaction-augmented fit
+```{python}
+# | label: supervised-pca-interactions
+# | code-fold: true
+import statsmodels.formula.api as smf
+from itertools import combinations
+
+top_k = 6
+tvals = spca_reduced.model.tvalues.drop("Intercept").abs().sort_values(ascending=False)
+top_pcs = tvals.head(top_k).index.tolist()
+
+base_rhs = rhs_pca_reduced
+base_aic = spca_reduced.metrics.aic
+screen_rows = []
+for pc_a, pc_b in combinations(top_pcs, 2):
+    term = f"{pc_a}:{pc_b}"
+    rhs = f"{base_rhs} + {term}"
+    model = smf.ols(f"{LECol.TARGET} ~ {rhs}", data=train_pca_df).fit()
+    screen_rows.append(
+        {
+            "term": term,
+            "pval": float(model.pvalues.get(term, np.nan)),
+            "delta_aic": float(model.aic - base_aic),
+        }
+    )
+
+screen_df = pd.DataFrame(screen_rows).sort_values("delta_aic")
+interaction_candidates = (
+    screen_df.query("pval < 0.05 and delta_aic < 0").head(5)["term"].tolist()
+)
+if not interaction_candidates:
+    interaction_candidates = screen_df.head(3)["term"].tolist()
+
+interaction_paths, interaction_best_map, interaction_compare = (
+    registry.run_selection_grid(
+        train_pca_df,
+        base_terms=sig_pcs,
+        candidates=interaction_candidates,
+        directions=["stepwise"],
+        criteria=["aic"],
+        thresholds={"aic": 1.0},
+        name_prefix="m_inter",
+        refit=True,
+    )
+)
+spca_interactions_name = interaction_best_map.loc[0, "model"]
+spca_interactions = registry.get(spca_interactions_name).diag
+display(spca_interactions)
+```
+:::
+
+Interaction-augmented stepwise fit (top PCs only) offers a targeted check for nonlinear combinations of disease-burden and development axes. Treat the result as exploratory and validate across years before drawing causal conclusions.
+
+:::{.callout-note collapse="true"}
+### Cook's distance trim (initial + filtered)
+```{python}
+# | label: supervised-pca-cooks
+# | code-fold: true
+cooks_thresh = 4 / len(train_pca_df)
+spca_cooks_initial, spca_cooks = registry.fit(
+    train_pca_df,
+    name="m_inter_trim",
+    rhs=registry.get(spca_interactions_name).rhs,
+    refit=True,
+    cook_distance_threshold=cooks_thresh,
+)
+registry.remove("m_inter_trim_initial")  # keep only final trimmed model in registry
+removed = len(spca_cooks_initial.design_matrix) - len(spca_cooks.design_matrix)
+print(f"Cook's threshold: {cooks_thresh:.4f} | removed: {removed}")
+display(spca_cooks_initial)
+```
+:::
+
+:::{.callout-note collapse="true"}
+### Cook's distance trim (initial + filtered)
+
+```{python}
+final_formula = (
+    registry.get(spca_interactions_name)
+    .rhs.replace(" + supervised_PC12", "")
+    .replace(" + supervised_PC3:supervised_PC10", "")
+)
+cooks_thresh = 4 / len(train_pca_df)
+spca_cooks_initial, spca_final = registry.fit(
+    train_pca_df,
+    name="m_final",
+    rhs=final_formula,
+    refit=True,
+    cook_distance_threshold=cooks_thresh,
+)
+registry.remove("m_final_initial")  # keep only final trimmed model in registry
+removed = len(spca_cooks_initial.design_matrix) - len(spca_final.design_matrix)
+```
+
+:::
+
+### Model comparison
+
+```{python}
+# | label: supervised-pca-compare
+# | tbl-cap: "Model comparison across supervised PCA variants."
+comp_tbl = registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+]
+comp_tbl
+```
+
+### Best model diagnostics
+
+```{python}
+# | label: supervised-pca-cooks-final
+best_model = registry.get(comp_tbl.index[0])
+best_model_name = best_model.name
+best_model = best_model.diag
+
+display(best_model)
+```
+
+Removing high-influence points (Cook's distance > 4/n) yields a sensitivity check on inference. If coefficients and fit metrics stay stable, the original model is not unduly driven by a few influential countries; if they shift materially, robust/trimmed fits should be preferred for inference.
 
 ```{python}
 # | label: supervised-pca-diagnostics
 # | fig-cap: "Supervised PCA regression diagnostics."
-spca_reduced.plot_residual_diags()
+best_model.plot_residual_diags()
 ```
+
+Diagnostics indicate generally adequate linear-model behavior with mild departures. Residuals are centered and mostly patternless across PCs, while the residual-vs-fitted curve shows a slight curvature and the scale-location plot suggests modest heteroscedasticity. Normality is borderline: Shapiro-Wilk is acceptable but Jarque-Bera rejects, indicating heavier tails driven by a few outliers. Breusch-Pagan rejects homoscedasticity, whereas White's test does not, pointing to mild, possibly form-dependent heteroscedasticity. Durbin-Watson ~ 2 indicates no material autocorrelation. Several observations show elevated leverage and Cook's distance (notably Syria, Lesotho, and a few high-leverage countries), so coefficient SEs and CIs from the non-robust OLS output should be treated cautiously. For inferential claims, HC3/robust SEs or bootstrap-based intervals would be preferable; predictive metrics remain reliable.
 
 ## Holdout evaluation and bootstrap CIs
 
@@ -153,34 +307,40 @@ spca_reduced.plot_residual_diags()
 # | label: supervised-pca-eval
 # | tbl-cap: "Holdout-year performance (2011) for supervised PCA model."
 eval_holdout = registry.evaluate_on(
-    "m_spca_reduced",
+    best_model_name,
     holdout_pca_df,
     label=f"year{HOLDOUT_YEAR}",
 )
 eval_holdout
 ```
 
+Holdout performance remains strong (RMSE ~ 1.86, R^2 ~ 0.95), suggesting limited overfitting despite using many PCs. The bootstrap CIs for RMSE/MAE/R^2 are narrow relative to the point estimates, reinforcing the stability of predictive performance.
+
 ```{python}
 # | label: supervised-pca-eval-ci
-# | tbl-cap: "Bootstrap CIs for holdout metrics (B=1000)."
-eval_holdout.bootstrap_ci(n_bootstrap=1000, random_state=42)
+# | tbl-cap: "Bootstrap CIs for holdout metrics (B=3000)."
+eval_holdout.bootstrap_ci(n_bootstrap=N_BOOTSTAP, random_state=42)
 ```
 
 ```{python}
 # | label: supervised-pca-calibration
 # | fig-cap: "Holdout calibration (2011) with bootstrap 95% CIs for binned means."
 plt.figure(figsize=(7, 5))
-eval_holdout.plot_calibration(bins=10, bootstrap=300, random_state=42)
+eval_holdout.plot_calibration(bins=10, bootstrap=N_BOOTSTAP, random_state=42)
 plt.show()
 ```
+
+The calibration curve tracks the 45-degree line closely across most of the range, with slight over-prediction at the lowest life-expectancy levels (points below the diagonal) and good calibration in the mid-to-high range. This indicates that systematic bias is small and largely confined to the most disadvantaged countries.
 
 ```{python}
 # | label: supervised-pca-eval-years
 # | tbl-cap: "Supervised PCA evaluation across multiple years (same PCA mapping)."
-years_eval = [2010, 2011, 2012, 2013, 2014]
+# years_eval = [2010, 2011, 2012, 2013, 2014]
+years_eval = range(2000, 2015)
 rows = []
+ci_rows = []
 for year in years_eval:
-    yr_ds = LifeExpectancyDataset.from_csv(
+    yr_ds = LifeExpectancyDataset.from_csv_updated(
         aggregate_by_country=year,
         resolve_nand_pred="carry_forward",
     )
@@ -189,13 +349,107 @@ for year in years_eval:
         yr_full = yr_full.assign(**{STATUS_DUMMY: yr_full[LECol.STATUS].astype(int)})
     yr_pca = pca_result.transform(yr_full)
     yr_df = yr_pca.assign(**yr_full[[LECol.TARGET]])
-    metrics = registry.evaluate_on("m_spca_reduced", yr_df, label=f"year{year}")
+    metrics = registry.evaluate_on(best_model_name, yr_df, label=f"year{year}")
     rows.append(
-        {"year": year, "rmse": metrics.rmse, "mae": metrics.mae, "r2": metrics.r2, "n_obs": metrics.n_obs}
+        {
+            "year": year,
+            "rmse": metrics.rmse,
+            "mae": metrics.mae,
+            "r2": metrics.r2,
+            "n_obs": metrics.n_obs,
+        }
     )
+    ci = metrics.bootstrap_ci(n_bootstrap=N_BOOTSTAP, random_state=42)
+    ci_rows.append(ci.assign(year=year))
 
-pd.DataFrame(rows)
+metrics_df = pd.DataFrame(rows).sort_values(by="year")
+ci_df = pd.concat(ci_rows, ignore_index=True)
+
+plot_df = ci_df.query("metric in ['mae', 'r2']").sort_values(["metric", "year"])
+fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharex=True)
+for metric, ax in zip(["mae", "r2"], axes):
+    sub = plot_df[plot_df["metric"] == metric]
+    ax.plot(sub["year"], sub["estimate"], marker="o")
+    ax.fill_between(sub["year"], sub["ci_low"], sub["ci_high"], alpha=0.2)
+    ax.axvline(TRAIN_YEAR, color="grey", linestyle="--", linewidth=1, alpha=0.7)
+    ax.set_title(f"{metric.upper()} with 95% CI")
+    ax.set_xlabel("Year")
+    ax.set_ylabel(metric.upper())
+plt.tight_layout()
+plt.show()
+
+metrics_df
+
 ```
+
+```{python}
+# | label: supervised-pca-eval-all-models
+# | fig-cap: "RMSE across years for supervised PCA variants."
+all_years = (
+    LifeExpectancyDataset.from_csv_updated(
+        aggregate_by_country=False,
+        resolve_nand_pred=False,
+    )
+    .df[LECol.YEAR]
+    .dt.year.sort_values()
+    .unique()
+    .tolist()
+)
+years_eval_all = [year for year in all_years if year != TRAIN_YEAR]
+
+model_labels = {
+    "m_spca": "Full PCA",
+    "m_spca_reduced": "Reduced PCA",
+    spca_stepwise_name: "Stepwise AIC",
+    spca_interactions_name: "Interactions",
+    "m_inter_trim": "Cooks-trimmed",
+    "m_final": "Final model",
+}
+
+rows = []
+for year in years_eval_all:
+    yr_ds = LifeExpectancyDataset.from_csv_updated(
+        aggregate_by_country=year,
+        resolve_nand_pred="carry_forward",
+    )
+    yr_full = yr_ds.tf_and_norm().drop(columns=[LECol.YEAR])
+    if STATUS_DUMMY not in yr_full.columns and LECol.STATUS in yr_full.columns:
+        yr_full = yr_full.assign(**{STATUS_DUMMY: yr_full[LECol.STATUS].astype(int)})
+    yr_pca = pca_result.transform(yr_full)
+    yr_df = yr_pca.assign(**yr_full[[LECol.TARGET]])
+    for model in model_labels.keys():
+        metrics = registry.evaluate_on(model, yr_df, label=f"year{year}")
+        rows.append(
+            {
+                "year": year,
+                "model": model_labels.get(model, model),
+                "rmse": metrics.rmse,
+                "mae": metrics.mae,
+                "r2": metrics.r2,
+                "n_obs": metrics.n_obs,
+            }
+        )
+
+rmse_by_year = pd.DataFrame(rows)
+plt.figure(figsize=(9, 5))
+sns.lineplot(data=rmse_by_year, x="year", y="rmse", hue="model", marker="o")
+plt.axvline(TRAIN_YEAR, color="grey", linestyle="--", linewidth=1, alpha=0.7)
+plt.ylabel("RMSE")
+plt.yscale("log")
+plt.xlabel("Year")
+plt.legend(title="Model")
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+# | label: tbl-supervised-pca-eval-all-models
+# | tbl-cap: "Supervised PCA model evaluation across years accumulated over years."
+
+rmse_by_year.groupby("model")[["rmse", "mae", "r2"]].mean().sort_values("rmse")
+```
+
 
 ## Loadings and biplots (retained PCs)
 
@@ -215,6 +469,15 @@ plot_loadings_heatmap(
     figsize=(14, 8),
 )
 ```
+
+Interpretation of the most impactful PCs (largest |t| values) in terms of original features:
+
+- **PC1 (t $\approx$ -69)**: strong positive loadings for under-five/infant mortality and adult mortality, with negative loadings for schooling and GDP. The negative coefficient implies that higher mortality burden reduces life expectancy, while higher education/wealth increases it.
+- **PC3 (t $\approx$ -20)**: dominated by HIV/AIDS, alcohol, and adult mortality (positive loadings). The negative coefficient indicates this disease-burden axis is strongly associated with lower life expectancy.
+- **PC10 (t $\approx$ -9.7)**: contrasts developed status and BMI (positive) against HIV/AIDS (negative). The negative coefficient reflects the arbitrary sign of PCs; interpreted substantively, this PC separates development/nutrition from HIV burden and contributes meaningfully to life expectancy differences.
+- **PC4 (t $\approx$ -9.0)**: combines BMI and percentage health expenditure (positive) with negative loadings on development status and total expenditure. This axis likely reflects compositional shifts in spending and nutrition; its negative sign suggests higher values on this contrast are associated with lower life expectancy after accounting for other PCs.
+- **PC8 (t $\approx$ +7.7)**: loads on BMI, thinness, and schooling (positive) versus measles and percentage expenditure (negative), capturing an anthropometric/education contrast against infectious disease proxies; its positive coefficient indicates higher scores align with higher life expectancy.
+- **PC5 (t $\approx$ +7.3)**: high on percentage expenditure and GDP but negative on total expenditure and BMI, suggesting a relative spending intensity vs. absolute resource/anthropometry contrast; the positive coefficient indicates higher scores correspond to higher life expectancy in this reduced-PC basis.
 
 ```{python}
 # | label: supervised-pca-biplot
