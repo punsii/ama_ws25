@@ -511,12 +511,12 @@ Interpretation of the most impactful PCs (largest |t| values) in terms of origin
 
 ```{python}
 # | label: supervised-pca-biplot
-# | fig-cap: "Biplot for the first two retained supervised PCs."
-pc_axes = kept_pc_names[:2] if len(kept_pc_names) >= 2 else kept_pc_names
-if pc_axes:
+# | fig-cap: "Biplot for the first two retained supervised PCs"
+pc_axes = kept_pc_names[:2] if len(kept_pc_names) >= 2 else []
+if len(pc_axes) == 2:
     biplot_fig = plot_biplot_plotly(
         group_res,
-        dims=min(2, len(pc_axes)),
+        dims=2,
         pc_axes=pc_axes,
         top_features=12,
         color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
@@ -528,13 +528,15 @@ if pc_axes:
 # | label: supervised-pca-biplot-2d
 # | fig-cap: "2D biplot for supervised PCs 4, 5."
 pc_axes_3d = [pc for pc in ["PC4", "PC5"] if pc in kept_pc_names]
-biplot_fig_3d = plot_biplot_plotly(
-    group_res,
-    dims=2,
-    pc_axes=pc_axes_3d,
-    top_features=10,
-    color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
-).show()
+if len(pc_axes_3d) == 2:
+    biplot_fig_3d = plot_biplot_plotly(
+        group_res,
+        dims=2,
+        pc_axes=pc_axes_3d,
+        top_features=10,
+        color=train_full.loc[group_res.pc_scores.index, LECol.TARGET],
+    )
+    biplot_fig_3d.show()
 ```
 
 ```{python}
