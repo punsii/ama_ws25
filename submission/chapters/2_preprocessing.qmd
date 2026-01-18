@@ -22,6 +22,52 @@ Figure @fig-preproc-flow summarizes the pipeline executed by `LifeExpectancyData
 The workflow is driven by a schema-as-code layer: all variables are accessed via the `LECol` enum (with `ColumnMetadata`), which defines original names, dtypes, display labels, and default transformations. This makes preprocessing choices explicit and reproducible across chapters.
 
 <!-- ## Known issues in the raw Kaggle dataset
+Claims in Kaggle discussions:
+
+- Population of some countries like Israel, Srilanka are in thousands, while other in millions.
+- if you look for the first country about the infant death (Number of Infant Deaths per 1000 population)
+https://data.who.int/indicators/i/E3CAF2B/2322814?m49=004?m49=004?m49=004
+You notice that amount in the data 2000-2015 and the link provided above their huge different…
+```
+Using the IQR method, these are the outlier counts:
+
+Measles: 542, HIV/AIDS: 542, under-five deaths: 394, percentage expenditure: 389, GDP: 365, Diphtheria: 298, Population: 294, Polio: 279, Hepatitis B: 254, thinness 5-9 years: 96, thinness 1-19 years: 89, Adult Mortality: 82, Income composition of resources: 130, Schooling: 44, Total expenditure: 32, Life expectancy: 10
+
+As the count is quite high for some columns and the values seem illogical in some cases. For example, the measles columns are occurances per 1000 inhabitants, yet there are hundreds of values above 1000 (up to 200000). Similarly the infant deaths and under-five deaths are also measured per 1000 and have values above 1000.
+```
+- The BMI data shows BMI up to 60 which is impossible. Does anyone know how to interpret these data points or are they just incorrect? I see there was a question about this 5 years ago but nothing since.
+```
+If you pay attention to some numbers such as GDP, you will see that those numbers have their decimal points placed wrong. Or, it could be that the author totally fabricated those numbers. In a word, don't use that for serious research; your research will be ruined.
+```
+```
+DO NOT USE the data set since the data quality is really low.
+For example
+
+The maximum infant death number (per 1000 population) is 1800
+The maximum Expenditure on health as a percentage of Gross Domestic Product per capita(%) is 19479.912
+The maximum number of reported Measles cases per 1000 population is 212183
+The maximum Average Body Mass Index of the entire population is 87.30
+The maximum number of under-five deaths per 1000 population is 2500
+The minimum population of the country is 34
+```
+
+```
+I did a bit of research:
+China 2015: the number 42 361 exactly matches cases of Measels in China rather than cases per 1000 in China.
+source WHO China
+Same goes for the 11 cases in Bhutan 2015.
+source WHO Butan
+
+So I guess it is like this for all countries, they forgot to divide by population.
+```
+- I noticed that France and Finland have been misclassified as developing countries.
+
+```
+There are values which are clearly impossible, like India having 1800 per 1000 population.
+There are values which are unreasonable, like Switzerland and Sweden having less than 1 per 1000.
+There are values which look like they are reasonable, but are wrong. For the years 2013-2015, Uzbekistan has values from 15 to 17. But going to the WHO web site, the actual values should be 23.0 to 26.3
+```
+---
 
 The raw Life Expectancy panel is widely used but has **documented inconsistencies and missingness**. The most important issues for our analysis are:
 
@@ -56,7 +102,32 @@ The updated dataset you provided uses **external sources** (WDI, WHO, OWID), **c
    - Align units (e.g., population in absolute counts vs millions) before merging.
    - Explicitly record any re‑scaling in metadata (`LECol`).
 
-We do **not** apply this full pipeline in the current report to avoid mixing sources mid‑analysis. Instead, we keep the Kaggle dataset as the primary source and report missingness, transformations, and sensitivity checks transparently. -->
+We do **not** apply this full pipeline in the current report to avoid mixing sources mid‑analysis. Instead, we keep the Kaggle dataset as the primary source and report missingness, transformations, and sensitivity checks transparently.
+
+---
+Description from "https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated/data":
+
+About Dataset
+Data contains life expectancy, health, immunization, and economic and demographic information about 179 countries from 2000-2015 years. The adjusted dataset has 21 variables and 2.864 rows.
+
+Data were initially collected from Kaggle Source.
+
+The dataset had inaccurate data and a lot of values were missing.
+
+The dataset is completely updated.
+
+Data about Population, GDP, and Life Expectancy was updated according to World Bank Data. Information about vaccinations for Measles, Hepatitis B, Polio, and Diphtheria, alcohol consumption, BMI, HIV incidents, mortality rates, and thinness were collected from World Health Organization public datasets. Information about Schooling was collected from the Our World in Data which is a project of the University of Oxford.
+
+The data had some missing values. A few strategies for filling in missing values were applied.
+
+Filling data with the closest three-year average. If a specific country had a missing value in any year, the data was filled with the closest three-year average.
+Filling data with the average of the Region. If a specific country was missing values for all years, the data was filled with the average of the Region (e.g. Asia, Africa, European Union, etc.)
+Data is adjusted and the missing values are filled. Countries that were missing more than 4 data columns were omitted from the database. Examples of these countries are Sudan, South Sudan, and North Korea.
+
+The database has one variable that categorizes countries into two groups: Developed vs Developing countries. According to World Trade Organization, each country defines itself as “Developed” or “Developing”. Therefore, it is challenging to categorize countries. UN has a list dated 2014 that for analytical purposes classifies countries as developed, in transition, and developing economies. Countries that have economies in transition have similar characteristics to the countries that are categorized as developed or developing countries. Countries have been grouped according to their Gross National Income per capita. As a result, nations were divided into four income groups: high-income, higher-middle-income, lower-middle-income, and low-income. The levels of Gross Domestic Income are set by the World Bank to ensure comparability.
+
+Data Sources: Average life expectancy of both genders in different years from 2000 to 2015: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/life-expectancy-at-birth-(years) Mortality-related attributes (infant deaths, under-five-deaths, adult mortality): https://www.who.int/data/gho/data/themes/mortality-and-global-health-estimates Alcohol consumption that is recorded in liters of pure alcohol per capita with 15+ years old: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/alcohol-recorded-per-capita-(15-)-consumption-(in-litres-of-pure-alcohol) % of coverage of Hepatitis B (HepB3) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/hepatitis-b-(hepb3)-immunization-coverage-among-1-year-olds-(-) % of coverage of Measles containing vaccine first dose (MCV1) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/measles-containing-vaccine-first-dose-(mcv1)-immunization-coverage-among-1-year-olds-(-) % of coverage of Polio (Pol3) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/polio-(pol3)-immunization-coverage-among-1-year-olds-(-) % of coverage of Diphtheria tetanus toxoid and pertussis (DTP3) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/diphtheria-tetanus-toxoid-and-pertussis-(dtp3)-immunization-coverage-among-1-year-olds-(-) BMI: https://www.who.int/europe/news-room/fact-sheets/item/a-healthy-lifestyle---who-recommendations Incidents of HIV per 1000 population aged 15-49: https://data.worldbank.org/indicator/SH.HIV.INCD.ZS Prevalence of thinness among adolescents aged 10-19 years. BMI < -2 standard deviations below the median: https://www.who.int/data/gho/indicator-metadata-registry/imr-details/4805 GDP per capita in current USD: https://data.worldbank.org/indicator/NY.GDP.PCAP.CD?most_recent_year_desc=true Total population in millions: https://data.worldbank.org/indicator/SP.POP.TOTL?most_recent_year_desc=true Average years that people aged 25+ spent in formal education: https://ourworldindata.org/grapher/mean-years-of-schooling-long-run
+-->
 
 ## Missing Values and analysis views
 
@@ -107,6 +178,236 @@ Given the singular appearance of these ten countries in 2013 only, their missing
 Predictor missingness is controlled by `resolve_nand_pred`. Some analyses require a fully observed predictor matrix (e.g., PCA, standardized regression), while others can operate on partially observed predictors (e.g., univariate plots of the target). We therefore distinguish the raw 2014 cross-section from complete-case and imputed variants, and we report the effective sample size in each chapter.
 <!-- Population of some countries like Israel, Srilanka are in thousands, while other in millions. -->
 
+## Raw panel consistency checks (minimal diagnostics)
+
+The Kaggle comments claim that the raw panel has inconsistent units and significant missingness. Below are minimal, reproducible checks on the **raw panel** (`aggregate_by_country=False`, no imputation) that surface those issues directly.
+
+```{python}
+# | label: tbl-panel-missingness
+# | tbl-cap: "Top missing predictors in the raw panel (share of missing values)."
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+
+panel = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=False,
+    resolve_nand_pred=False,
+    drop_missing_target=False,
+).df
+
+(
+    panel.isna()
+    .mean()
+    .mul(100)
+    .rename("missing_pct")
+    .to_frame()
+    .assign(n_missing=lambda d: (d["missing_pct"] * len(panel) / 100).round().astype(int))
+    .sort_values("missing_pct", ascending=False)
+    .head(10)
+)
+```
+
+The raw panel’s missingness is concentrated in a small subset of predictors (notably population, HepB coverage, and GDP per capita), which explains the sharp drop in complete‑case sample size.
+
+```{python}
+# | label: tbl-rate-vs-counts
+# | tbl-cap: "Rates vs counts check: extreme magnitudes for variables labeled as per‑1000."
+(
+    panel.loc[
+        :,
+        [
+            LECol.COUNTRY,
+            LECol.YEAR,
+            LECol.INFANT_DEATHS,
+            LECol.UNDER_FIVE_DEATHS,
+            LECol.MEASLES,
+        ],
+    ]
+    .assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .melt(id_vars=[LECol.COUNTRY, "year"], var_name="feature", value_name="value")
+    .dropna()
+    .groupby("feature")
+    .agg(
+        max_val=("value", "max"),
+        p99=("value", lambda s: s.quantile(0.99)),
+        share_gt_1000=("value", lambda s: (s > 1000).mean() * 100),
+    )
+    .reset_index()
+)
+```
+
+The magnitudes above show that `measles`, `infant_deaths`, and `under_five_deaths` behave like **counts**, not per‑1,000 rates. This is consistent with the extremely large maxima (e.g., measles > 200,000).
+
+```{python}
+# | label: tbl-iqr-outliers
+# | tbl-cap: "IQR outlier counts (1.5×IQR rule) for key variables cited in Kaggle comments."
+iqr_cols = [
+    LECol.MEASLES,
+    LECol.HIV_AIDS,
+    LECol.UNDER_FIVE_DEATHS,
+    LECol.PERCENTAGE_EXPENDITURE,
+    LECol.GDP,
+    LECol.DIPHTHERIA,
+    LECol.POPULATION,
+    LECol.POLIO,
+    LECol.HEPATITIS_B,
+    LECol.THINNESS_5_9_YEARS,
+    LECol.THINNESS_1_19_YEARS,
+    LECol.ADULT_MORTALITY,
+    LECol.HDI,
+    LECol.SCHOOLING,
+    LECol.TOTAL_EXPENDITURE,
+    LECol.LIFE_EXPECTANCY,
+]
+
+(
+    LifeExpectancyDataset(df=panel)
+    .make_iqr_outlier_detector(columns=iqr_cols, standardized=False, threshold=1.5)
+    .fit()
+    .result()
+    .n_outliers_per_column.rename("iqr_outliers")
+    .to_frame()
+    .assign(
+        feature=lambda d: d.index.map(LifeExpectancyDataset(df=panel).get_pretty_name)
+    )
+    .loc[:, ["feature", "iqr_outliers"]]
+    .sort_values("iqr_outliers", ascending=False)
+)
+```
+
+The IQR counts in Table @tbl-iqr-outliers quantify the heavy tails flagged by Kaggle users: measles, HIV/AIDS, under‑five deaths, and percentage expenditure dominate the outlier ranks, consistent with the extreme maxima and skewed distributions above.
+
+```{python}
+# | label: tbl-percentage-expenditure-check
+# | tbl-cap: "`percentage_expenditure` exceeds 100 for a large share of rows (not a literal percent)."
+(
+    panel[[LECol.PERCENTAGE_EXPENDITURE]]
+    .dropna()
+    .assign(gt_100=lambda d: d[LECol.PERCENTAGE_EXPENDITURE] > 100)
+    .agg(
+        share_gt_100=("gt_100", "mean"),
+        p99=(LECol.PERCENTAGE_EXPENDITURE, lambda s: s.quantile(0.99)),
+        max_val=(LECol.PERCENTAGE_EXPENDITURE, "max"),
+    )
+)
+```
+
+Nearly half of the rows exceed 100 in `percentage_expenditure`, indicating that it should be interpreted as a scaled spending measure rather than a literal percentage.
+
+```{python}
+# | label: tbl-population-scale-check
+# | tbl-cap: "Population values span tiny and very large scales (possible unit inconsistency)."
+(
+    panel[[LECol.POPULATION]]
+    .dropna()
+    .agg(
+        min_pop=(LECol.POPULATION, "min"),
+        p1=(LECol.POPULATION, lambda s: s.quantile(0.01)),
+        p99=(LECol.POPULATION, lambda s: s.quantile(0.99)),
+        max_pop=(LECol.POPULATION, "max"),
+        share_lt_1e5=(LECol.POPULATION, lambda s: (s < 1e5).mean() * 100),
+    )
+)
+```
+
+Population values range from double‑digit counts to 1.3B. The non‑trivial share below 100k suggests mixed scaling or reporting gaps, motivating transformation and sensitivity checks downstream.
+
+
+## Verifying specific Kaggle claims (data-only)
+
+The comments quoted above include concrete numeric claims. We verify those directly from the raw panel below.
+
+```{python}
+# | label: tbl-claim-extremes
+# | tbl-cap: "Extremes reported in Kaggle comments, verified from the raw panel."
+(
+    panel.agg(
+        min_population=(LECol.POPULATION, "min"),
+        max_population=(LECol.POPULATION, "max"),
+        max_infant_deaths=(LECol.INFANT_DEATHS, "max"),
+        max_under_five_deaths=(LECol.UNDER_FIVE_DEATHS, "max"),
+        max_measles=(LECol.MEASLES, "max"),
+        max_bmi=(LECol.BMI, "max"),
+        max_percentage_expenditure=(LECol.PERCENTAGE_EXPENDITURE, "max"),
+        min_gdp=(LECol.GDP, "min"),
+        max_gdp=(LECol.GDP, "max"),
+    )
+    .stack()
+    .rename("Value")
+    .reset_index()
+    .rename(columns={"level_0": "Metric"})
+    .drop(columns=["level_1"])
+)
+```
+
+```{python}
+# | label: tbl-population-tiny
+# | tbl-cap: "Examples of very small population values (raw panel)."
+(
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .loc[:, [LECol.COUNTRY, "year", LECol.POPULATION]]
+    .dropna()
+    .sort_values(LECol.POPULATION)
+    .head(12)
+)
+```
+
+```{python}
+# | label: tbl-bmi-extremes
+# | tbl-cap: "BMI values above 60 (raw panel)."
+(
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .loc[:, [LECol.COUNTRY, "year", LECol.BMI]]
+    .dropna()
+    .query("bmi >= 60")
+    .sort_values(LECol.BMI, ascending=False)
+    .head(12)
+)
+```
+
+```{python}
+# | label: tbl-status-france-finland
+# | tbl-cap: "Status for France and Finland (raw panel; 0=Developing, 1=Developed)."
+(
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .query("country in ['France', 'Finland']")
+    .groupby(LECol.COUNTRY)
+    .agg(
+        status_values=(LECol.STATUS, lambda s: sorted(s.dropna().unique().tolist())),
+        share_developed=(LECol.STATUS, "mean"),
+    )
+    .reset_index()
+)
+```
+
+```{python}
+# | label: tbl-country-claims
+# | tbl-cap: "Country-specific examples cited in Kaggle comments (infant deaths summary)."
+(
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .query("country in ['India', 'Switzerland', 'Sweden', 'Uzbekistan']")
+    .groupby(LECol.COUNTRY)
+    .agg(
+        min_infant_deaths=(LECol.INFANT_DEATHS, "min"),
+        max_infant_deaths=(LECol.INFANT_DEATHS, "max"),
+    )
+    .reset_index()
+)
+```
+
+```{python}
+# | label: tbl-uzbekistan-2013-2015
+# | tbl-cap: "Uzbekistan infant deaths in 2013–2015 (raw panel)."
+(
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .query("country == 'Uzbekistan' and 2013 <= year <= 2015")
+    .loc[:, [LECol.COUNTRY, "year", LECol.INFANT_DEATHS]]
+    .dropna()
+    .sort_values("year")
+)
+```
+
+Tables @tbl-claim-extremes through @tbl-uzbekistan-2013-2015 confirm the *numeric* inconsistencies raised by Kaggle users: extreme maxima in measles and child‑death columns (far above 1,000), BMI values above 60, population entries as low as double‑digit counts, and development‑status labels that place France/Finland in the developing category. These checks are strictly data‑internal; they do not rely on external sources.
+
+**Implication for preprocessing.** The evidence above indicates that several variables are on inconsistent or ambiguous scales (counts vs per‑1,000 rates; percent vs scaled spending), and that missingness is concentrated in a few high‑impact predictors. This motivates (i) explicit unit labeling and transformations, (ii) robust outlier handling, and (iii) sensitivity checks that report how complete‑case filtering changes sample size.
 
 
 ## Dataset snapshots
@@ -307,6 +608,12 @@ pd.DataFrame(
 ```
 
 If this backfill improves coverage (without introducing inconsistencies), it can be adopted as a preprocessing step for analyses that require population. For transparency, we would still retain the original Kaggle values and only fill missing entries with UNDP HDR.
+
+## Why consider the updated Kaggle dataset (and what cleaning would be required)
+
+The diagnostics above show that the raw Kaggle panel requires **non‑trivial cleaning** before it can serve as a high‑quality regression dataset: unit ambiguities (counts vs rates), scale inconsistencies (population and GDP), and concentrated missingness in core predictors. The cleaned dataset at https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated/data is appealing because it replaces several columns with values from external sources (WHO, WDI, OWID) and applies systematic imputation.
+
+To reproduce that quality *without switching datasets*, we would need to: (i) replace population and GDP with World Bank series (rescaling units where needed), (ii) replace immunization and mortality metrics with WHO indicators, (iii) align schooling with OWID, (iv) normalize ISO3 country codes across sources, and (v) implement the reported imputation policy (nearest three‑year average + regional averages; drop countries with too many missing columns). Given limited time, using the cleaned dataset for regression is a pragmatic choice, while retaining the raw Kaggle panel for transparency and sensitivity analyses in preprocessing and diagnostics.
 
 ## Transformations and standardization (`tf_only`, `tf_and_norm`)
 
