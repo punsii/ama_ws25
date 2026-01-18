@@ -16,17 +16,16 @@ execute:
 This chapter is structured around explicit research questions. We answer each with a focused model, diagnostics, and interpretation.
 
 1. Which predictors have the strongest association with life expectancy, and in which direction?
-2. What is the impact of immunization coverage on life expectancy (holding other factors constant)?
-3. Does alcohol consumption (and BMI) have a positive or negative association once economic development is controlled for?
-4. Which interaction effects are supported and interpretable (e.g., status $\times$ immunization, status $\times$ expenditure, status $\times$ alcohol)?
-5. How do outliers / influential observations affect coefficients and conclusions?
-6. How well do models generalize to a holdout year (2011)?
-7. Can we fit a model on the full panel without violating residual autocorrelation assumptions?
-8. Supervised PCA regression and PC interpretation are handled separately in [Regression: Supervised PCA](5_regression_supervised_pca.qmd).
+2. How well can we predict life expectancy using **socio-economic predictors only** (without mortality / immunization predictors)?
+3. What is the impact of immunization coverage on life expectancy (holding other factors constant)?
+4. Does alcohol consumption (and BMI) have a positive or negative association once economic development is controlled for?
+5. Which interaction effects are supported and interpretable (e.g., status $\times$ immunization, status $\times$ expenditure, status $\times$ alcohol)?
+6. How do outliers / influential observations affect coefficients and conclusions?
+7. How well do models generalize to a holdout year (2011)?
+8. Can we fit a model on the full panel without violating residual autocorrelation assumptions?
+9. Supervised PCA regression and PC interpretation are handled separately in [Regression: Supervised PCA](5_regression_supervised_pca.qmd).
 
-::: {.callout-note}
-**Template guidance:** Each section below should answer one of the research questions above. Keep the model scope narrow per section, use `ModelRegistry` and `RegressionResult` diagnostics, and include short interpretation paragraphs.
-:::
+To answer RQ2 (and to reduce confounding in RQ3–RQ5), we include socioeconomic features from the UNDP HDR dataset.
 
 ```{python}
 # | label: setup
@@ -48,6 +47,8 @@ from ama_tlbx.data.utils import (
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
 from ama_tlbx.data.undp_hdr_columns import UNDPHDRColumn as HDRCol
 from ama_tlbx.data.undp_hdr_dataset import UNDPHDRDataset
+from ama_tlbx.analysis import suggest_groups_from_correlation
+from ama_tlbx.analysis.ols_helper import EvalMetrics
 
 if TYPE_CHECKING:
     from ama_tlbx.analysis.ols_helper import RegressionResult
@@ -58,7 +59,67 @@ np.random.seed(42)
 TRAIN_YEAR = 2014
 HOLDOUT_YEAR = 2011
 STATUS_DUMMY = "status_developed"
+
+
+def _rename_hdi(dataset: LifeExpectancyDataset) -> LifeExpectancyDataset:
+    df = dataset.df
+    if str(LECol.HDI) not in df.columns and str(HDRCol.HDI) in df.columns:
+        df = df.rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
+    return LifeExpectancyDataset(df=df)
 ```
+
+```{python}
+# | include: false
+def _tf_expr(feature: str | LECol) -> str:
+    name = str(feature)
+    label = LECol.transform_label(feature)
+    if label == "dummy":
+        return f"dummy({name})"
+    if label == "none":
+        return name
+    if label == "_log1p_under_coverage":
+        return f"log1p(100 - {name})"
+    return f"{label}({name})"
+
+
+def _tf_label(col: str) -> str:
+    if col.startswith("status_"):
+        return "dummy"
+    if "_PC" in col:
+        group_name = col.split("_PC", maxsplit=1)[0]
+        features = group_features.get(group_name, [])
+        if features:
+            return f"pca({', '.join(_tf_expr(f) for f in features)})"
+        return "pca"
+    return _tf_expr(col)
+
+
+def fit_additive(
+    registry: ModelRegistry,
+    df: pd.DataFrame,
+    *,
+    name: str,
+    terms: list[str | LECol],
+    extra_terms: list[str] | None = None,
+    target_col: str = LECol.TARGET,
+    refit: bool = False,
+    cook_distance_threshold: float | None = None,
+):
+    rhs_terms = [str(t) for t in terms]
+    if extra_terms:
+        rhs_terms.extend(extra_terms)
+    rhs = " + ".join(rhs_terms)
+    cols = [target_col, *terms]
+    data = df[cols].dropna()
+    return registry.fit(
+        data,
+        name=name,
+        rhs=rhs,
+        refit=refit,
+        cook_distance_threshold=cook_distance_threshold,
+    )
+```
+
 
 ## Data preparation and splits
 
@@ -67,7 +128,7 @@ We use a 2014 cross-section for training and a 2011 cross-section for holdout ev
 <!-- QUESTION: Does it make sense to use adult mortality as predictive feature? -->
 ```{python}
 # | label: data-prep
-# | code-fold: true
+# | code-fold: false
 # Load full panel (updated dataset merged with original expenditures in loader)
 panel_ds = LifeExpectancyDataset.from_csv_updated(
     aggregate_by_country=False,
@@ -78,50 +139,38 @@ undp_hdr = UNDPHDRDataset.from_csv(years=[TRAIN_YEAR, HOLDOUT_YEAR])
 undp_columns = [str(HDRCol.HDI), *DEFAULT_UNDP_SOCIO_COLUMNS]
 
 
-def _rename_hdi(dataset: LifeExpectancyDataset) -> LifeExpectancyDataset:
-    df = dataset.df
-    if str(LECol.HDI) not in df.columns and str(HDRCol.HDI) in df.columns:
-        df = df.rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
-    return LifeExpectancyDataset(df=df)
+def make_dataset(year: int) -> pd.DataFrame:
+    return (
+        LifeExpectancyDataset.from_csv_updated(
+            aggregate_by_country=year,
+            resolve_nand_pred="carry_forward",
+        )
+        .pipe(
+            merge_undp_hdr_features,
+            undp_dataset=undp_hdr,
+            years=[year],
+            columns=undp_columns,
+        )
+        .pipe(_rename_hdi)
+        .tf_and_norm()
+        .set_index("iso3")
+        .drop(
+            columns=[
+                LECol.YEAR,
+                HDRCol.LFPR_F,
+                HDRCol.LFPR_M,
+                HDRCol.POP_TOTAL,
+                HDRCol.PR_F,
+                HDRCol.PR_M,
+            ]
+        )
+        .pipe(lambda df: df[~df.index.duplicated(keep="first")])
+    )
 
-
-df_train = (
-    LifeExpectancyDataset.from_csv_updated(
-        aggregate_by_country=TRAIN_YEAR,
-        resolve_nand_pred="carry_forward",
-    )
-    .pipe(
-        merge_undp_hdr_features,
-        undp_dataset=undp_hdr,
-        years=[TRAIN_YEAR],
-        columns=undp_columns,
-    )
-    .pipe(_rename_hdi)
-    .tf_and_norm()
-    .set_index("iso3")
-    .drop(columns=[LECol.YEAR])
-)
-
-df_test = (
-    LifeExpectancyDataset.from_csv_updated(
-        aggregate_by_country=HOLDOUT_YEAR,
-        resolve_nand_pred="carry_forward",
-    )
-    .pipe(
-        merge_undp_hdr_features,
-        undp_dataset=undp_hdr,
-        years=[HOLDOUT_YEAR],
-        columns=undp_columns,
-    )
-    .pipe(_rename_hdi)
-    .tf_and_norm()
-    .set_index("iso3")
-    .drop(columns=[LECol.YEAR])
-)
 
 # Guard against duplicate ISO3 keys after UNDP merges.
-df_train = df_train[~df_train.index.duplicated(keep="first")]
-df_test = df_test[~df_test.index.duplicated(keep="first")]
+df_train = make_dataset(TRAIN_YEAR)
+df_test = make_dataset(HOLDOUT_YEAR)
 
 display(df_train.head().round(2))
 ```
@@ -156,7 +205,7 @@ pca_groups = (
     .make_pca_dim_reduction_analyzer(
         feature_groups=feature_groups,
         standardized=True,
-        min_var_explained=0.8,
+        min_var_explained=1.0,
     )
     .fit()
     .result()
@@ -210,56 +259,118 @@ econ_pcs = pcs_by_group.get("economic_development", [])
 immun_pcs = pcs_by_group.get("immunization", [])
 
 scaled_train_ds = LifeExpectancyDataset(df=df_train)
-scaled_train_ds.make_correlation_analyzer().result().plot_heatmap().show()
+corr_result = scaled_train_ds.make_correlation_analyzer().result()
+corr_result.plot_heatmap().show()
 ```
 
+The correlation matrix displayed in @fig-corr-map contains various columns from the UNDP HDR dataset that reflect socioeconomic development, that we merged into the life expectancy dataset to allow us to to build a stable socioeconomic baseline model.
 The correlation structure in @fig-corr-map aligns with expectations: adult mortality and HIV/AIDS are strongly negative with life expectancy, while economic development and HDI move positively; alcohol and BMI correlate with development, motivating the conditional alcohol/BMI specification; and the immunization PC correlation must be interpreted via loadings because the sign is arbitrary.
 
 ```{python}
-# | include: false
-def _tf_expr(feature: str | LECol) -> str:
-    name = str(feature)
-    label = LECol.transform_label(feature)
-    if label == "dummy":
-        return f"dummy({name})"
-    if label == "none":
-        return name
-    if label == "_log1p_under_coverage":
-        return f"log1p(100 - {name})"
-    return f"{label}({name})"
+# | code-fold: true
+# | label: tbl-suggest-feature-groups
+suggested_groups, summary_df = suggest_groups_from_correlation(
+    corr_result.matrix,
+    threshold=0.8,
+    return_summary=True,
+)
 
+summary_pretty = summary_df.assign(
+    features=lambda d: d.features.apply(
+        lambda s: ", ".join(
+            scaled_train_ds.get_pretty_name(f.strip()) for f in s.split(",")
+        ),
+    ),
+).loc[:, ["group", "size", "features", "mean_abs_corr", "min_abs_corr"]]
 
-def _tf_label(col: str) -> str:
-    if col.startswith("status_"):
-        return "dummy"
-    if "_PC" in col:
-        group_name = col.split("_PC", maxsplit=1)[0]
-        features = group_features.get(group_name, [])
-        if features:
-            return f"pca({', '.join(_tf_expr(f) for f in features)})"
-        return "pca"
-    return _tf_expr(col)
+display(
+    summary_pretty.assign(features=lambda d: d.features.str.replace(", ", "<br>"))
+    .set_index("group")
+    .to_html(escape=False)
+)
+```
 
+Since our previous correlation analysis chapter did not include the UNDP HDR features, we re-run the group suggestion here. "Group 15" in @tbl-suggest-feature-groups collects various social-development incdicators that the life expectancy dataset alone did not cover. The features are:
 
-def fit_additive(
-    registry: ModelRegistry,
-    df: pd.DataFrame,
-    *,
-    name: str,
-    terms: list[str | LECol],
-    extra_terms: list[str] | None = None,
-    target_col: str = LECol.TARGET,
-    refit: bool = False,
-):
-    rhs_terms = [str(t) for t in terms]
-    if extra_terms:
-        rhs_terms.extend(extra_terms)
-    rhs = " + ".join(rhs_terms)
-    cols = [target_col, *terms]
-    data = df[cols].dropna()
-    return registry.fit(data, name=name, rhs=rhs, refit=refit)
+- schooling: Mean years of schooling (life expectancy dataset)
+- se_f / se_m: Population with at least secondary education (female  / male, %; UNDP HDR)
+- ineq_edu: Inequality in education (index; UNDP HDR)
+- coef_ineq: Coefficient of inequality (I-HDI) - This feature does not represent the HDI discussed in [HDI Investigation](2_investigate_hdi.qmd).
 
+To allow construction of a stable socioeconomic baseline model, we therefore perform PCA based dimensionality reduction on this group as well.
 
+<!-- TODO: perform PCA-group reduction here on these features and transform both datasets -->
+
+```{python}
+# | label: feature-groups-2
+# | include: true
+# | code-fold: false
+feature_groups = [
+    FeatureGroup(
+        name="social_development",
+        features=[
+            LECol.SCHOOLING,
+            HDRCol.SE_F,
+            HDRCol.SE_M,
+            HDRCol.INEQ_EDU,
+            HDRCol.MYS,
+            HDRCol.COEF_INEQ,
+        ],
+    ),
+]
+
+reduced_columns = [feature for g in feature_groups for feature in g.features]
+
+pca_groups = (
+    LifeExpectancyDataset(df=df_train)
+    .make_pca_dim_reduction_analyzer(
+        feature_groups=feature_groups,
+        standardized=True,
+        min_var_explained=0.8,
+    )
+    .fit()
+    .result()
+)
+```
+::: {.callout-note collapse="true"}
+
+### Dimensionality reduction via grouped PCA 2
+
+```{python}
+# | label: fig-pca-group-loadings-2
+# | fig-cap: "Grouped PCA loadings for the reduced feature blocks (training year 2014)."
+pca_groups.plot_group_loadings().show()
+```
+
+```{python}
+# | label: fig-pca-group-variance-2
+# | fig-cap: "Explained variance by PCA component for the reduced feature blocks (training year 2014)."
+pca_groups.plot_group_variance_summary().show()
+```
+
+```{python}
+# | label: tbl-pca-group-variance-2
+# | tbl-cap: "Explained variance per group and PC (multi-index)."
+pca_groups.explained_variance_table().round(3)
+```
+:::
+
+```{python}
+# | label: social-development-apply
+# | code-fold: true
+train_idx_social = df_train.index
+holdout_idx_social = holdout_scaled.index
+
+df_train = pca_groups.reduced_df.assign(**df_train.drop(columns=reduced_columns))
+df_train.index = train_idx_social
+
+holdout_scaled = pca_groups.transform(holdout_scaled).assign(
+    **holdout_scaled.drop(columns=reduced_columns)
+)
+holdout_scaled.index = holdout_idx_social
+
+social_pcs = pca_groups.group_results[0].pc_scores.columns.tolist()
+df_test = holdout_scaled.copy()
 ```
 
 :::{.callout-note collapse="true"}
@@ -267,6 +378,8 @@ def fit_additive(
 ### Feature summary and transformations
 
 To verify the transformations and standardization, we summarize the training features in @tbl-feature-summary, sorted by correlation with life expectancy, along with the applied transformations in @tbl-transforms.
+
+For the UNDP HDR–based *social development* block, the grouped PCA loadings in @fig-pca-group-loadings-2 show that `social_development_PC1` is essentially an **education vs inequality** axis: it loads **positively** on schooling/education attainment (`schooling`, `se_f`, `se_m`, `mys`) and **negatively** on inequality measures (`ineq_edu`, `coef_ineq`). Since PC1 already captures ~**89%** of the block variance (@fig-pca-group-variance-2), this group is effectively one-dimensional. In the regressions below, a positive coefficient on `social_development_PC1` therefore means higher life expectancy in countries with more education and lower inequality (up to the arbitrary sign of PCA).
 
 ```{python}
 # | label: tbl-feature-summary
@@ -375,6 +488,7 @@ registry.compare(sort_by="aic").drop(columns=["rhs"])[
 ].loc[["m1_adult_mortality", "m1_adult_mortality_hdi"]]
 ```
 
+<!-- TODO: provide a brief flow-text overview of what's being done in undp-socio-pca -->
 ```{python}
 # | label: undp-socio-pca
 # | code-fold: true
@@ -382,23 +496,12 @@ registry.compare(sort_by="aic").drop(columns=["rhs"])[
 undp_candidates = [
     HDRCol.GNI_PC,
     HDRCol.EYS,
-    HDRCol.MYS,
     HDRCol.GDI,
     HDRCol.GII,
-    HDRCol.COEF_INEQ,
-    HDRCol.LOSS,
-    HDRCol.INEQ_EDU,
     HDRCol.INEQ_INC,
-    HDRCol.POP_TOTAL,
     HDRCol.CO2_PROD,
     HDRCol.MMR,
     HDRCol.ABR,
-    HDRCol.SE_F,
-    HDRCol.SE_M,
-    HDRCol.PR_F,
-    HDRCol.PR_M,
-    HDRCol.LFPR_F,
-    HDRCol.LFPR_M,
 ]
 
 undp_features = []
@@ -430,24 +533,36 @@ else:
     undp_pcs = []
 ```
 
-:::{.callout-note collapse="true"}
 
-### Baseline: Socioeconomic predictors
 
-Before testing specific hypotheses about immunization, BMI, or alcohol, we establish a **socio-economic baseline model** that captures the dominant development-related gradient in the data (education, income/expenditure, and development status). This baseline serves two purposes: (i) it provides a realistic reference level of explanatory and predictive performance, and (ii) it reduces **confounding**, i.e., it prevents us from mistaking “rich countries both vaccinate more and live longer” for a direct immunization effect. In the subsequent sections we therefore evaluate each additional block (immunization, lifestyle/nutrition) by its **incremental contribution beyond socio-economics** (changes in AIC/adjusted $R^2$, holdout RMSE) and by whether the added effects remain stable under diagnostics and sensitivity checks.
+## Baseline: Socioeconomic predictors
+
+**RQ2 (socioeconomic-only prediction):** Before testing specific hypotheses about immunization, BMI, or alcohol, we ask how well life expectancy can be explained and predicted using **socioeconomic predictors only** (education, income/expenditure, and development status), excluding mortality and immunization variables. This baseline serves two purposes: (i) it provides a realistic reference level of explanatory and predictive performance, and (ii) it reduces **confounding**, i.e., it prevents us from mistaking “rich countries both vaccinate more and live longer” for a direct immunization effect. In the subsequent sections we therefore evaluate each additional block (immunization, lifestyle/nutrition) by its **incremental contribution beyond socio-economics** (changes in AIC/adjusted $R^2$, holdout RMSE) and by whether the added effects remain stable under diagnostics and sensitivity checks.
 
 ```{python}
-# | label: socioeconomic-baseline-model
+# | label: socioeconomic-baseline-model-prep
 # | code-fold: true
 econ_pc1 = econ_pcs[0] if econ_pcs else None
 econ_pc2 = econ_pcs[1] if len(econ_pcs) > 1 else None
 undp_pc1 = undp_pcs[0] if undp_pcs else None
+social_le_undp_pc1 = social_pcs[0] if social_pcs else None
 
 if econ_pc1 is None or econ_pc2 is None:
     raise ValueError("Economic development PCs missing; check `feature_groups`.")
 if undp_pc1 is None:
     raise ValueError("UNDP socio PC1 missing; check UNDP merge/PCA block.")
+if social_le_undp_pc1 is None:
+    raise ValueError("Social development PC1 missing; check PCA block above.")
 
+socio_econ_names = []
+```
+
+:::{.callout-note collapse="true"}
+
+### M1: LE ~ econ PCs
+```{python}
+# | label: socioeconomic-baseline-model-1
+# | code-fold: true
 # (1) econ PCs only
 socio_1 = fit_additive(
     registry,
@@ -455,8 +570,17 @@ socio_1 = fit_additive(
     name="m_socio_eco_pcs",
     terms=[econ_pc1, econ_pc2],
 )
+socio_econ_names.append("m_socio_eco_pcs")
 display(socio_1)
 
+```
+:::
+
+:::{.callout-note collapse="true"}
+### M2: LE ~ status + econ PCs + UNDP econ PC1
+```{python}
+# | label: socioeconomic-baseline-model-2
+# | code-fold: true
 # (2) add status + UNDP socio PC1
 socio_2 = fit_additive(
     registry,
@@ -464,8 +588,16 @@ socio_2 = fit_additive(
     name="m_socio_eco_undp",
     terms=[STATUS_DUMMY, econ_pc1, econ_pc2, undp_pc1],
 )
+socio_econ_names.append("m_socio_eco_undp")
 display(socio_2)
+```
+:::
 
+:::{.callout-note collapse="true"}
+### M3: LE ~ status + econ PCs + UNDP econ PC1 ^ 2
+```{python}
+# | label: socioeconomic-baseline-model-3
+# | code-fold: true
 # (3) status + econ PC1 + quadratic UNDP PC1
 socio_3 = fit_additive(
     registry,
@@ -474,31 +606,125 @@ socio_3 = fit_additive(
     terms=[STATUS_DUMMY, econ_pc1, undp_pc1],
     extra_terms=[f"I({undp_pc1} ** 2)"],
 )
+socio_econ_names.append("m_socio_eco_undp_quad")
 display(socio_3)
+```
+:::
+
+:::{.callout-note collapse="true"}
+### M4: LE ~ status + econ PC1 + UNDP econ PC1 ^ 2 + social PC1
+```{python}
+# | label: socioeconomic-baseline-model-4
+# | code-fold: true
+# (4) status + econ PCs + social development PC1
+socio_4 = fit_additive(
+    registry,
+    df_train,
+    name="m_socio_eco_social",
+    terms=[STATUS_DUMMY, econ_pc1, social_le_undp_pc1, undp_pc1],
+    extra_terms=[f"I({undp_pc1} ** 2)"],
+)
+socio_econ_names.append("m_socio_eco_social")
+display(socio_4)
+```
+
+While the newly added `social_development_PC1` is barely statistically significant (p = 0.045; CI **[-1.002, -0.001]**), it improves the model fit by about 2 points in AIC (900.32 $\rightarrow$ 898.15) and also improves the statistical stability in all diagnostics. This motivates us to trim down influential outliers via Cook's distance ($> 4/n$: **5** countries removed) to see wether this improves the models parsimony and stability further.
+
+```{python}
+# | label: socioeconomic-baseline-model-4-cook
+# | code-fold: true
+# (4b) status + econ PCs + social development PC1, cook's distance trimming
+socio_4_cook_initial, socio_4_cook = fit_additive(
+    registry,
+    df_train,
+    name="m_socio_eco_social_cook",
+    terms=[STATUS_DUMMY, econ_pc1, social_le_undp_pc1, undp_pc1],
+    extra_terms=[f"I({undp_pc1} ** 2)"],
+    cook_distance_threshold=4 / len(df_train),
+)
+registry.remove("m_socio_eco_social_cook_initial")  # remove initial fit with all data
+socio_econ_names.append("m_socio_eco_social_cook")
+display(socio_4_cook)
+```
+:::
+
+```{python}
+# | label: tbl-socioeconomic-compare
+# | tbl-cap: "Socioeconomic baselines compared (sorted by AIC)."
+comp_tbl = (
+    registry.compare(sort_by="aic")
+    .loc[socio_econ_names]
+    .drop(columns=["rhs"])[["aic", "rmse", "r2", "adj_r2", "n_obs"]]
+    .sort_values("aic")
+)
+best_socio_econ_name = comp_tbl.index[0]
+best_socio_econ = registry.get(best_socio_econ_name).diag
+display(comp_tbl)
 ```
 
 ```{python}
 # | label: fig-socioeconomic-diagnostics
 # | fig-cap: "Socioeconomic baseline model diagnostics."
 # | echo: false
-_ = socio_2.plot_residual_diags()
+_ = best_socio_econ.plot_residual_diags()
+plt.show()
+```
+
+
+Model `m_socio_eco_social` adds `social_development_PC1` (education vs inequality; see @fig-pca-group-loadings-2) on top of the two economic PCs. It explains **$R^2 = 0.700$** (RMSE **4.42 years**, $n=166$). Both economic components are strongly positive (`economic_development_PC1` **+3.28 years**, 95% CI **[2.44, 4.12]**; `economic_development_PC2` **+3.22**, CI **[1.82, 4.62]**; both p < 0.001). The social-development axis is also positive (`social_development_PC1` **+0.95**, CI **[0.45, 1.45]**, p < 0.001), consistent with the interpretation that *more education and less inequality* is associated with higher life expectancy even after controlling for economic structure. In contrast, `status_developed` is not statistically distinguishable from zero (**+0.91**, p = 0.419; CI **[-1.31, 3.14]**), suggesting that the continuous socioeconomic PCs already capture most of what the binary label adds.
+
+Diagnostics in @fig-socioeconomic-diagnostics show mild curvature in residuals vs fitted (remaining nonlinearity), and heteroskedasticity consistent with the tests (Breusch–Pagan p = 0.013; White p = 0.049). The QQ-plot shows pronounced tail deviations (JB p < 0.001; Shapiro p < 0.001), so t-tests and confidence intervals should be treated cautiously (especially for tail-sensitive effects). Influence is concentrated in a small set of high-leverage countries (max Cook’s **0.133**, Cook’s > 4/n: **6**), so coefficient magnitudes should be interpreted as descriptive associations rather than precise causal effects.
+
+Compared across baselines (@tbl-socioeconomic-compare), adding `social_development_PC1` improves the pure economic-PC benchmark (AIC **986.7 $\rightarrow$ 974.6**, RMSE **4.64 $\rightarrow$ 4.42**), but it is still dominated by the UNDP socioeconomic PC baseline, especially with the quadratic term (`m_socio_eco_undp_quad`, AIC **894.2**, RMSE **3.47**).
+
+### Holdout evaluation (socioeconomic baselines)
+
+```{python}
+# | label: tbl-socioeconomic-eval
+# | tbl-cap: "Holdout-year performance (2011) for socioeconomic baselines."
+N_BOOTSTRAP = 3000
+
+eval_socio = dict.fromkeys(
+    socio_econ_names,
+    None,
+)
+for name in eval_socio.keys():
+    eval_socio[name] = registry.evaluate_on(
+        name=name,
+        df=holdout_scaled,
+        label=f"year{HOLDOUT_YEAR}",
+    )
+
+eval_tbl = EvalMetrics.collate_to_df(list(eval_socio.values()))
+eval_tbl.insert(0, "model", list(eval_socio.keys()))
+eval_tbl.set_index("model").sort_values("rmse").round(3)
 ```
 
 ```{python}
-# | label: tbl-socioeconomic-compare
-# | tbl-cap: "Socioeconomic baselines compared (sorted by AIC)."
-registry.compare(sort_by="aic").drop(columns=["rhs"])[
-    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
-].loc[["m_socio_eco_pcs", "m_socio_eco_undp", "m_socio_eco_undp_quad"]]
+# | label: tbl-socioeconomic-eval-ci
+# | tbl-cap: "Bootstrap CIs for holdout metrics (best AIC socioeconomic baseline; B=3000)."
+eval_socio[best_socio_econ_name].bootstrap_ci(n_bootstrap=N_BOOTSTRAP, random_state=42).set_index(
+    "metric"
+)
 ```
 
-:::
+```{python}
+# | label: fig-socioeconomic-calibration
+# | fig-cap: "Holdout calibration (2011) for best AIC socioeconomic baseline with bootstrap 95% CIs."
+plt.figure(figsize=(7, 5))
+eval_socio[best_socio_econ_name].plot_calibration(
+    bins=10,
+    bootstrap=N_BOOTSTRAP,
+    random_state=42,
+)
+plt.show()
+```
 
 
 
 ## Immunization impact
 
-**RQ2:** quantify the effect of immunization coverage (e.g., DTP3, HepB, Polio) controlling for development and mortality burden.
+**RQ3:** quantify the effect of immunization coverage (e.g., DTP3, HepB, Polio) controlling for development and mortality burden.
 
 Base model: `life_expectancy ~ status_developed + hiv_aids + economic_development_PC1`
 Immunization model: `life_expectancy ~ status_developed + hiv_aids + economic_development_PC1 + immunization_PC1`
@@ -542,7 +768,7 @@ immun_reduced.plot_residual_diags()
 ```
 
 ```{python}
-# | label: fig-immunization-compare
+# | label: tbl-immunization-compare
 # | tbl-cap: "Immunization block added vs base model."
 registry.compare(sort_by="aic").loc[["m_immun_base", "m_immunization_reduced"]]
 ```
@@ -553,7 +779,7 @@ Diagnostics in @fig-immunization-diagnostics show normality is acceptable for th
 
 ## Alcohol and BMI: conditional effects
 
-**RQ3:** test whether alcohol and BMI remain positive once economic development is controlled (and whether signs flip).
+**RQ4:** test whether alcohol and BMI remain positive once economic development is controlled (and whether signs flip).
 
 Model: `life_expectancy ~ status_developed + total_expenditure + economic_development_PC1 + alcohol + bmi`
 
@@ -597,7 +823,7 @@ The influence plot highlights a small set of countries with disproportionate imp
 
 ## Nonlinearity and thresholds
 
-**RQ3 (continued):** test diminishing returns for GDP, health expenditure, and immunization using simple quadratic terms.
+**RQ4 (continued):** test diminishing returns for GDP, health expenditure, and immunization using simple quadratic terms.
 
 Model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + immunization_PC1`
 
@@ -632,7 +858,7 @@ registry.compare(sort_by="aic").drop(columns=["rhs"])[
 
 ## Effect modification (interactions)
 
-**RQ4:** test development-status interactions for immunization, expenditure, and alcohol.
+**RQ5:** test development-status interactions for immunization, expenditure, and alcohol.
 
 Base model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + alcohol + immunization_PC1`
 Interaction model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + alcohol + immunization_PC1 + status_developed:alcohol`
@@ -712,7 +938,7 @@ The interaction plot shows **opposing alcohol slopes** by development status: a 
 
 ## Influence and outliers
 
-**RQ5:** evaluate sensitivity to influential countries using Cook’s distance and leverage.
+**RQ6:** evaluate sensitivity to influential countries using Cook’s distance and leverage.
 
 Trimmed refit: same formula as the nonlinearity model, estimated after excluding observations with Cook’s distance > 4/n.
 
@@ -742,7 +968,7 @@ registry.compare(sort_by="aic").drop(columns=["rhs"])[
 
 ## Generalization and holdout performance
 
-**RQ6:** evaluate predictive performance on 2011.
+**RQ7:** evaluate predictive performance on 2011.
 
 ```{python}
 # | label: holdout-eval
@@ -770,7 +996,7 @@ compare_tbl.dropna(subset=[holdout_rmse_col]).sort_values(holdout_rmse_col).roun
 The global comparison in @tbl-global-compare confirms the pattern above: the `adult_mortality` benchmark dominates pure predictive accuracy, while the **nonlinearity** and **immunization** models offer the best interpretability‑performance trade‑off among the multi‑predictor specifications.
 
 ```{python}
-# | label: holdout-calibration
+# | label: fig-holdout-calibration
 # | fig-cap: "Observed vs predicted life expectancy on holdout year (best interpretable model)."
 candidate_models = [
     "m_immunization_reduced",
@@ -791,7 +1017,7 @@ plt.show()
 
 ## Panel regression and autocorrelation
 
-**RQ7:** fit a model on the full panel and evaluate residual autocorrelation (Durbin–Watson). Interpret carefully; panel dependence is expected.
+**RQ8:** fit a model on the full panel and evaluate residual autocorrelation (Durbin–Watson). Interpret carefully; panel dependence is expected.
 
 Model: `life_expectancy ~ adult_mortality + hiv_aids + status_developed` (panel)
 
@@ -835,11 +1061,12 @@ The Durbin–Watson statistic is far below 2 (**DW = 0.48**), indicating strong 
 Across the 2014 cross-section, we find a clear hierarchy of associations with life expectancy:
 
 - **RQ1 (strongest association):** `adult_mortality` is the single strongest predictor (coef **-7.70 years per 1 SD**, $R^2 = 0.904$), but it is too close to the definition of life expectancy to serve as an interpretable “driver”.
-- **RQ2 (immunization impact):** adding `immunization_PC1` improves fit beyond development status, HIV/AIDS burden, and economic development ($R^2$: **0.743 $\rightarrow$ 0.792**; RMSE: **4.11 $\rightarrow$ 3.69** years), with a sizeable immunization component (coef **-1.17 years per 1 SD**, p < 0.001).
-- **RQ3 (alcohol/BMI conditional effects):** `bmi` remains positively associated after controls (coef **+1.93**, p < 0.001), while `alcohol` is not robustly different from zero (coef **-0.33**, p = 0.514).
-- **RQ4 (effect modification):** the status × alcohol point estimate suggests a sign flip, but the interaction term is only marginal (coef **-3.71**, p = 0.055) once economic development is controlled for; we treat this as exploratory and do not retain interaction terms in the final model.
-- **RQ5 (influence/outliers):** trimming **13** high-Cook’s observations changes coefficients modestly (max |Δcoef| $\approx$ 0.86 years) and does not materially change holdout RMSE (4.12 $\rightarrow$ 4.12 years).
-- **RQ6 (generalization):** on the 2011 holdout year, the adult‑mortality benchmark generalizes best (RMSE **2.89** years); among interpretable models, nonlinearity and immunization are best (RMSE **4.12** years), while alcohol/BMI is worst (RMSE **5.84** years).
-- **RQ7 (panel autocorrelation):** pooled panel OLS shows strong autocorrelation (DW = 0.48), so inference from the panel model is not reliable without a dedicated panel/cluster-robust treatment.
+- **RQ2 (socioeconomic-only prediction):** a socioeconomic baseline already captures a large share of the life expectancy gradient (see @tbl-socioeconomic-compare). The best AIC baseline is `m_socio_eco_undp_quad` (AIC **894.2**, RMSE **3.47 years**), and its 2011 calibration/uncertainty is summarized in @fig-socioeconomic-calibration and @tbl-socioeconomic-eval-ci.
+- **RQ3 (immunization impact):** adding `immunization_PC1` improves fit beyond development status, HIV/AIDS burden, and economic development ($R^2$: **0.743 $\rightarrow$ 0.792**; RMSE: **4.11 $\rightarrow$ 3.69** years), with a sizeable immunization component (coef **-1.17 years per 1 SD**, p < 0.001).
+- **RQ4 (alcohol/BMI conditional effects):** `bmi` remains positively associated after controls (coef **+1.93**, p < 0.001), while `alcohol` is not robustly different from zero (coef **-0.33**, p = 0.514).
+- **RQ5 (effect modification):** the status × alcohol point estimate suggests a sign flip, but the interaction term is only marginal (coef **-3.71**, p = 0.055) once economic development is controlled for; we treat this as exploratory and do not retain interaction terms in the final model.
+- **RQ6 (influence/outliers):** trimming **13** high-Cook’s observations changes coefficients modestly (max |Δcoef| $\approx$ 0.86 years) and does not materially change holdout RMSE (4.12 $\rightarrow$ 4.12 years).
+- **RQ7 (generalization):** on the 2011 holdout year, the adult‑mortality benchmark generalizes best (RMSE **2.89** years); among interpretable models, nonlinearity and immunization are best (RMSE **4.12** years), while alcohol/BMI is worst (RMSE **5.84** years).
+- **RQ8 (panel autocorrelation):** pooled panel OLS shows strong autocorrelation (DW = 0.48), so inference from the panel model is not reliable without a dedicated panel/cluster-robust treatment.
 
 **Limitations.** All findings are descriptive associations in observational data. Several models violate homoscedasticity, and some violate residual normality; we therefore emphasize effect sizes, diagnostics, and sensitivity checks over marginal p-values. Finally, PCA components are linear combinations with arbitrary sign, so interpreting `*_PC1` coefficients requires inspecting loadings (see PCA-related chapters).
