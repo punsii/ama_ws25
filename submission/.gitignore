@@ -3,6 +3,7 @@
 /_freeze/
 /pdoc/
 /*_files/
+*_files/
 /*.html
 
 **/*.quarto_ipynb
