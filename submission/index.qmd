@@ -3,6 +3,8 @@ title: "AMA Submission"
 format:
   html:
     toc: true
+execute:
+  warning: false
 ---
 
 # Life Expectancy
@@ -48,17 +50,6 @@ We analyze the WHO “Life Expectancy” country-year panel (183 countries, 2000
 
 `ama-tlbx` is the reusable analysis toolkit that backs the report. It is organized into four sub-packages: `data` (dataset loaders, column enums, immutable views), `analysis` (pure analyzers and result dataclasses), `plotting` (visualization helpers that consume result objects), and `utils` (paths and shared plotting config). Core capabilities include correlation and PCA diagnostics, outlier screening, grouped PCA reduction, regression diagnostics and model selection, and plotting wrappers for each result type. The usage pattern is intentionally uniform: create a dataset, build an analyzer via dataset factory methods, call `fit().result()`, then visualize or evaluate results (often via `ModelRegistry` in regression workflows).
 
-Example usage pattern (typical in the chapters):
-
-```python
-from ama_tlbx.data import LifeExpectancyDataset
-from ama_tlbx.plotting import plot_correlation_heatmap
-
-ds = LifeExpectancyDataset.from_csv(aggregate_by_country=2014)
-corr = ds.make_correlation_analyzer(include_target=True).fit().result()
-fig = plot_correlation_heatmap(corr)
-```
-
 ```
 ama_tlbx
 ├── ama_tlbx
@@ -96,4 +87,97 @@ ama_tlbx
 │       └── plotting_config.py ~ Shared plotting style configuration.
 ├── pyproject.toml ~ Package metadata and dependencies.
 └── README.md
+```
+
+
+Example usage pattern (one massive chain, mixing correlation-driven grouping, PCA reduction, registry fit, and a RegressionResult plot):
+
+```{python}
+#| echo: false
+#| include: false
+from matplotlib import pyplot as plt
+
+from ama_tlbx.analysis import ModelRegistry, suggest_groups_from_correlation
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.data.undp_hdr_columns import UNDPHDRColumn as HDRCol
+from ama_tlbx.data.undp_hdr_dataset import UNDPHDRDataset
+from ama_tlbx.data.utils import DEFAULT_UNDP_SOCIO_COLUMNS, merge_undp_hdr_features
+```
+
+```{python}
+_ = (
+    LifeExpectancyDataset.from_csv_updated(
+        aggregate_by_country=2014, resolve_nand_pred="carry_forward"
+    )
+    .df.pipe(
+        lambda df: merge_undp_hdr_features(
+            df,
+            undp_dataset=UNDPHDRDataset.from_csv(years=[2014, 2011]),
+            years=[2014],
+            columns=[str(HDRCol.HDI), *DEFAULT_UNDP_SOCIO_COLUMNS],
+        ).df
+    )
+    .pipe(
+        lambda df: df.rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
+        if str(LECol.HDI) not in df.columns and str(HDRCol.HDI) in df.columns
+        else df
+    )
+    .pipe(lambda df: LifeExpectancyDataset(df).tf_and_norm())
+    .set_index("iso3")
+    .pipe(lambda df: df[~df.index.duplicated(keep="first")])
+    .pipe(
+        lambda df: (
+            df.attrs.update(
+                {
+                    "groups": LifeExpectancyDataset(df)
+                    .make_correlation_analyzer(standardized=True, include_target=False)
+                    .fit()
+                    .result()
+                    .matrix.pipe(
+                        lambda corr: suggest_groups_from_correlation(
+                            corr, threshold=0.7, min_group_size=2
+                        )
+                    )
+                }
+            )
+            or df
+        )
+    )
+    .pipe(
+        lambda df: (
+            df.attrs.update(
+                {
+                    "pca_result": LifeExpectancyDataset(df)
+                    .make_pca_dim_reduction_analyzer(
+                        feature_groups=df.attrs["groups"],
+                        standardized=True,
+                        min_var_explained=0.9,
+                    )
+                    .fit()
+                    .result()
+                }
+            )
+            or df
+        )
+    )
+    .pipe(
+        lambda df: df.attrs["pca_result"].reduced_df.assign(
+            **{
+                LECol.TARGET: df.loc[
+                    df.attrs["pca_result"].reduced_df.index, LECol.TARGET
+                ]
+            }
+        )
+    )
+    .pipe(
+        lambda df: ModelRegistry(eval_year=2011)
+        .fit(
+            df,
+            name="pca_chain",
+            rhs=" + ".join(df.drop(columns=[LECol.TARGET]).columns),
+        )
+        .plot_residual_diags()
+    )
+)
+plt.show()
 ```
