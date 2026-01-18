@@ -102,7 +102,8 @@ class ModelRegistry:
         shuffle_cv: bool = False,
         random_state: int | None = None,
         refit: bool = False,
-    ) -> RegressionResult:
+        cook_distance_threshold: float | None = None,
+    ) -> RegressionResult | tuple[RegressionResult, RegressionResult]:
         """Fit an OLS formula model and cache it by name.
 
         Args:
@@ -114,6 +115,11 @@ class ModelRegistry:
             shuffle_cv: Whether to shuffle data before CV splitting.
             random_state: Random state for reproducibility.
             refit: If True, refit even if model with `name` exists.
+            cook_distance_threshold: If provided, refit the model after removing
+                samples whose Cook's distance exceeds this threshold. When set,
+                the method returns ``(initial_fit, refit)`` and registers both
+                models. The initial fit is stored as ``{name}_initial`` and the
+                refit uses ``name``.
         """
         name = self._ensure_name(name)
         if name in self.models and not refit:
@@ -136,9 +142,54 @@ class ModelRegistry:
                 random_state=random_state,
             )
 
-        self._register(name=name, rhs=rhs, diag=diag, data=df)
+        if cook_distance_threshold is None:
+            self._register(name=name, rhs=rhs, diag=diag, data=df)
+            return diag
 
-        return diag
+        if cook_distance_threshold <= 0:
+            raise ValueError("cook_distance_threshold must be positive when provided.")
+
+        cooks = np.asarray(diag.assumptions.cooks_distance)
+        if cooks.size == 0:
+            self._register(name=name, rhs=rhs, diag=diag, data=df)
+            return diag
+
+        cooks_mask = cooks <= cook_distance_threshold
+        if cooks_mask.size != len(diag.design_matrix):
+            raise ValueError("Cook's distance mask size does not match fitted data.")
+
+        initial_name = f"{name}_initial"
+        self._register(name=initial_name, rhs=rhs, diag=diag, data=df)
+
+        try:
+            aligned_df = df.loc[diag.design_matrix.index]
+        except KeyError:
+            aligned_df = df
+        trimmed_df = aligned_df.iloc[cooks_mask].copy()
+        if trimmed_df.empty:
+            raise ValueError("Cook's distance filter removed all samples.")
+
+        if rhs is not None:
+            refit_diag = fit_ols(
+                trimmed_df,
+                rhs=rhs,
+                target_col=target_col,
+                cv_folds=cv_folds,
+                shuffle_cv=shuffle_cv,
+                random_state=random_state,
+            )
+        else:
+            refit_diag = fit_ols(
+                design_matrix_Xy=trimmed_df,
+                target_col=target_col,
+                cv_folds=cv_folds,
+                shuffle_cv=shuffle_cv,
+                random_state=random_state,
+            )
+
+        self._register(name=name, rhs=rhs, diag=refit_diag, data=trimmed_df)
+
+        return diag, refit_diag
 
     def evaluate_on(
         self,
