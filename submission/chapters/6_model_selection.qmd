@@ -4,6 +4,8 @@ format:
   html:
     toc: true
     code-fold: true
+execute:
+  warning: false
 ---
 
 <style>
@@ -98,7 +100,7 @@ df_train = train_ds_raw.tf_and_norm().drop(columns=[LECol.YEAR])
 
 # Drop HDI and columns of the feature groups
 df_train = df_train.drop(
-    columns=["human_development_index"] + cols_to_drop, 
+    columns=["human_development_index"] + cols_to_drop,
     errors="ignore"
 )
 df_train = df_train.select_dtypes(include=["number"])
@@ -125,7 +127,7 @@ registry.fit_stepwise(
     candidates=candidate_cols,
     direction="forward",
     criterion="aic",
-    threshold=-np.inf, 
+    threshold=-np.inf,
     name="AIC_Forward",
 )
 
@@ -181,7 +183,7 @@ markers = ["o", "x", "o", "x"]
 for name, color, marker in zip(strategies, colors, markers):
     subset = df_paths[df_paths["label"] == name].sort_values("n_terms")
     metric_name = subset["criterion"].iloc[0]
-    
+
     ax.plot(
         subset["n_terms"],
         subset[metric_name],
@@ -274,7 +276,7 @@ alt_registry.fit_stepwise(
     candidates=alt_candidate_cols,
     direction="forward",
     criterion="aic",
-    threshold=-np.inf, 
+    threshold=-np.inf,
     name="AIC_Forward",
 )
 
@@ -324,7 +326,7 @@ fig, ax = plt.subplots()
 for name, color, marker in zip(alt_strategies, colors, markers):
     subset = df_alt_paths[df_alt_paths["label"] == name].sort_values("n_terms")
     metric_name = subset["criterion"].iloc[0]
-    
+
     ax.plot(
         subset["n_terms"],
         subset[metric_name],
@@ -380,7 +382,7 @@ styled_alt_table = (
 display(styled_alt_table)
 ```
 
-This time the forward and backward selection take the exact same paths. 
+This time the forward and backward selection take the exact same paths.
 BIC still results in 5 selected features and the AIC model uses 6.
 The columns 'HIV/AIDS prevalence' as well as 'Schooling' are the most significant factors, despite not being part of the previous models.
 This indicates that they are the best replacements for the now missing 'Adult Mortality' and 'Child Mortality' respectively.
@@ -409,14 +411,14 @@ def evaluate_path(train_df, test_df, candidate_cols, name):
         name=name,
     )
     path = reg.get(name).selection_path
-    
+
     results = []
     target = LECol.TARGET
-    
+
     for step in path.steps:
         features = step.terms
         n_feats = len(features)
-        
+
         # Prepare Design Matrices
         if n_feats == 0:
             X_train = sm.add_constant(pd.DataFrame(index=train_df.index))
@@ -424,19 +426,19 @@ def evaluate_path(train_df, test_df, candidate_cols, name):
         else:
             X_train = sm.add_constant(train_df[features])
             X_test = sm.add_constant(test_df[features])
-            
+
         y_train = train_df[target]
         y_test = test_df[target]
-        
+
         # Refit OLS on training data
         model = sm.OLS(y_train, X_train).fit()
-        
+
         # Predict on test (or train for in-sample)
         preds = model.predict(X_test)
         mse = mean_squared_error(y_test, preds)
-        
+
         results.append({"n_terms": n_feats, "mse": mse})
-        
+
     return pd.DataFrame(results)
 
 df_insample = evaluate_path(df_train, df_train, candidate_cols, "insample")
@@ -449,7 +451,7 @@ fold_idx = 1
 for train_idx, val_idx in kf.split(df_train):
     cv_train = df_train.iloc[train_idx].copy()
     cv_val = df_train.iloc[val_idx].copy()
-    
+
     fold_res = evaluate_path(cv_train, cv_val, candidate_cols, f"fold_{fold_idx}")
     fold_res["fold"] = fold_idx
     cv_results_list.append(fold_res)
@@ -464,17 +466,17 @@ df_cv_plot = df_cv_agg[df_cv_agg["n_terms"] >= 1]
 fig, ax = plt.subplots()
 
 ax.plot(
-    df_insample_plot["n_terms"], 
-    df_insample_plot["mse"], 
-    color="black", 
-    label="In-sample", 
+    df_insample_plot["n_terms"],
+    df_insample_plot["mse"],
+    color="black",
+    label="In-sample",
     linewidth=1.5
 )
 ax.plot(
-    df_cv_plot["n_terms"], 
-    df_cv_plot["mse"], 
-    color="purple", 
-    marker="o", 
+    df_cv_plot["n_terms"],
+    df_cv_plot["mse"],
+    color="purple",
+    marker="o",
     label="Cross-validated",
     markersize=4
 )
