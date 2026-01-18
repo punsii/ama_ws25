@@ -272,7 +272,7 @@ class ModelRegistry:
                 shuffle_cv=shuffle_cv,
                 random_state=random_state,
             )
-            entry_data = df or self._frame_from_model(step.model)
+            entry_data = df if df is not None else self._frame_from_model(step.model)
         else:
             if df is None:
                 raise ValueError("df is required when reuse_path_model is False.")
