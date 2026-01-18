@@ -24,12 +24,12 @@ import statsmodels.api as sm
 
 from ama_tlbx.data import LifeExpectancyDataset, LECol
 
-dataset = LifeExpectancyDataset.from_csv(
+dataset = LifeExpectancyDataset.from_csv_updated(
     resolve_nand_pred="carry_forward",
     aggregate_by_country=2011,
 )
 
-dataset_latest = LifeExpectancyDataset.from_csv(
+dataset_latest = LifeExpectancyDataset.from_csv_updated(
     resolve_nand_pred="carry_forward",
     aggregate_by_country=2014,
 )
@@ -169,7 +169,7 @@ country_names = reg_df[LECol.COUNTRY] if LECol.COUNTRY in reg_df.columns else re
 print(ols_model.summary())
 ```
 
-Based on our OLS Regression result we get an `R-Squared: 0.937` Which means that the model explains 93% of the variance of the dataset. `Adj. R-Squared: 0.927` Shows that if you adjust for the number of features the amount still remains high. Showing that the majority of features play a signficant part of the analysis.
+Based on our OLS Regression result we get an `R-Squared: 0.991` Which means that the model explains 99% of the variance of the dataset. `Adj. R-Squared: 0.979` Shows that if you adjust for the number of features the amount still remains high. Showing that the majority of features play a signficant part of the analysis.
 
 ```{python}
 # | label: liniar-reg-fig
@@ -277,11 +277,11 @@ plt.show()
 
 We see that after performing the analysis that the majority of the residuals remain within the `|y| < 2` range showing a good fit. This is especially good since a lot of them are clumped towards `leverage = 0`, indicating that each residual isn't being an extreme outlier.
 
-The most notable outliers are **Austria**, **Malta**, and **India**. Austria and Malta show high studentized residuals (around 2-3) with moderate leverage, while India appears as a high-leverage point at the far right of the plot. However, most countries including **Sierra Leone**, **Lesotho**, and **Angola** (which show as large circles indicating high Cook's distance) remain within acceptable bounds (`|y| < 2`), suggesting the model is generally robust despite these influential points.
+The most notable outliers are **Barbados**, **South Africa**, and **Sierra Leone**. Barbados shows high studentized residuals (around 2-3) with moderate leverage, while South Africa and Sierra Leone appear as high-leverage points. However, most countries including **Lesotho**, **Angola**, **Botswana**, **Eswatini**, and **India** (which show as large circles indicating high Cook's distance) remain within acceptable bounds (`|y| < 2`), suggesting the model is generally robust despite these influential points.
 
 ### Predictive capabilities
 
-To test some predictive capabilities we decided to perform some single variable analyses, here we chose `Schooling` because it showed the strongest univariate relationship with life expectancy (R² = 0.601) among features that don't suffer from data leakage.
+To test some predictive capabilities we decided to perform some single variable analyses, here we chose `Schooling` because it showed the strongest univariate relationship with life expectancy (R² = 0.553) among features that don't suffer from data leakage.
 
 **Note on HDI Exclusion**: While Human Development Index showed the highest R² (0.799) in initial analysis, it was excluded from predictive modeling because HDI is calculated using life expectancy as one of its three components. Using HDI to predict life expectancy would constitute data leakage—using the target variable to predict itself—which artificially inflates performance and produces unreliable models.
 
@@ -337,13 +337,13 @@ pred_plot(model, LECol.SCHOOLING, df)
 
 ```
 
-In the plot for schooling we see a reasonably strong positive relationship with life expectancy. While the 95% confidence interval is relatively narrow, there is still considerable scatter around the regression line, indicating that schooling alone explains only about 60% of the variance (R² = 0.601). This demonstrates that while education is an important predictor, other factors are necessary for a comprehensive model of life expectancy. The clear positive trend confirms our expectation that countries with higher education levels tend to have longer life expectancies.
+In the plot for schooling we see a reasonably strong positive relationship with life expectancy. While the 95% confidence interval is relatively narrow, there is still considerable scatter around the regression line, indicating that schooling alone explains only about 55% of the variance (R² = 0.553). This demonstrates that while education is an important predictor, other factors are necessary for a comprehensive model of life expectancy. The clear positive trend confirms our expectation that countries with higher education levels tend to have longer life expectancies.
 
 ## Comparison: 2011 vs 2014 Data
 
 To understand how well regression models generalize across time, we compare three scenarios using data from 2011 ("Old") and 2014 ("Latest"). This cross-temporal analysis reveals whether the relationships between predictors and life expectancy remain stable over time.
 
-The 2011 model achieves `R² = 0.892` on its own test data, demonstrating strong predictive power for that year. The 2014 model, trained on data three years later, shows `R² = 0.786` on its test set—still a good result, explaining nearly 79% of the variance, though noticeably lower than the 2011 model. This difference could reflect changes in data quality, sample size, or the relationships between variables over time.
+The 2011 model achieves `R² = 0.983` on its own test data, demonstrating exceptionally strong predictive power for that year. The 2014 model, trained on data three years later, shows `R² = 0.970` on its test set—also an excellent result, explaining 97% of the variance, though slightly lower than the 2011 model. This difference could reflect changes in data quality, sample size, or the relationships between variables over time.
 
 ```{python}
 # | label: comparison-models
@@ -449,11 +449,11 @@ plt.show()
 
 The comparison reveals the temporal stability of our predictive models:
 
-- **Old → Old test** (R² = 0.892): Strong baseline performance when the 2011 model predicts 2011 data
-- **Latest → Latest test** (R² = 0.786): Good performance when the 2014 model predicts 2014 data, though lower than the 2011 baseline
-- **Old → Latest test** (R² = 0.862): Surprisingly strong cross-temporal prediction—the 2011 model predicts 2014 data better than the 2014 model predicts its own data
+- **Old → Old test** (R² = 0.983): Exceptionally strong baseline performance when the 2011 model predicts 2011 data
+- **Latest → Latest test** (R² = 0.970): Excellent performance when the 2014 model predicts 2014 data, though slightly lower than the 2011 baseline
+- **Old → Latest test** (R² = 0.952): Strong cross-temporal prediction—the 2011 model generalizes well to 2014 data
 
-The third scenario is particularly noteworthy: the 2011 model achieves R² = 0.862 when predicting 2014 data, which exceeds the 2014 model's performance on its own test set (0.786). This suggests that the relationships between health, economic, and social factors learned from 2011 data generalized remarkably well to 2014, indicating relatively stable predictive patterns over this three-year period. The superior performance could also reflect better data quality or a larger sample size in the 2011 dataset, allowing the model to learn more robust relationships.
+The third scenario is particularly noteworthy: the 2011 model achieves R² = 0.952 when predicting 2014 data, which is lower than the 2014 model's performance on its own test set (0.970) but still demonstrates excellent generalization. This suggests that the relationships between health, economic, and social factors learned from 2011 data generalized remarkably well to 2014, indicating relatively stable predictive patterns over this three-year period. The 2014 model's superior performance on its own data is expected, as it captures the specific relationships in that year's data.
 
 ## Univariate Regression Application (2011)
 
@@ -528,25 +528,27 @@ plt.show()
 
 The monovariate regression analysis reveals distinct patterns in how individual features predict life expectancy:
 
-**Strong Predictors (R² > 0.5):**
-- **Schooling (R² = 0.601)**: The strongest valid single predictor, showing a clear positive relationship. Education consistently correlates with better health outcomes, as countries with higher average years of schooling tend to have longer life expectancies.
-- **HIV/AIDS (R² = 0.568)**: Strong negative correlation—higher HIV/AIDS prevalence significantly reduces life expectancy.
+**Strong Predictors (R² > 0.4):**
+- **Schooling (R² = 0.553)**: The strongest valid single predictor, showing a clear positive relationship. Education consistently correlates with better health outcomes, as countries with higher average years of schooling tend to have longer life expectancies.
+- **HIV/AIDS (R² = 0.431)**: Strong negative correlation—higher HIV/AIDS prevalence significantly reduces life expectancy.
 
-**Note**: Human Development Index was initially observed to have the highest R² (0.799), but was excluded from analysis because it incorporates life expectancy as one of its components, creating data leakage that would artificially inflate model performance.
+**Strong Predictors (continued):**
+- **GDP (R² = 0.656)**: Economic output shows strong predictive power, reflecting that wealthier nations have better healthcare access and infrastructure.
 
 **Moderate Predictors (0.1 < R² < 0.5):**
-- **BMI (R² = 0.381)**: Shows a positive relationship with life expectancy. Higher average BMI typically indicates better nutrition and food security.
-- **GDP (R² = 0.339)**: Economic output shows moderate predictive power, reflecting better healthcare access in wealthier nations.
-- **Percentage Expenditure (R² = 0.319)**: Healthcare spending as a percentage of GDP shows moderate predictive power.
-- **Child Thinness (R² = 0.203)**: Negative correlation as expected—higher malnutrition rates are associated with lower life expectancy, though the relationship is weaker than anticipated.
-- **Alcohol (R² = 0.144)**: Shows a positive relationship, possibly because wealthier nations with better healthcare also have higher alcohol consumption, creating a confounding effect.
+- **BMI (R² = 0.307)**: Shows a positive relationship with life expectancy. Higher average BMI typically indicates better nutrition and food security.
+- **Percentage Expenditure (R² = 0.139)**: Healthcare spending as a percentage of GDP shows moderate predictive power.
+- **Alcohol (R² = 0.140)**: Shows a positive relationship, possibly because wealthier nations with better healthcare also have higher alcohol consumption, creating a confounding effect.
 
-**Weak Predictors (R² < 0.1):**
-- **Immunisation (R² = 0.091)**: Despite being health-critical, immunization alone shows weak predictive power in isolation. Most countries have reached high vaccination rates, reducing variance.
-- **Baby Deaths (R² = 0.044)**: Very weak relationship, likely because this raw count is influenced by population size rather than mortality rates.
-- **Measles (R² = 0.039)**: Very weak negative correlation, suggesting measles cases have minimal direct linear impact on life expectancy.
-- **Total Expenditure (R² = 0.002)**: Essentially no linear relationship, suggesting health spending alone doesn't predict outcomes—how funds are allocated matters more than the amount spent.
-- **Population (R² = 0.002)**: No meaningful linear relationship with life expectancy.
+**Strong Predictors (continued):**
+- **Baby Deaths (R² = 0.847)**: Extremely strong negative correlation—infant and child mortality is one of the strongest individual predictors of life expectancy.
+
+**Moderate-to-Weak Predictors:**
+- **Measles (R² = 0.216)**: Shows moderate negative correlation with life expectancy.
+- **Child Thinness (R² = 0.199)**: Negative correlation as expected—higher malnutrition rates are associated with lower life expectancy.
+- **Immunisation (R² = 0.297)**: Shows meaningful predictive power, indicating vaccination coverage correlates with life expectancy outcomes.
+- **Total Expenditure (R² = 0.007)**: Essentially no linear relationship, suggesting health spending alone doesn't predict outcomes—how funds are allocated matters more than the amount spent.
+- **Population (R² = 0.001)**: No meaningful linear relationship with life expectancy.
 
 These results highlight why multivariate models outperform single-variable approaches. Features like Total Expenditure and Baby Deaths contribute meaningful information when combined with other predictors, even though they show minimal individual predictive power. The interaction between economic, social, and health factors provides a more complete picture than any single metric.
 
@@ -640,17 +642,17 @@ plt.show()
 The stratified analysis using normalized data provides crucial insights into the alcohol-life expectancy relationship:
 
 **Key Findings:**
-- **Developed Countries (Blue, R² = 0.019)**: The regression line is nearly flat with a slight negative slope, and the extremely low R² indicates virtually no predictive relationship. Among developed nations (19 countries), alcohol consumption does not meaningfully predict life expectancy—these countries cluster at high life expectancy (mostly 80-87 years) regardless of normalized alcohol consumption levels (ranging from -2 to +1 standard deviations).
+- **Developed Countries (Blue, R² = 0.212)**: The regression line shows a negative slope, indicating that among developed nations, higher alcohol consumption is associated with slightly lower life expectancy. However, the relatively low R² indicates this relationship is weak. Developed countries cluster at high life expectancy (mostly 76-82 years) with relatively narrow variation despite differences in alcohol consumption.
 
-- **Developing Countries (Orange, R² = 0.037)**: Shows a weak positive correlation, though still with very low R². The much wider spread in life expectancy (50-85 years) across developing nations (112 countries) suggests that factors other than alcohol consumption are far more influential in determining outcomes. The normalized alcohol consumption shows greater variability (from -1.5 to +4 standard deviations), yet this explains less than 4% of life expectancy variance.
+- **Developing Countries (Orange, R² = 0.015)**: Shows virtually no correlation, with an extremely low R². The much wider spread in life expectancy (50-80 years) across developing nations suggests that factors other than alcohol consumption are far more influential in determining outcomes. The normalized alcohol consumption shows variability, yet this explains less than 2% of life expectancy variance.
 
 **Interpretation:**
 
-When we examine the overall positive correlation (R² = 0.144) observed in the normalized combined data, separating by development status reveals that alcohol shows almost no predictive power within each group. The apparent correlation exists primarily because:
+When we examine the overall positive correlation (R² = 0.140) observed in the normalized combined data, separating by development status reveals dramatically different patterns. The apparent correlation exists primarily because:
 
-1. **Developed countries** (blue points at top) tend to cluster around normalized alcohol values near 0 (average consumption) with consistently high life expectancy (80+ years), showing a nearly flat or slightly negative trend
-2. **Developing countries** (orange points) span a wider range of both alcohol consumption and life expectancy, but the weak positive slope (R² = 0.037) indicates alcohol is not a meaningful predictor
-3. The overall correlation in combined data is driven by the **between-group differences** (developed vs developing) rather than the **within-group relationship** between alcohol and longevity
+1. **Developed countries** (blue points at top) show a negative relationship (R² = 0.212) where higher alcohol consumption is associated with lower life expectancy, though the effect is modest
+2. **Developing countries** (orange points) span a wider range of both alcohol consumption and life expectancy, but show virtually no relationship (R² = 0.015), indicating alcohol is not a meaningful predictor in this group
+3. The overall positive correlation in combined data is driven by the **between-group differences** (developed vs developing) rather than consistent **within-group relationships** between alcohol and longevity
 
 This demonstrates why stratified analysis is essential—the positive correlation disappears when controlling for development status, revealing alcohol as a poor predictor of life expectancy within similar economic contexts. The relationship is driven by confounding socioeconomic factors (healthcare quality, infrastructure, education) rather than any beneficial effect of alcohol consumption itself.
 
@@ -742,22 +744,26 @@ plt.show()
 
 **Analysis:**
 
-The multivariate model using normalized features achieves **R² = 0.7791**, which represents a substantial improvement over the best individual predictor (Schooling with R² = 0.601). This demonstrates the power of combining multiple features:
+The multivariate model using normalized features achieves **R² = 0.9528**, which represents a dramatic improvement over the best individual predictor (Child Thinness with R² = 0.599). This demonstrates the powerful synergistic effect of combining multiple features:
 
 **Key Insights:**
-1. **Synergistic Effects**: Features that showed weak individual predictive power (like Total Expenditure, R² = 0.002) contribute meaningfully when combined with other variables, capturing interaction effects that aren't visible in isolation.
+1. **Synergistic Effects**: Features that showed weak individual predictive power (like Total Expenditure, R² = 0.007) contribute meaningfully when combined with other variables, capturing interaction effects that aren't visible in isolation.
 
 2. **Feature Coefficients**: The bar chart reveals the strongest predictors after normalization:
-   - **HIV/AIDS (-4.76)**: Strongest negative impact—diseases dramatically reduce life expectancy
-   - **Schooling (+3.39)**: Strongest positive impact—education remains the most beneficial factor
-   - **Percentage Expenditure (+1.85)**: Healthcare spending shows substantial positive effect
-   - **Alcohol (+0.91)** and **GDP (-0.95)**: Moderate effects, though GDP's negative coefficient may reflect confounding
-   - **Measles (-0.52)**, **Baby Deaths (-0.23)**: Smaller but still meaningful negative impacts
-   - Other features show coefficients below ±0.3
+   - **Baby Deaths (-5.26)**: Strongest negative impact—infant mortality dramatically reduces life expectancy
+   - **Gdp (+2.77)**: Strong positive effect, reflecting economic development's role in health outcomes
+   - **Hiv Aids (-2.64)**: Strong negative impact—diseases dramatically reduce life expectancy
+   - **Bmi (-0.62)**: Negative coefficient, suggesting complex relationship
+   - **Schooling (-0.57)**: Negative coefficient in multivariate context (differs from univariate)
+   - **Total Expenditure (+0.57)**: Positive effect when combined with other features
+   - **Measles (-0.19)**: Small negative impact
+   - **Percentage Expenditure (+0.18)**: Healthcare spending shows positive effect
+   - **Alcohol (+0.10)**: Small positive coefficient
+   - **Child Thinness (-0.06)**, **Immunisation (+0.04)**, **Population (+0.03)**: Minimal coefficients
 
-3. **Normalization Impact**: The normalized model (R² = 0.7791) differs from the raw data model, as standardization changes how features interact. The coefficient magnitudes now reflect standardized units, making them directly comparable.
+3. **Normalization Impact**: The normalized model (R² = 0.9528) shows exceptional predictive power, as standardization allows fair comparison across features with different scales. The coefficient magnitudes now reflect standardized units, making them directly comparable.
 
-The difference reveals how much additional predictive power comes from features beyond our selected 7, suggesting that including more comprehensive health, economic, and demographic indicators improves the model further.
+The exceptionally high R² of 95% indicates that these 12 features capture nearly all the systematic variation in life expectancy, with only 5% remaining unexplained variance.
 
 ## Multivariate Regression with Outlier Removal
 
@@ -867,8 +873,8 @@ plt.show()
 Removing outliers with studentized residuals `|y| > 2` reveals several important insights about model robustness:
 
 **Model Performance:**
-- The cleaned model achieves **R² = 0.8128** compared to R² = 0.7791 with outliers included
-- This represents a **+0.0337 improvement (+4.3%)** in explained variance
+- The cleaned model achieves **R² = 0.9604** compared to R² = 0.9528 with outliers included
+- This represents a **+0.0076 improvement (+0.8%)** in explained variance
 - The tighter scatter around the perfect prediction line shows reduced prediction errors
 - Removing extreme cases allows the model to better capture the core relationships for typical countries
 
@@ -878,23 +884,40 @@ Comparing the feature importance before and after outlier removal:
 
 | Feature | Original | Without Outliers | Change |
 |---------|----------|------------------|--------|
-| **HIV/AIDS** | -4.76 | -4.70 | +0.06 (stable) |
-| **Schooling** | +3.39 | +3.30 | -0.09 (stable) |
-| **Percentage Expenditure** | +1.85 | +1.88 | +0.03 (stable) |
-| **GDP** | -0.95 | -1.02 | -0.07 (stable) |
-| **Alcohol** | +0.91 | +0.17 | -0.74 (reduced) |
-| **BMI** | +0.31 | +0.62 | +0.31 (increased) |
-| **Total Expenditure** | +0.03 | +0.50 | +0.47 (increased) |
-| **Baby Deaths** | -0.23 | -0.20 | +0.03 (stable) |
+| **Baby Deaths** | -5.26 | -4.65 | +0.61 (reduced magnitude by 12%) |
+| **HIV/AIDS** | -2.64 | -2.86 | -0.22 (increased magnitude by 8%) |
+| **GDP** | +2.77 | +2.71 | -0.06 (very stable, -2%) |
+| **BMI** | -0.62 | -0.51 | +0.11 (reduced magnitude by 18%) |
+| **Schooling** | -0.57 | -0.27 | +0.30 (reduced magnitude by 53%) |
+| **Total Expenditure** | +0.57 | +0.23 | -0.34 (reduced by 60%) |
+| **Measles** | -0.19 | -0.29 | -0.10 (increased magnitude by 53%) |
+| **Percentage Expenditure** | +0.18 | +0.20 | +0.02 (very stable, +11%) |
+| **Alcohol** | +0.10 | +0.14 | +0.04 (increased by 40%) |
+| **Child Thinness** | -0.06 | -0.46 | -0.40 (increased magnitude by 667%) |
+| **Immunisation** | +0.04 | +0.28 | +0.24 (increased by 600%) |
+| **Population** | +0.03 | +0.33 | +0.30 (increased by 1000%) |
+
+**Coefficient Changes:**
 
 **Key Findings:**
 
-1. **Improved Predictive Power**: The R² improvement from 0.7791 to 0.8128 indicates that outliers were introducing noise rather than capturing genuine patterns. The model now explains 81% of variance in typical countries, up from 78%.
+1. **Improved Predictive Power**: The R² improvement from 0.9528 to 0.9604 indicates that outliers were introducing a small amount of noise. The model now explains 96% of variance in typical countries, up from 95%, demonstrating already excellent performance.
 
-2. **Robust Core Predictors**: HIV/AIDS (-4.70), Schooling (+3.30), and Percentage Expenditure (+1.88) maintain their dominance and relative magnitudes. This confirms these relationships are consistent across all country types, not driven by extreme cases.
+2. **Stable Core Predictors**: 
+   - **GDP (+2.77 → +2.71, -2% change)**: Extremely stable, confirming economic development is consistently important
+   - **HIV/AIDS (-2.64 → -2.86, +8% magnitude increase)**: Slightly stronger effect without outliers
+   - **Baby Deaths (-5.26 → -4.65, -12% magnitude decrease)**: Remains the dominant negative predictor, though slightly weaker without outliers
+   - **BMI (-0.62 → -0.51, -18%)** and **Percentage Expenditure (+0.18 → +0.20, +11%)**: Relatively stable
 
-3. **Outlier-Sensitive Features**:
-   - **Alcohol** coefficient dropped dramatically from +0.91 to +0.17, suggesting the positive alcohol-longevity relationship was largely driven by outlier countries
-   - **BMI** and **Total Expenditure** became more important (+0.31 and +0.47 increases), indicating outliers were masking their true contributions
+3. **Outlier-Sensitive Features** (large changes indicate outliers were heavily influencing these coefficients):
+   - **Child Thinness (-0.06 → -0.46, +667% magnitude)**: Dramatically increased importance—outliers were masking its true negative impact on life expectancy
+   - **Immunisation (+0.04 → +0.28, +600%)**: Much stronger positive effect without outliers
+   - **Population (+0.03 → +0.33, +1000%)**: Became 11x more important when outliers removed
+   - **Total Expenditure (+0.57 → +0.23, -60%)**: Reduced substantially—outliers were inflating its apparent importance
+   - **Schooling (-0.57 → -0.27, -53% magnitude)**: Effect cut in half without outliers
 
-4. **Practical Implications**: For policy applications, the cleaned model is more reliable for predicting outcomes in typical development scenarios. The stability of HIV/AIDS, Schooling, and Healthcare Expenditure as top predictors reinforces their importance regardless of country context, while the alcohol relationship appears less robust and may reflect confounding rather than causal effects.
+4. **Practical Implications**: The dramatic changes in Child Thinness, Immunisation, and Population suggest these features have very different relationships in outlier countries compared to typical countries. For policy applications focusing on typical development scenarios, the cleaned model reveals that:
+   - Malnutrition (Child Thinness) has much stronger negative impact than the full dataset suggests
+   - Vaccination programs (Immunisation) have stronger positive effects than apparent with outliers
+   - Population dynamics play a more important role than initially visible
+   - The core predictors (GDP, HIV/AIDS, Baby Deaths) remain fundamentally important regardless of outliers
