@@ -7,35 +7,93 @@ format:
 
 # Life Expectancy
 
-## Abstract
+<!-- ## Abstract
 
-We analyze the WHO “Life Expectancy” country-year panel (193 countries, 2000–2015; 2,938 observations) to answer two core questions: (i) which features are most important for modeling life expectancy and how do they relate to the outcome, and (ii) how well can life expectancy be predicted from the available indicators. To reduce within-country temporal dependence, we focus most multivariate analyses on a 2014 cross-section ($n=183$) and evaluate generalization on a year-based holdout (2011). After deterministic cleaning, per-variable transforms, and standardization, we quantify multicollinearity using Pearson correlations and PCA-based feature grouping, and we explore country profiles via clustering in standardized feature space. Descriptively, life expectancy in 2014 averages 71.5 years and differs by about 11.6 years between developed and developing countries; across the panel, the country-average increases by about 4.9 years from 2000 to 2015. In stepwise OLS regression with diagnostics and robustness checks, socioeconomic development (HDI/education), mortality burden (adult mortality, HIV/AIDS), and child health indicators emerge as key predictors; the final model explains about 86% of holdout variance with an RMSE of about 3.37 years. Results are interpreted as conditional associations in observational data.
+We analyze the WHO “Life Expectancy” country-year panel (183 countries, 2000–2015; 2,938 observations) to answer two core questions: (i) which features are most important for modeling life expectancy and how do they relate to the outcome, and (ii) how well can life expectancy be predicted from the available indicators. To reduce within-country temporal dependence, we focus most multivariate analyses on a 2014 cross-section ($n=183$) and evaluate generalization on a year-based holdout (2011). After deterministic cleaning, per-variable transforms, and standardization, we quantify multicollinearity using Pearson correlations and PCA-based feature grouping, and we explore country profiles via clustering in standardized feature space. Descriptively, life expectancy in 2014 averages 71.5 years and differs by about 11.6 years between developed and developing countries; across the panel, the country-average increases by about 4.9 years from 2000 to 2015. In stepwise OLS regression with diagnostics and robustness checks, socioeconomic development (HDI/education), mortality burden (adult mortality, HIV/AIDS), and child health indicators emerge as key predictors; the final model explains about 86% of holdout variance with an RMSE of about 3.37 years. Results are interpreted as conditional associations in observational data. -->
 
 
 ## Introduction
 
-- [Introduction](chapters/1_introduction.qmd) — Motivation, dataset overview, and the cross-sectional framing (2014).
+- [Introduction](chapters/1_introduction.qmd) — Motivation, dataset overview, and the cross-sectional framing (2014) ~~ **Jan Duchscherer**.
 
 ## Data preparation
 
-- [Year Selection](chapters/2_preproc_year_selection.qmd) — Completeness and anomaly diagnostics used to select a representative year.
-- [Data Preprocessing](chapters/2_preprocessing.qmd) — Cleaning pipeline, missing-value handling, transforms, and standardization used throughout.
-- [Outlier Detection and Cleaning](chapters/2_outlier_detection.qmd) — IQR, z-score, and Isolation Forest screening on the longitudinal panel.
+- [Data Preprocessing](chapters/2_preprocessing.qmd) — Cleaning pipeline, missing-value handling, transforms, and standardization used throughout ~ **Jan Duchscherer**.
+- [Investigate HDI](chapters/2_investigate_hdi.qmd) — Investigation of a supsicious and incorrectly labeled feature (Human Development Index) ~ **Jan Duchscherer**.
+- [Year Selection](chapters/2_preproc_year_selection.qmd) — Completeness and anomaly diagnostics used to select a representative year ~ **Jan Duchscherer**.
+- [Outlier Detection and Cleaning](chapters/2_outlier_detection.qmd) — IQR, z-score, and Isolation Forest screening on the longitudinal panel ~ **Jan Duchscherer**.
 
-## Exploratory structure
+## Exploratory analysis and dimensionality reduction
 
-- [Correlation Analysis](chapters/3_correlation.qmd) — Correlation structure, multicollinearity, and feature-group motivation for PCA/regression.
-- [Principal Component Analysis](chapters/3_pca.qmd) — Dimensionality reduction and PCA-based feature combination/interpretation.
+- [Correlation Analysis](chapters/3_correlation.qmd) — Correlation structure, multicollinearity, and feature-group motivation for PCA/regression ~ **Jan Duchscherer**.
+- [Principal Component Analysis](chapters/3_pca.qmd) — Dimensionality reduction and PCA-based feature combination/interpretation ~ **Jens**.
 
 ## Clustering
 
-- [Clustering](chapters/4_clustering.qmd) — K-means clustering (with PCA visualization) on standardized country profiles.
+- [Clustering](chapters/4_clustering.qmd) — K-means clustering (with PCA visualization) on standardized country profiles ~ **Paul Menhart**.
+
+## Regression analysis
+
+- [Regression Analysis](chapters/5_regression.qmd) — OLS models with PCA-based reduction, diagnostics, and year-based out-of-sample evaluation ~ **Jens**.
+- [Regression Analysis II](chapters/5_regression_2.qmd) — OLS models with interaction terms, diagnostics, and year-based out-of-sample evaluation ~ **Jan Duchscherer**.
+- [Regression with Supervised PCA](chapters/5_regression_supervised_pca.qmd) — OLS models using supervised PCA for dimension reduction ~ **Jan Duchscherer**.
+
 
 ## Model selection
 
-- [Model Selection](chapters/4_model_selection.qmd) — Criteria (AIC/BIC/Cp, adjusted $R^2$), stepwise procedures, and selection caveats.
+- [Model Selection](chapters/6_model_selection.qmd) — Criteria (AIC/BIC/Cp, adjusted $R^2$), stepwise procedures, and selection caveats ~ **Paul Menhart**.
 
-## Regression and open questions
 
-- [Regression Analysis](chapters/5_regression.qmd) — OLS models with PCA-based reduction, diagnostics, and year-based out-of-sample evaluation.
-- [Open Questions](chapters/5_open_questions.qmd) — Remaining methodological choices and items to clarify.
+# The AMA Toolbox
+
+`ama-tlbx` is the reusable analysis toolkit that backs the report. It is organized into four sub-packages: `data` (dataset loaders, column enums, immutable views), `analysis` (pure analyzers and result dataclasses), `plotting` (visualization helpers that consume result objects), and `utils` (paths and shared plotting config). Core capabilities include correlation and PCA diagnostics, outlier screening, grouped PCA reduction, regression diagnostics and model selection, and plotting wrappers for each result type. The usage pattern is intentionally uniform: create a dataset, build an analyzer via dataset factory methods, call `fit().result()`, then visualize or evaluate results (often via `ModelRegistry` in regression workflows).
+
+Example usage pattern (typical in the chapters):
+
+```python
+from ama_tlbx.data import LifeExpectancyDataset
+from ama_tlbx.plotting import plot_correlation_heatmap
+
+ds = LifeExpectancyDataset.from_csv(aggregate_by_country=2014)
+corr = ds.make_correlation_analyzer(include_target=True).fit().result()
+fig = plot_correlation_heatmap(corr)
+```
+
+```
+ama_tlbx
+├── ama_tlbx
+│   ├── analysis
+│   │   ├── base_analyser.py ~ Abstract analyzer interface (fit/result contract).
+│   │   ├── column_concat.py ~ PCA-weighted column concatenation helper.
+│   │   ├── correlation_analyzer.py ~ Pearson correlation analyzer + result plots.
+│   │   ├── hierachical_clustering.py ~ Correlation-based hierarchical feature grouping.
+│   │   ├── model_registry.py ~ Store, compare, and evaluate regression models.
+│   │   ├── model_selection.py ~ Stepwise/criterion selection utilities (Cp/AIC/etc.).
+│   │   ├── ols_helper.py ~ OLS fitting, metrics, diagnostics, and assumptions checks.
+│   │   ├── outlier_detector.py ~ IQR/Z-score/IsolationForest outlier analyzers.
+│   │   ├── pca_analyzer.py ~ PCA analyzer and loadings/variance summaries.
+│   │   └── pca_dim_reduction.py ~ Grouped PCA reduction and result packaging.
+│   ├── data
+│   │   ├── base_columns.py ~ Column enum base class + metadata helpers.
+│   │   ├── base_dataset.py ~ Dataset base class with analyzer factories.
+│   │   ├── life_expectancy_columns.py ~ Life expectancy column enum + metadata.
+│   │   ├── life_expectancy_dataset.py ~ Life expectancy loader, cleaning, transforms.
+│   │   ├── siebenkampf_columns.py ~ Siebenkampf (heptathlon) column enum.
+│   │   ├── transform_suggestions.md ~ Notes on candidate transforms.
+│   │   ├── undp_hdr_columns.py ~ UNDP HDR column enum.
+│   │   ├── undp_hdr_dataset.py ~ UNDP HDR loader/reshaper/merge.
+│   │   ├── utils.py ~ Dataset metadata helpers (docstrings, merges).
+│   │   └── views.py ~ Immutable DatasetView slices for analyzers.
+│   ├── plotting
+│   │   ├── clustering_plots.py ~ Clustering diagnostics (elbow, silhouette, dendrogram).
+│   │   ├── correlation_plots.py ~ Correlation heatmaps, pairs, target plots.
+│   │   ├── dataset_plots.py ~ EDA histograms + standardization comparison.
+│   │   ├── pca_dim_reduction_plots.py ~ Group PCA variance/loadings plots.
+│   │   ├── pca_plots.py ~ PCA variance, loadings, biplot helpers.
+│   │   └── regression_plots.py ~ Regression diagnostics and effect plots.
+│   └── utils
+│       ├── paths.py ~ Data path helpers.
+│       └── plotting_config.py ~ Shared plotting style configuration.
+├── pyproject.toml ~ Package metadata and dependencies.
+└── README.md
+```
