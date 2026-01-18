@@ -67,6 +67,7 @@
           pandas
           pandas-stubs
           pdoc
+          pyqt5
           pytest
           pytest-cov
           ruff
