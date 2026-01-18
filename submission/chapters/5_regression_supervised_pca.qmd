@@ -227,7 +227,7 @@ display(spca_interactions)
 Interaction-augmented stepwise fit (top PCs only) offers a targeted check for nonlinear combinations of disease-burden and development axes. Treat the result as exploratory and validate across years before drawing causal conclusions.
 
 :::{.callout-note collapse="true"}
-### Cook's distance trim (initial + filtered)
+### Cook's distance trim (interaction model)
 ```{python}
 # | label: supervised-pca-cooks
 # | code-fold: true
@@ -247,7 +247,7 @@ display(spca_cooks_initial)
 :::
 
 :::{.callout-note collapse="true"}
-### Cook's distance trim (initial + filtered)
+### Final model specification (trimmed)
 
 ```{python}
 final_formula = (
@@ -269,6 +269,8 @@ removed = len(spca_cooks_initial.design_matrix) - len(spca_final.design_matrix)
 
 :::
 
+This Cook's-distance trimming step (threshold 4/n, removing 4 points) is a sensitivity analysis rather than a data-cleaning rule. It can stabilize inference but should not be treated as a principled exclusion without substantive justification for the removed countries.
+
 ### Model comparison
 
 ```{python}
@@ -279,6 +281,8 @@ comp_tbl = registry.compare(sort_by="aic").drop(columns=["rhs"])[
 ]
 comp_tbl
 ```
+
+**Model evolution (concise):** full supervised-PCA (all PCs) -> reduced to significant PCs -> stepwise AIC among PCs -> add top interaction terms -> Cook's-distance trim -> final minor term pruning (m_final).
 
 ### Best model diagnostics
 
@@ -291,15 +295,16 @@ best_model = best_model.diag
 display(best_model)
 ```
 
-Removing high-influence points (Cook's distance > 4/n) yields a sensitivity check on inference. If coefficients and fit metrics stay stable, the original model is not unduly driven by a few influential countries; if they shift materially, robust/trimmed fits should be preferred for inference.
+The AIC-ranked model is the best **in-sample** fit; cross-year generalization may favor a simpler specification (see the mean RMSE table below). Use AIC for in-sample explanation and the cross-year mean RMSE/MAE for forecasting across years.
 
 ```{python}
 # | label: supervised-pca-diagnostics
 # | fig-cap: "Supervised PCA regression diagnostics."
 best_model.plot_residual_diags()
+plt.show()
 ```
 
-Diagnostics indicate generally adequate linear-model behavior with mild departures. Residuals are centered and mostly patternless across PCs, while the residual-vs-fitted curve shows a slight curvature and the scale-location plot suggests modest heteroscedasticity. Normality is borderline: Shapiro-Wilk is acceptable but Jarque-Bera rejects, indicating heavier tails driven by a few outliers. Breusch-Pagan rejects homoscedasticity, whereas White's test does not, pointing to mild, possibly form-dependent heteroscedasticity. Durbin-Watson ~ 2 indicates no material autocorrelation. Several observations show elevated leverage and Cook's distance (notably Syria, Lesotho, and a few high-leverage countries), so coefficient SEs and CIs from the non-robust OLS output should be treated cautiously. For inferential claims, HC3/robust SEs or bootstrap-based intervals would be preferable; predictive metrics remain reliable.
+Diagnostics for the final model are largely favorable: JB and Shapiro do not reject normality, and residual plots show only mild curvature. The scale-location plot suggests mild heteroscedasticity and BP is borderline (p=0.048), while White's test passes, indicating any non-constant variance is weak and likely form-dependent. Durbin-Watson ~ 2 suggests no autocorrelation. The condition number (~84) is moderate and VIFs are low, so multicollinearity is not a concern. For inference, non-robust SEs/CIs may be slightly optimistic; prefer HC3/robust or bootstrap CIs. For prediction, impacts are minor.
 
 ## Holdout evaluation and bootstrap CIs
 
@@ -314,7 +319,7 @@ eval_holdout = registry.evaluate_on(
 eval_holdout
 ```
 
-Holdout performance remains strong (RMSE ~ 1.86, R^2 ~ 0.95), suggesting limited overfitting despite using many PCs. The bootstrap CIs for RMSE/MAE/R^2 are narrow relative to the point estimates, reinforcing the stability of predictive performance.
+Holdout performance is summarized in the table above; the bootstrap CIs quantify uncertainty in those metrics for the fixed model. These CIs reflect evaluation-sample variability, not model-refit uncertainty.
 
 ```{python}
 # | label: supervised-pca-eval-ci
@@ -450,6 +455,8 @@ plt.show()
 rmse_by_year.groupby("model")[["rmse", "mae", "r2"]].mean().sort_values("rmse")
 ```
 
+Across years, the model with the lowest mean RMSE/MAE is the better choice for generalization, even if it is not the AIC-best in-sample model.
+
 
 ## Loadings and biplots (retained PCs)
 
@@ -467,7 +474,7 @@ plot_loadings_heatmap(
     pc_subset=kept_pc_names,
     top_n_features=15,
     figsize=(14, 8),
-)
+).show()
 ```
 
 Interpretation of the most impactful PCs (largest |t| values) in terms of original features:

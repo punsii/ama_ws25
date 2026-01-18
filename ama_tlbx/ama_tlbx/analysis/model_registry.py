@@ -91,6 +91,12 @@ class ModelRegistry:
             raise KeyError(f"Unknown model '{name}'.")
         return self.models[name]
 
+    def remove(self, name: str) -> None:
+        """Remove a model entry by name."""
+        if name not in self.models:
+            raise KeyError(f"Unknown model '{name}'.")
+        del self.models[name]
+
     def fit(
         self,
         df: pd.DataFrame,
