@@ -3,96 +3,131 @@ title: "Clustering"
 format:
   html:
     toc: true
-    code-fold: show
+    code-fold: true
 ---
+
+<style>
+  figcaption {
+    text-align: center;
+  }
+</style>
 
 # Clustering Analysis
 
-In this chapter, we aim to identify natural groupings of countries based on their health and socio-economic indicators. By clustering the data, we can discover if there are distinct patterns such as "Under-developed" vs. "Developed" nations without relying on pre-existing labels.
+In this chapter, we aim to identify natural groupings of countries based on their health and socio-economic indicators.
+By clustering the data, we can discover if there are distinct patterns without relying on pre-existing labels.
 
 ```{python}
 #| label: init_dataloading
 #| include: false
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-import pandas as pd
+import plotly.graph_objects as go
 import plotly.express as px
 
-# Configuration
-CSV_PATH = "../../_data/life_expectancy_data.csv"
-COLUMN_NAMES = [
-  "country",
-  "year",
-  "status",
-  "life_expectancy",
-  "adult_mortality",
-  "infant_deaths",
-  "alcohol",
-  "percentage_expenditure",
-  "hepatitis_b",
-  "measles",
-  "bmi",
-  "under_five_deaths",
-  "polio",
-  "total_expenditure",
-  "diphtheria",
-  "hiv_aids",
-  "gdp",
-  "population",
-  "thinness_1_19_years",
-  "thinness_5_9_years",
-  "income_composition_of_resources",
-  "schooling"
+from sklearn.cluster import KMeans, AgglomerativeClustering, SpectralClustering
+from sklearn.decomposition import PCA
+from sklearn.metrics import rand_score, silhouette_score
+from sklearn.mixture import GaussianMixture
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+from ama_tlbx.analysis import FeatureGroup, ColumnConcatenator
+from ama_tlbx.data import LECol, LifeExpectancyDataset
+from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
+
+np.random.seed(0)
+DEFAULT_PLOT_CFG.apply_global()
+
+def get_pretty_name(col_name):
+    """Resolve pretty name from metadata or fallback to title case."""
+    if col_name == "hiv_aids":
+        return "HIV/AIDS prevalence"
+    try:
+        return LECol(col_name).metadata().pretty_name
+    except ValueError:
+        return col_name.replace("_", " ").title()
+
+# Define Feature Groups
+feature_groups = [
+    FeatureGroup(
+        name="child_mortality",
+        features=[LECol.INFANT_DEATHS, LECol.UNDER_FIVE_DEATHS],
+    ),
+    FeatureGroup(
+        name="child_nutrition",
+        features=[LECol.THINNESS_5_9_YEARS, LECol.THINNESS_1_19_YEARS],
+    ),
+    FeatureGroup(
+        name="economic_development",
+        features=[LECol.GDP, LECol.PERCENTAGE_EXPENDITURE],
+    ),
+    FeatureGroup(
+        name="immunization",
+        features=[
+            LECol.DIPHTHERIA,
+            LECol.HEPATITIS_B,
+            LECol.MEASLES,
+            LECol.POLIO,
+        ],
+    ),
 ]
-IDENTIFIER_COLS = ["country", "year"]
-TARGET_COLUMNS = ["life_expectancy"]
-NUMERIC_COLUMNS = [col for col in COLUMN_NAMES if col not in IDENTIFIER_COLS]
-FEATURE_COLUMNS = [col for col in NUMERIC_COLUMNS if col not in TARGET_COLUMNS]
 
-def convert_data_types(df: pd.DataFrame) -> pd.DataFrame:
-    """Set appropriate data types for each col."""
-    converted = df.assign(
-        year=pd.to_datetime(df["year"].astype(str), format="%Y", errors="coerce"),
-        status=(df["status"].str.strip().str.lower() == "developed").astype(int),
+# Load and process data
+dataset = LifeExpectancyDataset.from_csv_updated(
+    aggregate_by_country=2014,
+    drop_remaining_nan=True,
+    resolve_nand_pred="carry_forward",
+)
+
+# Apply Feature Groups
+cols_to_drop = []
+for group in feature_groups:
+    concatenator = ColumnConcatenator(dataset)
+    dataset = concatenator.concatenate(
+        columns=group.features,
+        new_column_name=group.name
     )
-    return converted.assign(
-        **{col: pd.to_numeric(converted[col], errors="coerce") for col in NUMERIC_COLUMNS if col != "status"},
-    )
-
-# Load and Preprocess Data
-df = pd.read_csv(CSV_PATH).dropna().reset_index(drop=True)
-df.columns = COLUMN_NAMES
-df = convert_data_types(df)
-
-# Standardize the features (Crucial for distance-based clustering)
-df_scaled = StandardScaler().fit_transform(df[FEATURE_COLUMNS])
+    cols_to_drop.extend(group.features)
 ```
 
-## 1. Determining the Optimal Number of Clusters
+```{python}
+#| label: split-numeric-and-meta
 
-To decide how many clusters ($k$) to split our data into, we evaluate the cluster quality using two metrics:
+df_all_scaled = dataset.tf_and_norm()
 
-1.  **Inertia:** Measures the variance within the cluster. We look for the "Elbow" where the improvement slows down.
-2.  **Silhouette Score:** Measures how well-separated the clusters are.
+cols_to_exclude = [str(LECol.TARGET), str(LECol.YEAR)] + [str(c) for c in cols_to_drop]
+df_scaled = df_all_scaled.drop(columns=cols_to_exclude, errors="ignore").select_dtypes(include=["number"])
+
+df_meta = dataset.df.loc[df_scaled.index].copy()
+df_meta = df_meta.reset_index()
+
+feature_cols = df_scaled.columns
+```
+
+## Determining the Optimal Number of Clusters
+
+To decide how many clusters to split our data into, we evaluate the cluster quality using two metrics.
+Inertia measures the variance within the cluster.
+We look for the Elbow where the improvement slows down.
+The Silhouette Score measures how well-separated the clusters are.
 
 ### The Elbow Method
 
 ```{python}
 #| label: elbow-plot
-#| fig-cap: "Elbow Method: Inertia vs. Number of Clusters"
+#| fig-cap: "Elbow Method: Inertia vs Number of Clusters"
 
 inertia = []
 K_range = range(1, 11)
 
 for k in K_range:
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=k, random_state=0, n_init=10)
     kmeans.fit(df_scaled)
     inertia.append(kmeans.inertia_)
 
-plt.figure(figsize=(9, 5))
+plt.figure()
 plt.plot(K_range, inertia, 'bx-')
 plt.xlabel('Number of clusters (k)')
 plt.ylabel('Inertia (Within-Cluster Variance)')
@@ -111,11 +146,11 @@ silhouette_avgs = []
 K_silhouette = range(2, 11)
 
 for k in K_silhouette:
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=k, random_state=0, n_init=10)
     cluster_labels = kmeans.fit_predict(df_scaled)
     silhouette_avgs.append(silhouette_score(df_scaled, cluster_labels))
 
-plt.figure(figsize=(9, 5))
+plt.figure()
 plt.bar(K_silhouette, silhouette_avgs, color='skyblue')
 plt.xlabel('Number of clusters (k)')
 plt.ylabel('Average Silhouette Score')
@@ -124,135 +159,372 @@ plt.grid(axis='y')
 plt.show()
 ```
 
-*The average silhouette score peaks at **k=8**, but the Elbow method shows a significant leveling off around **k=4**. We proceed with 4 clusters for better interpretability.*
+The Elbow method shows a significant leveling off around k=2.
+The Silhouette score confirms that k=2 is the strongest candidate, while k=4 or k=5 may also be interesting candidates.
+We proceed with 2 clusters as the primary analysis.
 
-## 2. K-Means Clustering (k=4)
+## K-Means Clustering (k=2)
 
 ```{python}
 #| label: perform-clustering
 
-# Set optimal k
-optimal_k = 4
+optimal_k = 2
 
-# Fit K-Means
-kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-df['cluster'] = kmeans.fit_predict(df_scaled)
-df['cluster_label'] = df['cluster'].astype(str)
+kmeans = KMeans(n_clusters=optimal_k, random_state=0, n_init=10)
+clusters = kmeans.fit_predict(df_scaled)
 
-print(f"Clustering performed with k={optimal_k}")
+df_meta['cluster'] = clusters
+df_meta['cluster_label'] = df_meta['cluster'].astype(str)
 ```
 
-## 3. Visualization in 3D PCA Space
+### Visualization in 3D PCA Space
 
-We use Principal Component Analysis (PCA) to visualize the clusters.
+We use Principal Component Analysis to visualize the clusters in lower dimensions.
+To ensure that "positive" directions visually correspond to beneficial indicators (like GDP) rather than mortality, we invert the signs of both the PCA scores and the loading vectors.
 
 ```{python}
-#| label: pca-3d-plot
-#| fig-cap: "3D Visualization of Clusters using PCA"
+#| label: pca-calculation
 
-# 1. Run PCA
+# Run PCA
 pca = PCA(n_components=3)
-components = pca.fit_transform(df_scaled)
+raw_components = pca.fit_transform(df_scaled)
 
-# 2. Create a DataFrame for Plotly
-pca_df = pd.DataFrame(data=components, columns=['PC1', 'PC2', 'PC3'])
-pca_df['cluster'] = df['cluster_label']
-pca_df['status'] = df['status']   
-# Create combined label for hover
-pca_df['country_year'] = df['country'] + " (" + df['year'].dt.year.astype(str) + ")"
+# Invert signs for intuition (Good = Positive) across the board
+# This rotates the space 180 degrees but preserves geometry
+pca_scores = -1 * raw_components
+pca_loadings = -1 * pca.components_
 
-# 3. Interactive 3D Plot
-fig = px.scatter_3d(
-    pca_df, 
-    x='PC1', y='PC2', z='PC3', 
+pca_df = pd.DataFrame(data=pca_scores, columns=['PC1', 'PC2', 'PC3'], index=df_scaled.index)
+
+# Assign labels
+pca_df['status'] = df_meta[LECol.STATUS].values
+pca_df['country'] = df_meta[LECol.COUNTRY].values
+```
+
+```{python}
+#| label: pca-plotting-function
+
+def plot_pca_3d(dataframe, loadings, cluster_col, title):
+    """
+    Helper function to plot 3D clusters with feature loading vectors.
+    Uses layout annotations for vector labels to provide background boxes.
+    """
+    fig = px.scatter_3d(
+        dataframe, 
+        x='PC1', y='PC2', z='PC3', 
+        color=cluster_col,
+        hover_name='country',
+        hover_data=['status'],
+        title=title,
+        opacity=0.6,
+        size_max=8
+    )
+    
+    score_max = np.max(np.abs(dataframe[['PC1', 'PC2', 'PC3']].values))
+    loading_max = np.max(np.abs(loadings))
+    scale = (score_max / loading_max) * 1.5
+
+    loadings_df = pd.DataFrame(loadings.T, columns=['PC1', 'PC2', 'PC3'], index=feature_cols)
+    
+    scene_annotations = []
+
+    for feat, row in loadings_df.iterrows():
+        lx, ly, lz = (row[c] * scale for c in ['PC1', 'PC2', 'PC3'])
+        
+        fig.add_trace(
+            go.Scatter3d(
+                x=[0, lx],
+                y=[0, ly],
+                z=[0, lz],
+                mode="lines",
+                line=dict(color="firebrick", width=6),
+                showlegend=False,
+                hoverinfo="skip"
+            )
+        )
+        
+        scene_annotations.append(
+            dict(
+                x=lx, y=ly, z=lz,
+                text=get_pretty_name(feat),
+                xanchor="center",
+                yanchor="middle",
+                showarrow=False,
+                bgcolor="rgba(230, 230, 230, 0.95)",
+                font=dict(color="black", size=12, family="Arial Black")
+            )
+        )
+
+    fig.update_layout(
+        autosize=True,
+        height=700,
+        margin=dict(l=0, r=0, b=0, t=30),
+        scene=dict(
+            xaxis_title='PC1',
+            yaxis_title='PC2',
+            zaxis_title='PC3',
+            annotations=scene_annotations
+        )
+    )
+    fig.show()
+
+pca_df['cluster_k2'] = df_meta['cluster_label'].values
+
+plot_pca_3d(pca_df, pca_loadings, 'cluster_k2', f'Life Expectancy Clusters (k=2)')
+```
+
+### Principal Component Analysis
+
+We inspect the first three principal components to understand what features drive the separation.
+Features are sorted by magnitude where blue bars indicate a positive influence, while red bars indicate negative influence.
+
+```{python}
+#| label: pc-analysis
+
+def plot_loadings_bar(component_idx, title):
+    loadings_values = pca_loadings[component_idx]
+    
+    loadings = pd.DataFrame({
+        'Feature': [get_pretty_name(c) for c in feature_cols],
+        'SignedValue': loadings_values,
+        'Magnitude': np.abs(loadings_values)
+    }).sort_values(by='Magnitude', ascending=True)
+
+    fig = px.bar(
+        loadings, 
+        y='Magnitude', 
+        x='Feature', 
+        title=title,
+        color='SignedValue',
+        color_continuous_scale='RdBu',
+        # Force the color scale to be symmetric around 0
+        range_color=[-np.max(loadings['Magnitude']), np.max(loadings['Magnitude'])],
+        labels={'Magnitude': 'Influence (Absolute)', 'SignedValue': 'Direction (+/-)'}
+    )
+    fig.update_layout(xaxis_tickangle=-45)
+    fig.show()
+
+plot_loadings_bar(0, 'Feature Contributions to PC1')
+plot_loadings_bar(1, 'Feature Contributions to PC2')
+plot_loadings_bar(2, 'Feature Contributions to PC3')
+```
+
+### Interpretation of the k=2 Clustering
+
+K-Means clustering with k=2 clusters identifies a primary split in the world's health landscape.
+The first principal component (PC1) is dominated by the columns Child Mortality/Adult Mortality and Schooling.
+In the PCA Biplot we can see that this principal component alone is enough to separate the two clusters almost perfectly.
+The points that define the extremes on one side along this axis are Luxemburg, Switzerland, USA, Norway, Australia and Germany.
+The others side consists of countries like the Central African Republic, Chad, Guinea and Nigeria.
+
+This matches the commonly known distinction between "developed" and "developing" countries.
+
+## Stability and Granularity Analysis
+
+We test the robustness of our clustering by comparing different clustering algorithms and inspecting higher cluster counts to explore more granular grouping structures.
+Based on the silhouette score, counts of up to k=6 clusters may provide additional insight beyond the primary binary split.
+
+### Pairwise Comparison using Rand Index
+
+To quantify the stability of our clusters, we calculate the Rand Index between the results of four distinct algorithms.
+
+The Rand Index measures the percentage of agreement between two clusterings, where a value of 1.0 implies identical results.
+We compare the following algorithms:
+
+1. **K-Means**: The standard centroid-based algorithm used above.
+2. **Hierarchical (Ward)**: An agglomerative approach that minimizes variance within clusters. 
+3. **Spectral Clustering**: A method that uses the eigenvalues of a similarity matrix to handle non-convex clusters. 
+4. **Gaussian Mixture Model**: A probabilistic model assuming data points are generated from a mixture of Gaussian distributions. 
+
+```{python}
+#| label: stability-functions
+
+def plot_rand_index_heatmap(ri_data, k):
+    """
+    Plots a heatmap for the pairwise Rand Index matrix for a specific k.
+    """
+    plt.figure(figsize=(4, 4))
+    sns.heatmap(
+        ri_data, 
+        annot=True, 
+        fmt=".3f", 
+        cmap="Blues", 
+        vmin=0.5, 
+        vmax=1.0,
+        cbar_kws={'label': 'Rand Index'}
+    )
+    plt.title(f"Consistency between Algorithms (k={k})")
+    plt.yticks(rotation=0)
+    plt.show()
+
+def compare_algorithms(k):
+    """
+    Re-initializes models with k clusters, fits them, compares them, 
+    and plots the Rand Index heatmap.
+    """
+    
+    # Initialize Algorithms with current k
+    algorithms = {
+        "K-Means": KMeans(n_clusters=k, random_state=0, n_init=10),
+        "Hierarchical (Ward)": AgglomerativeClustering(n_clusters=k, linkage='ward'),
+        "Spectral": SpectralClustering(n_clusters=k, random_state=0, affinity='nearest_neighbors'),
+        "Gaussian Mixture": GaussianMixture(n_components=k, random_state=0)
+    }
+
+    # Fit Models
+    cluster_labels = {}
+    for name, algo in algorithms.items():
+        if hasattr(algo, 'fit_predict'):
+            labels = algo.fit_predict(df_scaled)
+        else:
+            labels = algo.fit(df_scaled).predict(df_scaled)
+        cluster_labels[name] = labels
+    
+    # Calculate Pairwise RI
+    algo_names = list(algorithms.keys())
+    ri_matrix = pd.DataFrame(index=algo_names, columns=algo_names, dtype=float)
+
+    for name1 in algo_names:
+        for name2 in algo_names:
+            score = rand_score(cluster_labels[name1], cluster_labels[name2])
+            ri_matrix.loc[name1, name2] = score
+
+    plot_rand_index_heatmap(ri_matrix, k)
+```
+
+### Detailed Results by Cluster Count
+
+We now examine the visual distribution and algorithmic stability for varying numbers of clusters.
+
+At k=2 the Gaussian Mixture algorithm shows significant differences to the other methods, which in turn are very similar to each other.
+```{python}
+#| label: analysis-k2
+
+kmeans_2 = KMeans(n_clusters=2, random_state=0, n_init=10)
+labels_2 = kmeans_2.fit_predict(df_scaled)
+pca_df['cluster_k2'] = labels_2.astype(str)
+plot_pca_3d(pca_df, pca_loadings, 'cluster_k2', 'Life Expectancy Clusters (k=2)')
+
+compare_algorithms(k=2)
+```
+
+At k=3, we still see PC1 as the primary factor dividing the clusters.
+The new middle cluster can be interpreted as "in development" and has for example Serbia, Armenia and Jamaica at its core.
+Interestingly the rand index seems to have stabilized with k=3 clusters, with all values being higher than 0.89.
+
+```{python}
+#| label: analysis-k3
+
+kmeans_3 = KMeans(n_clusters=3, random_state=0, n_init=10)
+labels_3 = kmeans_3.fit_predict(df_scaled)
+pca_df['cluster_k3'] = labels_3.astype(str)
+plot_pca_3d(pca_df, pca_loadings, 'cluster_k3', 'Life Expectancy Clusters (k=3)')
+
+compare_algorithms(k=3)
+```
+
+The use of k=4 clusters splits up the developing countries into two halves based on PC2, which is dominated by the features "Alcohol Consumption" and "HIV prevalence".
+The rand index remains stable across all methods.
+
+```{python}
+#| label: analysis-k4
+
+kmeans_4 = KMeans(n_clusters=4, random_state=0, n_init=10)
+labels_4 = kmeans_4.fit_predict(df_scaled)
+pca_df['cluster_k4'] = labels_4.astype(str)
+plot_pca_3d(pca_df, pca_loadings, 'cluster_k4', 'Life Expectancy Clusters (k=4)')
+
+compare_algorithms(k=4)
+```
+
+At k=5, the clusters of the poorest countries split again across PC2.
+The rand index shows only slightly lower agreement between the clustering methods.
+
+```{python}
+#| label: analysis-k5
+
+kmeans_5 = KMeans(n_clusters=5, random_state=0, n_init=10)
+labels_5 = kmeans_5.fit_predict(df_scaled)
+pca_df['cluster_k5'] = labels_5.astype(str)
+plot_pca_3d(pca_df, pca_loadings, 'cluster_k5', 'Life Expectancy Clusters (k=5)')
+
+compare_algorithms(k=5)
+```
+
+From k=6 onwards it becomes harder to interpret the cluster separation, while the rand-index generally continues to decrease.
+
+```{python}
+#| label: analysis-k6
+
+kmeans_6 = KMeans(n_clusters=6, random_state=0, n_init=10)
+labels_6 = kmeans_6.fit_predict(df_scaled)
+pca_df['cluster_k6'] = labels_6.astype(str)
+plot_pca_3d(pca_df, pca_loadings, 'cluster_k6', 'Life Expectancy Clusters (k=6)')
+
+compare_algorithms(k=6)
+```
+
+### Cluster Statistics
+
+The clusters of the k=6 are clusters are visualized by examining their mean value for each of our input features.
+The dots represent the mean across a feature for a specific cluster.
+Dot color is based on mean life expectancy, meaning that clusters with low mean LE are colored red, while the high mean LE clusters are blue.
+
+```{python}
+#| label: cluster-means-plot-k6
+
+df_centroids = df_scaled.copy()
+df_centroids['cluster'] = labels_6
+centroids = df_centroids.groupby('cluster').mean()
+
+# Sort Clusters by Life Expectancy using the k=6 labels
+temp_meta = df_meta.copy()
+temp_meta['cluster_temp'] = labels_6 
+le_means = temp_meta.groupby('cluster_temp')[LECol.TARGET].mean()
+
+# Get the order (0 to 5) sorted by life expectancy
+sorted_clusters = le_means.sort_values().index.astype(str).tolist()
+
+# Reshape for Plotting
+centroids_melted = centroids.reset_index().melt(
+    id_vars='cluster', 
+    var_name='feature', 
+    value_name='z_score'
+)
+
+# Apply pretty names and ordering
+centroids_melted['feature_pretty'] = centroids_melted['feature'].apply(get_pretty_name)
+centroids_melted['cluster'] = centroids_melted['cluster'].astype(str)
+
+# Force the specific sort order
+centroids_melted['cluster'] = pd.Categorical(
+    centroids_melted['cluster'], 
+    categories=sorted_clusters, 
+    ordered=True
+)
+centroids_melted = centroids_melted.sort_values('cluster')
+
+colors_red_to_blue = px.colors.sample_colorscale("RdBu", [n/(len(sorted_clusters)-1) for n in range(len(sorted_clusters))])
+
+fig = px.scatter(
+    centroids_melted,
+    y='feature_pretty',
+    x='z_score',
     color='cluster',
-    hover_name='country_year',
-    hover_data=['status'],
-    title=f'Life Expectancy Clusters (k={optimal_k})',
-    opacity=0.7, size_max=9
+    title="Cluster Profiles",
+    labels={'z_score': 'Standard Deviations', 'feature_pretty': 'Feature', 'cluster': 'Clusters sorted by LE'},
+    size_max=10,
+    height=600,
+    # Use the custom Red-Blue sequence
+    color_discrete_sequence=colors_red_to_blue
 )
-fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
-fig.show()
-```
 
-## 4. Cluster Interpretation
-
-We analyzed the characteristics of our 4 clusters to understand what they represent in the real world.
-
-**Cluster Characteristics:**
-Three of the clusters follow a standard development trajectory:
-
-* **Developed Nations:** High life expectancy, GDP, and schooling.
-
-* **In-Development:** Middle range indicators.
-
-* **Developing Nations:** Lower healthcare expenditure and life expectancy.
-
-**The "India" Anomaly (Cluster 2):**
-Our analysis reveals a distinct 4th cluster consisting exclusively by data points from India. To understand why this group is so mathematically distinct, we analyzed the loadings of the Principal Components.
-
-```{python}
-#| label: pc2-analysis
-#| fig-cap: "Feature Contributions to Principal Component 2"
-
-# Get the loadings for PC2 (Index 1)
-pc2_loadings = pd.DataFrame(
-    pca.components_[1], 
-    index=FEATURE_COLUMNS, 
-    columns=['Loading']
-).sort_values(by='Loading')
-
-# Plotting
-fig = px.bar(
-    pc2_loadings, 
-    y='Loading', 
-    x=pc2_loadings.index, 
-    title='Feature Contributions to PC2 (Drivers of the India Cluster)',
-    labels={'index': 'Feature', 'Loading': 'Weight'},
-    color='Loading',
-    color_continuous_scale='RdBu'
+fig.add_vline(x=0, line_width=2, line_dash="dot", line_color="gray", annotation_text="Global Avg")
+fig.update_traces(marker=dict(size=14, line=dict(width=1, color='DarkSlateGrey')))
+fig.update_layout(
+    yaxis=dict(title=None),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
 )
-fig.show()
-```
 
-**Interpretation of the India Cluster:**
-The loadings plot above highlights that **PC2 is heavily driven by Population and Child Mortality** (including `infant_deaths` and `under_five_deaths`).
-
-* **PC1 vs. PC2:** While most "Developing" nations exhibit low values in both PC1 and PC2, India behaves differently. 
-* This suggests that while India shares certain "Developed" characteristics, its population density and specific mortality statistics create a unique statistical profile that distinguishes it from other developing nations.
-
-```{python}
-#| label: cluster-means-table
-display_cols = ['life_expectancy', 'gdp', 'schooling', 'population', 'infant_deaths']
-cluster_means = df.groupby('cluster_label')[display_cols].mean().sort_values(by='life_expectancy')
-display(cluster_means)
-```
-
-## 5. Supplementary Analysis: k=8
-
-Since the Silhouette Score peaked at $k=8$, we provide a visualization of this more granular clustering for comparison.
-
-```{python}
-#| label: pca-3d-plot-k8
-#| fig-cap: "3D Visualization of Clusters (k=8)"
-
-# Perform clustering with k=8
-kmeans_8 = KMeans(n_clusters=8, random_state=42, n_init=10)
-labels_8 = kmeans_8.fit_predict(df_scaled)
-
-# Add to PCA DataFrame
-pca_df['cluster_k8'] = labels_8.astype(str)
-
-# Plot
-fig = px.scatter_3d(
-    pca_df, 
-    x='PC1', y='PC2', z='PC3', 
-    color='cluster_k8',
-    hover_name='country_year',
-    hover_data=['status'],
-    title='Life Expectancy Clusters (k=8)',
-    opacity=0.7, size_max=9
-)
-fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
 fig.show()
 ```
