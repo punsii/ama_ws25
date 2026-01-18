@@ -7,12 +7,16 @@ format:
 execute:
   warning: false
   message: false
-  cache: true
+  cache: false
 ---
 
 # Regression: Supervised PCA
 
 This chapter isolates the supervised PCA regression workflow and its interpretation.
+
+We follow the supervised principal components (SPCA) idea: screen predictors by their association with the outcome, run PCA on the screened subset, and regress on the resulting PCs. This aligns with the canonical SPCA framework of Bair et al. @Bair01032006.
+
+Motivation: even when n > p (as here), unsupervised PCA can emphasize variance unrelated to the outcome, which can weaken predictive focus and interpretability. SPCA filters predictors by outcome association before PCA, so the resulting components remain low-dimensional but outcome-relevant. The approach highlights important variables and keeps the regression model interpretable while allowing covariates and interaction terms. @Bair01032006
 
 ```{python}
 # | label: setup
@@ -68,7 +72,7 @@ registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
 
 ## Supervised PCA regression
 
-Follow `notebooks/project/06_linear_regression_supervised_pca.ipynb` using `ModelRegistry` and inspect retained PCs.
+
 
 ```{python}
 # | label: supervised-pca
@@ -101,6 +105,7 @@ print(strong_features)
 ```{python}
 # | label: tbl-supervised-pca-fit
 # | code-fold: true
+# | tbl-cap: "Reduced supervised-PCA regression (significant PCs)."
 feature_groups = [FeatureGroup(name="supervised", features=strong_features)]
 
 pca_result = (
@@ -155,6 +160,7 @@ The reduced supervised-PCA model explains most variance in life expectancy (R^2 
 ```{python}
 # | label: supervised-pca-stepwise
 # | code-fold: false
+# | tbl-cap: "Stepwise AIC regression (PCs only)."
 stepwise_paths, stepwise_best_map, stepwise_compare = registry.run_selection_grid(
     train_pca_df,
     base_terms=[],
@@ -177,6 +183,7 @@ The stepwise AIC model is only marginally different from the reduced model (AIC 
 ```{python}
 # | label: supervised-pca-interactions
 # | code-fold: true
+# | tbl-cap: "Interaction-augmented regression (screened PC interactions)."
 import statsmodels.formula.api as smf
 from itertools import combinations
 
@@ -225,6 +232,8 @@ display(spca_interactions)
 :::
 
 Interaction-augmented stepwise fit (top PCs only) offers a targeted check for nonlinear combinations of disease-burden and development axes. Treat the result as exploratory and validate across years before drawing causal conclusions.
+
+Cook's-distance trimming is treated as a sensitivity analysis rather than data cleaning; exclusions require substantive justification.
 
 :::{.callout-note collapse="true"}
 ### Cook's distance trim (interaction model)
@@ -282,12 +291,17 @@ comp_tbl = registry.compare(sort_by="aic").drop(columns=["rhs"])[
 comp_tbl
 ```
 
-**Model evolution (concise):** full supervised-PCA (all PCs) -> reduced to significant PCs -> stepwise AIC among PCs -> add top interaction terms -> Cook's-distance trim -> final minor term pruning (m_final).
+**Model evolution (concise):** full supervised-PCA (all PCs) -> reduced to significant PCs @tbl-supervised-pca-fit -> stepwise AIC among PCs -> add screened interactions -> Cook's-distance trim -> final model.
+
+**AIC comparability:** interpret AIC only within the same sample size (trimmed vs untrimmed models are not directly comparable).
+
+**Best-model criterion:** choose by mean cross-year RMSE/MAE for forecasting; use AIC for 2014 cross-sectional fit.
 
 ### Best model diagnostics
 
 ```{python}
 # | label: supervised-pca-cooks-final
+# | tbl-cap: "Final trimmed interaction model (best in-sample by AIC)."
 best_model = registry.get(comp_tbl.index[0])
 best_model_name = best_model.name
 best_model = best_model.diag
@@ -295,7 +309,7 @@ best_model = best_model.diag
 display(best_model)
 ```
 
-The AIC-ranked model is the best **in-sample** fit; cross-year generalization may favor a simpler specification (see the mean RMSE table below). Use AIC for in-sample explanation and the cross-year mean RMSE/MAE for forecasting across years.
+The AIC-ranked model is the best **in-sample** fit. Cross-year generalization favors the interaction model (mean RMSE 3.311; @tbl-supervised-pca-eval-all-models). Use AIC for 2014 cross-sectional fit and mean RMSE/MAE for forecasting across years.
 
 ```{python}
 # | label: supervised-pca-diagnostics
@@ -304,7 +318,11 @@ best_model.plot_residual_diags()
 plt.show()
 ```
 
-Diagnostics for the final model are largely favorable: JB and Shapiro do not reject normality, and residual plots show only mild curvature. The scale-location plot suggests mild heteroscedasticity and BP is borderline (p=0.048), while White's test passes, indicating any non-constant variance is weak and likely form-dependent. Durbin-Watson ~ 2 suggests no autocorrelation. The condition number (~84) is moderate and VIFs are low, so multicollinearity is not a concern. For inference, non-robust SEs/CIs may be slightly optimistic; prefer HC3/robust or bootstrap CIs. For prediction, impacts are minor.
+Diagnostics for the final model are largely favorable (see diagnostics plots below): JB p=0.560 and Shapiro p=0.774 do not reject normality; residual plots show only mild curvature. Heteroscedasticity is weak: BP p=0.048 is borderline while White p=0.529 passes, suggesting mild, form-dependent variance changes. Durbin-Watson ~ 1.99 indicates no autocorrelation. The condition number (~84) and max VIF (~1.7) are moderate, so multicollinearity is not a concern. For inference, non-robust SEs/CIs are slightly optimistic; prefer HC3/robust or bootstrap CIs. Prediction impacts are minor.
+
+Because the model was selected via significance screening, stepwise AIC, interaction screening, and trimming, coefficient p-values/CIs are post-selection and should be interpreted as exploratory.
+
+BP borderline failure with White passing implies mild heteroscedasticity: coefficients remain unbiased under exogeneity, but default SEs/CIs can be miscalibrated (often too narrow), and prediction intervals can be optimistic at the extremes.
 
 ## Holdout evaluation and bootstrap CIs
 
@@ -319,12 +337,12 @@ eval_holdout = registry.evaluate_on(
 eval_holdout
 ```
 
-Holdout performance is summarized in the table above; the bootstrap CIs quantify uncertainty in those metrics for the fixed model. These CIs reflect evaluation-sample variability, not model-refit uncertainty.
+Holdout performance (2011) is strong (RMSE 1.924, MAE 1.455, R^2 0.950; see table above). Bootstrap CIs quantify evaluation-sample uncertainty for a fixed model, not refit uncertainty.
 
 ```{python}
 # | label: supervised-pca-eval-ci
 # | tbl-cap: "Bootstrap CIs for holdout metrics (B=3000)."
-eval_holdout.bootstrap_ci(n_bootstrap=N_BOOTSTAP, random_state=42)
+eval_holdout.bootstrap_ci(n_bootstrap=N_BOOTSTAP, random_state=42).set_index("metric")
 ```
 
 ```{python}
@@ -455,7 +473,12 @@ plt.show()
 rmse_by_year.groupby("model")[["rmse", "mae", "r2"]].mean().sort_values("rmse")
 ```
 
-Across years, the model with the lowest mean RMSE/MAE is the better choice for generalization, even if it is not the AIC-best in-sample model.
+## Conclusions on model choice
+
+**Model selection conclusion (concise).**
+Two candidates emerge: the **Interactions model** (untrimmed) and the **Final model** (trimmed + simplified). The Final model is best **in-sample for 2014** ($R^2=0.981$, RMSE=1.066, AIC=533.2) and has the **most stable diagnostics** (JB p=0.560, Shapiro p=0.774, White p=0.529; BP borderline p=0.048; low VIF~1.7; max Cook's=0.056). Its drawback is **poorer temporal generalization**: mean RMSE across years is 3.403, the worst among candidates. The Interactions model generalizes **best across years** (mean RMSE=3.311; mean MAE=2.791; mean R^2=0.865), with the Final model worse by +0.092 RMSE (+2.79%) and +0.003 MAE (+0.10%). It also shows **less stable inference** (BP p=0.036; max Cook's=0.417; 12 points exceed 4/n), indicating higher influence sensitivity and more heteroscedasticity.
+
+**Conclusion:** If the goal is **explain 2014 cross-sectional structure with stable diagnostics**, report the **Final model** (with a robust-SE/boot CI caveat). If the goal is **prediction across years**, select the **Interactions model** as the best generalizer despite less stable inference.
 
 
 ## Loadings and biplots (retained PCs)
