@@ -234,6 +234,7 @@ class LifeExpectancyDataset(BaseDataset):
         drop_missing_target: bool = True,
         resolve_nand_pred: Literal["drop", "median", "mean", "carry_forward"] | bool = "carry_forward",
         merge_original_expenditure: bool = True,
+        drop_remaining_nan: bool = False,
     ) -> LifeExpectancyDataset:
         """Load and preprocess the cleaned Life Expectancy dataset (updated Kaggle version).
 
@@ -325,7 +326,7 @@ class LifeExpectancyDataset(BaseDataset):
             le_df = cls._resolve_missing_predictors(
                 le_df,
                 strategy="carry_forward",
-                drop_remaining=False,
+                drop_remaining=drop_remaining_nan,
             )
 
         if aggregate_by_country:
@@ -344,7 +345,11 @@ class LifeExpectancyDataset(BaseDataset):
             le_df.index.name = Col.COUNTRY
 
         if resolve_nand_pred and not apply_carry_forward_pre_agg:
-            le_df = cls._resolve_missing_predictors(le_df, strategy=resolve_nand_pred)
+            le_df = cls._resolve_missing_predictors(
+                le_df,
+                strategy=resolve_nand_pred,
+                drop_remaining=drop_remaining_nan,
+            )
 
         return cls(df=le_df)
 
