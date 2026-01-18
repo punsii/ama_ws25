@@ -7,17 +7,22 @@ format:
 
 Correlation analysis reveals relationships between features, identifies multicollinearity, and supports feature grouping decisions for dimensionality reduction. This chapter mirrors the workflow in `notebooks/project/correlation_analysis.ipynb`.
 
-Unless stated otherwise, we compute _Pearson correlations_ on the 2014 country cross‑section after dropping rows with missing predictors (`resolve_nand_pred="carry_forward"`), yielding $n=133$ countries. We report the correlation coefficient as $r$ and use correlations as **descriptive** summaries (not causal effects). In addition to correlations on the raw scale, we compare them to correlations after the preprocessing transforms used by `LifeExpectancyDataset.tf_and_norm()`.
+Unless stated otherwise, we compute _Pearson correlations_ on the 2014 country cross‑section after dropping rows with missing predictors (`resolve_nand_pred="carry_forward"`). In addition to correlations on the raw scale, we compare them to correlations after the preprocessing transforms used by `LifeExpectancyDataset.tf_and_norm()`.
 
 ```{python}
 # | label: corr-setup
+# | include: false
+# | echo: false
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from pprint import pprint
+from IPython.display import Markdown, display
 
 from ama_tlbx.analysis import CorrelationResult, suggest_groups_from_correlation
+from ama_tlbx.analysis.model_registry import ModelRegistry
 from ama_tlbx.data import LECol, LifeExpectancyDataset
 from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
 
@@ -26,134 +31,8 @@ np.random.seed(42)
 DEFAULT_PLOT_CFG.apply_global()
 STATUS_DUMMY = "status_developed"
 
-```
 
-```{python}
-# | label: corr-load
-le_xs_2014 = LifeExpectancyDataset.from_csv(
-    aggregate_by_country=2014,
-    resolve_nand_pred="carry_forward",
-)
-
-# Keep both views: with target (for feature-target correlations) and predictor-only (for multicollinearity).
-corr_result = le_xs_2014.make_correlation_analyzer(include_target=True).fit().result()
-corr_result_pred = (
-    le_xs_2014.make_correlation_analyzer(include_target=False).fit().result()
-)
-```
-
-# Correlation matrix and feature-target correlations
-
-The correlation heatmap provides an overview of linear co-movement between predictors and highlights correlated blocks that are likely to cause multicollinearity in regression.
-
-```{python}
-# | label: fig-corr-heatmap
-# | fig-cap: "Correlation heatmap (2014 cross-section; includes target)."
-_ = corr_result.plot_heatmap(figsize=(16, 16))
-plt.show()
-```
-
-Several blocks are close to definitional redundancy: infant deaths and under‑5 deaths are almost perfectly correlated ($r \approx 1.00$), the two thinness indicators are very similar ($r \approx 0.95$), and development proxies (income composition of resources vs schooling) correlate strongly ($r \approx 0.91$). A further near‑block is economic scale and spending: GDP per capita and percentage health expenditure are highly correlated on the raw scale ($r \approx 0.90$). These structures imply that single‑predictor interpretations are fragile once multiple correlated covariates enter a multivariate model.
-
-# Top correlated feature pairs
-
-To focus attention on redundancy among predictors, we plot the strongest positive and negative **predictor–predictor** pairs. The dashed line marks the heuristic cutoff $|r| = 0.7$ used later for correlation-based grouping (the bars show the strongest pairs in each direction; they are not filtered by the threshold).
-
-```{python}
-# | label: fig-top-pairs
-# | fig-cap: "Top correlated feature pairs (2014 cross-section)."
-fig_pos, fig_neg = corr_result_pred.plot_top_pairs(n=15, threshold=0.7)
-plt.show()
-```
-
-Among the strongest relationships are definitional or near‑definitional pairs (e.g., infant deaths vs under‑5 deaths, $r \approx 1.00$), which create severe multicollinearity if used together. The plot also highlights correlated measurement blocks such as immunization coverage (Polio/HepB/DTP3; $r \approx 0.65 \dots 0.84$) and thinness (ages 10–19 vs 5–9; $r \approx 0.95$). These patterns motivate either explicit grouping (for PCA) or careful feature selection/regularization (for regression).
-
-# Correlations with life expectancy
-
-Feature–target correlations summarize **bivariate** associations with life expectancy. In the 2014 cross‑section, the strongest positive associations are development and human-capital proxies such as income composition of resources ($r \approx 0.86$) and schooling ($r \approx 0.77$). The strongest negative associations are mortality and disease burden indicators: adult mortality ($r \approx -0.76$) and HIV/AIDS deaths ($r \approx -0.61$). Several predictors have comparatively weak linear association on the raw scale (e.g., population $r \approx -0.04$ and measles cases $r \approx -0.10$), illustrating that raw-scale linear association is sensitive to measurement scale and skewness.
-
-```{python}
-# | label: fig-target-correlations
-# | fig-cap: "Top positive and negative correlations with life expectancy (2014 cross-section)."
-target_corr = corr_result.target_correlations.assign(
-    pretty=lambda d: d.feature.map(le_xs_2014.get_pretty_name),
-    correlation=lambda d: d.correlation.astype(float),
-)
-
-n_show = 10
-pos = (
-    target_corr.query("correlation > 0")
-    .nlargest(n_show, "correlation")
-    .assign(direction="Positive")
-)
-neg = (
-    target_corr.query("correlation < 0")
-    .nsmallest(n_show, "correlation")
-    .assign(direction="Negative")
-)
-top_target_corr = pd.concat([neg, pos], ignore_index=True).sort_values("correlation")
-
-fig, ax = plt.subplots(figsize=(9, 6))
-sns.barplot(
-    data=top_target_corr,
-    x="correlation",
-    y="pretty",
-    hue="direction",
-    dodge=False,
-    palette={"Negative": "#1f77b4", "Positive": "#d62728"},
-    ax=ax,
-)
-ax.axvline(0, color="black", linewidth=1)
-ax.set_xlabel("Pearson correlation with life expectancy ($r$)")
-ax.set_ylabel("")
-ax.set_title("Strongest Bivariate Associations")
-ax.legend(title="")
-plt.tight_layout()
-plt.show()
-
-top_target_corr.assign(r=lambda d: d.correlation.round(2)).loc[
-    :, ["pretty", "r"]
-].rename(
-    columns={"pretty": "Feature", "r": "Correlation ($r$)"},
-)
-```
-
-These are unadjusted correlations. In multivariate regression, we treat them as exploratory signals and interpret coefficients jointly (especially within correlated blocks), reporting multicollinearity diagnostics and sensitivity checks rather than reading bivariate $r$ values as causal effects.
-
-# Effect of transformations on correlations
-
-The preprocessing pipeline in `LifeExpectancyDataset.tf_and_norm()` applies per-column transforms (for example log transforms for heavy-tailed variables and a shortfall transform for coverage rates) and then standardizes numeric predictors. To assess how these transforms alter linear relationships, we compare the correlation structure before and after transformation. For any pair of variables, we define
-
-$$
-\begin{aligned}
-\Delta r &= r_{\mathrm{tf}} - r_{\mathrm{raw}} \\
-|\Delta r| &= |r_{\mathrm{tf}}| - |r_{\mathrm{raw}}|
-\end{aligned}
-$$
-
-so positive values of $|\Delta r|$ indicate that the transformed variables exhibit a stronger absolute linear correlation, while the value of $\Delta r$ indicates the direction of change.
-
-```{python}
-# | label: corr-transform-delta
-tf_df = le_xs_2014.tf_and_norm()
-corr_result_tf = LifeExpectancyDataset(tf_df).make_correlation_analyzer().fit().result()
-
-base_tc = corr_result.target_correlations.set_index("feature")
-tf_tc = corr_result_tf.target_correlations.set_index("feature")
-
-def _transform_label(feature: str | LECol) -> str:
-    try:
-        col = feature if isinstance(feature, LECol) else LECol(feature)
-    except ValueError:
-        if isinstance(feature, str) and feature.startswith("status_"):
-            return "dummy"
-        return "custom"
-
-    transform = col.metadata().transform
-    if transform is None:
-        return "none"
-
-    name = getattr(transform, "__name__", "custom")
+def transform_name(name):
     if name == "_log1p_under_coverage":
         return "log1p(100 - x)"
     if name == "log1p":
@@ -162,99 +41,7 @@ def _transform_label(feature: str | LECol) -> str:
         return "dummy (developed=1)"
     return name
 
-delta_target = (
-    tf_tc.rename(columns={"correlation": "corr_tf"})
-    .join(base_tc.rename(columns={"correlation": "corr_raw"}))
-    .dropna(subset=["corr_raw", "corr_tf"])
-    .assign(
-        delta=lambda d: d.corr_tf - d.corr_raw,
-        delta_abs=lambda d: d.corr_tf.abs() - d.corr_raw.abs(),
-        pretty=lambda d: d.index.map(le_xs_2014.get_pretty_name),
-        transform=lambda d: d.index.map(_transform_label),
-    )
-    .assign(label=lambda d: d["pretty"] + " (" + d["transform"] + ")")
-    .assign(abs_delta=lambda d: d.delta.abs())
-    .sort_values("abs_delta", ascending=False)
-)
 
-common_cols = corr_result.matrix.columns.intersection(corr_result_tf.matrix.columns)
-delta_result = CorrelationResult(
-    matrix=corr_result_tf.matrix.loc[common_cols, common_cols] - corr_result.matrix.loc[common_cols, common_cols],
-    pretty_by_col=corr_result.pretty_by_col,
-    feature_pairs=pd.DataFrame(),
-)
-delta_result_abs = CorrelationResult(
-    matrix=corr_result_tf.matrix.loc[common_cols, common_cols].abs()
-    - corr_result.matrix.loc[common_cols, common_cols].abs(),
-    pretty_by_col=corr_result.pretty_by_col,
-    feature_pairs=pd.DataFrame(),
-)
-
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 10))
-delta_result.plot_heatmap(ax=ax1)
-ax1.set_title("Delta correlation (transformed - raw)")
-delta_result_abs.plot_heatmap(ax=ax2)
-ax2.set_title("Delta absolute correlation (transformed - raw)")
-plt.tight_layout()
-plt.show()
-```
-
-```{python}
-# | label: tbl-delta-target
-# | tbl-cap: "Largest changes in feature-target correlations after applying transforms and standardization."
-delta_target_top = delta_target[
-    ["pretty", "transform", "corr_raw", "corr_tf", "delta", "delta_abs"]
-].head(12)
-delta_target_top
-```
-
-```{python}
-# | label: fig-delta-target
-# | fig-cap: "Changes in feature-target correlations after applying transforms and standardization."
-delta_target_plot = delta_target.reset_index().head(12)
-
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 10))
-sns.barplot(
-    data=delta_target_plot,
-    x="delta",
-    y="label",
-    hue="label",
-    palette="coolwarm",
-    dodge=False,
-    legend=False,
-    ax=ax1,
-)
-ax1.axvline(0, color="black", linestyle="--", linewidth=1)
-ax1.set_title("Change in correlation with life expectancy")
-ax1.set_xlabel("Delta correlation (transformed - raw)")
-
-sns.barplot(
-    data=delta_target_plot,
-    x="delta_abs",
-    y="label",
-    hue="label",
-    palette="viridis",
-    dodge=False,
-    legend=False,
-    ax=ax2,
-)
-ax2.axvline(0, color="black", linestyle="--", linewidth=1)
-ax2.set_title("Change in absolute correlation with life expectancy")
-ax2.set_xlabel("Delta absolute correlation (transformed - raw)")
-
-plt.tight_layout()
-plt.show()
-```
-
-Because Pearson correlation is invariant to affine rescaling, the z‑scoring step does not change $r$; the observed changes arise from the **nonlinear** transforms. Two patterns stand out in Table @tbl-delta-target and Figure @fig-delta-target. First, the shortfall transform for immunization coverage flips the sign by construction, e.g. Polio changes from $r_{\mathrm{raw}} \approx 0.41$ to $r_{\mathrm{tf}} \approx -0.54$ ($\Delta r \approx -0.95$). Second, log transforms strengthen approximately monotone relationships for heavy‑tailed count variables: infant deaths shift from $r_{\mathrm{raw}} \approx -0.24$ to $r_{\mathrm{tf}} \approx -0.60$, and under‑5 deaths from $r_{\mathrm{raw}} \approx -0.26$ to $r_{\mathrm{tf}} \approx -0.62$. At the predictor–predictor level, some very large raw correlations attenuate substantially after transforms (e.g., GDP vs percentage health expenditure: $r_{\mathrm{raw}} \approx 0.90 \to r_{\mathrm{tf}} \approx 0.44$), consistent with skewness/outliers inflating raw-scale linear association.
-
-## Scatter diagnostics (transformed scale)
-
-To complement correlation coefficients, we inspect predictor–target scatter plots on the transformed-and-standardized scale produced by `tf_and_norm()`. This diagnostic view is not about the original units; instead it helps assess monotonicity, curvature, heteroscedasticity, and potential leverage points that can influence both $r$ and later regression fits.
-
-```{python}
-# | label: fig-all-predictors-vs-target
-# | fig-cap: "Transformed predictors versus life expectancy (colored by development status)."
 def plot_all_predictors_vs_target(
     df: pd.DataFrame,
     features: list[str],
@@ -301,8 +88,180 @@ def plot_all_predictors_vs_target(
         g.add_legend()
     plt.tight_layout()
     return g
+```
+
+```{python}
+# | label: corr-load
+le_xs_2014 = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=2014,
+    resolve_nand_pred="carry_forward",
+)
+
+# Keep both views: with target (for feature-target correlations) and predictor-only (for multicollinearity).
+corr_result = le_xs_2014.make_correlation_analyzer(include_target=True).fit().result()
+corr_result_pred = (
+    le_xs_2014.make_correlation_analyzer(include_target=False).fit().result()
+)
+```
+
+```{python}
+# | label: corr-meta
+# | results: asis
+# | echo: false
+corr_view = le_xs_2014.analyzer_view(include_target=True, standardized=False)
+n_countries = LifeExpectancyDataset.country_count(corr_view.df)
+n_rows = int(corr_view.df.shape[0])
+display(
+    Markdown(
+        f"The 2014 cross‑section used for correlations contains {n_countries} countries "
+        f"and {n_rows} rows after dropping all rows with **any** missing predictors."
+    )
+)
+```
+
+# Correlation matrix and feature-target correlations
+
+The correlation heatmap provides an overview of linear co-movement between predictors and highlights correlated blocks that are likely to cause multicollinearity in regression.
+
+```{python}
+# | label: fig-corr-heatmap
+# | fig-cap: "Correlation heatmap (2014 cross-section; includes target)."
+_ = corr_result.plot_heatmap(figsize=(16, 16))
+plt.show()
+```
+
+Several blocks are close to definitional redundancy: infant deaths and under‑5 deaths are almost perfectly correlated ($r \approx 1.00$), the two thinness indicators are very similar ($r \approx 0.95$), and development proxies (income composition of resources vs schooling) correlate strongly ($r \approx 0.91$). A further near‑block is economic scale and spending: GDP per capita and percentage health expenditure are highly correlated on the raw scale ($r \approx 0.90$). These structures imply that single‑predictor interpretations are fragile once multiple correlated covariates enter a multivariate model.
+
+# Top correlated feature pairs
+
+To focus attention on redundancy among predictors, we plot the strongest positive and negative **predictor–predictor** pairs. The dashed line marks the heuristic cutoff $|r| = 0.7$ used later for correlation-based grouping (the bars show the strongest pairs in each direction; they are not filtered by the threshold).
+
+```{python}
+# | label: fig-top-pairs
+# | fig-cap: "Top correlated feature pairs (2014 cross-section)."
+fig_pos, fig_neg = corr_result_pred.plot_top_pairs(n=15, threshold=0.7)
+plt.show()
+```
+
+Among the strongest relationships are definitional or near‑definitional pairs (e.g., infant deaths vs under‑5 deaths, $r \approx 1.00$), which create severe multicollinearity if used together. The plot also highlights correlated measurement blocks such as immunization coverage (Polio/HepB/DTP3; $r \approx 0.65 \dots 0.84$) and thinness (ages 10–19 vs 5–9; $r \approx 0.95$). These patterns motivate either explicit grouping (for PCA) or careful feature selection/regularization (for regression).
+
+# Correlations with life expectancy
+
+Feature–target correlations summarize **bivariate** associations with life expectancy. In the 2014 cross‑section, the strongest positive associations are development and human-capital proxies such as income composition of resources ($r \approx 0.86$) and schooling ($r \approx 0.77$). The strongest negative associations are mortality and disease burden indicators: adult mortality ($r \approx -0.76$) and HIV/AIDS deaths ($r \approx -0.61$). Several predictors have comparatively weak linear association on the raw scale (e.g., population $r \approx -0.04$ and measles cases $r \approx -0.10$), illustrating that raw-scale linear association is sensitive to measurement scale and skewness.
+
+```{python}
+# | label: fig-target-correlations
+# | fig-cap: "Top positive and negative correlations with life expectancy (2014 cross-section)."
+# | echo: false
+
+fig_pos, fig_neg = corr_result.plot_target_correlations(n=11)
+plt.close(fig_neg)
+fig_pos.show()
+fig_pos, fig_neg = corr_result.plot_target_correlations(n=8)
+fig_neg.show()
+plt.close(fig_pos)
+```
 
 
+# Effect of transformations on correlations
+
+The preprocessing pipeline in `LifeExpectancyDataset.tf_and_norm()` applies per-column transforms (for example log transforms for heavy-tailed variables and a shortfall transform for coverage rates) and then standardizes numeric predictors. To assess how these transforms alter linear relationships, we compare the correlation structure before and after transformation. For any pair of variables, we define
+
+$$
+\begin{aligned}
+\Delta r &= r_{\mathrm{tf}} - r_{\mathrm{raw}} \\
+|\Delta r| &= |r_{\mathrm{tf}}| - |r_{\mathrm{raw}}|
+\end{aligned}
+$$
+
+so positive values of $|\Delta r|$ indicate that the transformed variables exhibit a stronger absolute linear correlation, while the value of $\Delta r$ indicates the direction of change.
+
+```{python}
+# | label: corr-transform-delta
+tf_df = le_xs_2014.tf_and_norm()
+corr_result_tf = (
+    LifeExpectancyDataset(tf_df)
+    .make_correlation_analyzer(standardized=False, include_target=True)
+    .fit()
+    .result()
+)
+
+base_tc = corr_result.target_correlations.set_index("feature")
+tf_tc = corr_result_tf.target_correlations.set_index("feature")
+
+delta_target = (
+    tf_tc.rename(columns={"correlation": "corr_tf"})
+    .join(base_tc.rename(columns={"correlation": "corr_raw"}))
+    .dropna(subset=["corr_raw", "corr_tf"])
+    .assign(
+        delta=lambda d: d.corr_tf - d.corr_raw,
+        delta_abs=lambda d: d.corr_tf.abs() - d.corr_raw.abs(),
+        pretty=lambda d: d.index.map(le_xs_2014.get_pretty_name),
+        transform=lambda d: d.index.map(
+            lambda x: transform_name(LECol.transform_label(x))
+        ),
+    )
+    .assign(label=lambda d: d["pretty"] + " (" + d["transform"] + ")")
+    .assign(abs_delta=lambda d: d.delta.abs())
+    .sort_values("abs_delta", ascending=False)
+)
+
+common_cols = corr_result.matrix.columns.intersection(corr_result_tf.matrix.columns)
+delta_target_corr = delta_target.reset_index()[["feature", "delta"]].rename(
+    columns={"delta": "correlation"}
+)
+delta_target_abs_corr = delta_target.reset_index()[["feature", "delta_abs"]].rename(
+    columns={"delta_abs": "correlation"}
+)
+delta_result = CorrelationResult(
+    matrix=corr_result_tf.matrix.loc[common_cols, common_cols]
+    - corr_result.matrix.loc[common_cols, common_cols],
+    pretty_by_col=corr_result.pretty_by_col,
+    feature_pairs=pd.DataFrame(),
+    target_correlations=delta_target_corr,
+)
+delta_result_abs = CorrelationResult(
+    matrix=corr_result_tf.matrix.loc[common_cols, common_cols].abs()
+    - corr_result.matrix.loc[common_cols, common_cols].abs(),
+    pretty_by_col=corr_result.pretty_by_col,
+    feature_pairs=pd.DataFrame(),
+    target_correlations=delta_target_abs_corr,
+)
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 10))
+delta_result.plot_heatmap(ax=ax1)
+ax1.set_title("Delta correlation (transformed - raw)")
+delta_result_abs.plot_heatmap(ax=ax2)
+ax2.set_title("Delta absolute correlation (transformed - raw)")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# | label: tbl-delta-target
+# | tbl-cap: "Largest changes in feature-target correlations after applying transforms and standardization."
+delta_target[["pretty", "transform", "corr_raw", "corr_tf", "delta", "delta_abs"]].head(
+    13
+).set_index("pretty")
+```
+
+```{python}
+# | label: fig-delta-target
+# | fig-cap: "Changes in feature-target correlations after applying transforms and standardization."
+fig_pos, fig_neg = delta_result_abs.plot_target_correlations(n=13)
+plt.close(fig_neg)
+fig_pos.show()
+```
+
+Because Pearson correlation is invariant to affine rescaling, the z‑scoring step does not change $r$; the observed changes arise from the **nonlinear** transforms. Two patterns stand out in Table @tbl-delta-target and Figure @fig-delta-target. First, the shortfall transform for immunization coverage flips the sign by construction, e.g. Polio changes from $r_{\mathrm{raw}} \approx 0.41$ to $r_{\mathrm{tf}} \approx -0.54$ ($\Delta r \approx -0.95$). Second, log transforms strengthen approximately monotone relationships for heavy‑tailed count variables: infant deaths shift from $r_{\mathrm{raw}} \approx -0.24$ to $r_{\mathrm{tf}} \approx -0.60$, and under‑5 deaths from $r_{\mathrm{raw}} \approx -0.26$ to $r_{\mathrm{tf}} \approx -0.62$. At the predictor–predictor level, some very large raw correlations attenuate substantially after transforms (e.g., GDP vs percentage health expenditure: $r_{\mathrm{raw}} \approx 0.90 \to r_{\mathrm{tf}} \approx 0.44$), consistent with skewness/outliers inflating raw-scale linear association.
+
+## Scatter diagnostics (transformed scale)
+
+To complement correlation coefficients, we inspect predictor–target scatter plots on the transformed-and-standardized scale produced by `tf_and_norm()`. This diagnostic view is not about the original units; instead it helps assess monotonicity, curvature, heteroscedasticity, and potential leverage points that can influence both $r$ and later regression fits.
+
+```{python}
+# | label: fig-all-predictors-vs-target
+# | fig-cap: "Transformed predictors versus life expectancy (colored by development status)."
 plot_df = tf_df.assign(
     status_label=lambda d: d[STATUS_DUMMY].astype(int).map({0: "Developing", 1: "Developed"})
 )
@@ -322,6 +281,7 @@ plt.show()
 The faceted view illustrates why some raw correlations are modest despite substantive relationships: several predictors have heavy right tails (e.g., HIV/AIDS, measles, child mortality counts), so a small number of extreme countries can dominate the covariance structure. In contrast, variables that behave more like smooth development gradients (schooling, income composition of resources, GDP) show clearer monotone patterns. The color stratification by development status indicates that many predictors are partially confounded by status; this motivates either stratified summaries or explicit interaction checks in the regression chapter.
 
 # Correlation-based feature grouping
+<!-- TODO: plot final correlation matrix with the reduced feature set and all unaffected columns (after applying transforms) -->
 
 For dimensionality reduction (PCA), it can be preferable to define groups of highly correlated predictors that can be summarized by a small number of components. The `ama_tlbx.analysis.suggest_groups_from_correlation` utility suggests such groups by hierarchical clustering on a correlation-derived distance.
 
@@ -338,20 +298,21 @@ corr_mat = (
     .make_correlation_analyzer(include_target=False)
     .get_correlation_matrix()
 )
-threshold = 0.8
+
 suggested_groups, summary_df = suggest_groups_from_correlation(
     corr_mat,
-    threshold=threshold,
+    threshold=0.8,
     return_summary=True,
 )
-pprint(suggested_groups)
 
 summary_pretty = summary_df.assign(
     features=lambda d: d.features.apply(
-        lambda s: ", ".join(le_xs_2014.get_pretty_name(f.strip()) for f in s.split(",")),
+        lambda s: ", ".join(
+            le_xs_2014.get_pretty_name(f.strip()) for f in s.split(",")
+        ),
     ),
 ).loc[:, ["group", "size", "features", "mean_abs_corr", "min_abs_corr"]]
-display(summary_pretty)
+display(summary_pretty.set_index("group"))
 ```
 
 ```{python}
@@ -442,5 +403,26 @@ plt.show()
 ```
 
 This reparameterization yields a more intuitive direction of association for later modelling: higher values represent worse coverage. It also clarifies why transformed correlations for immunization can switch sign relative to the raw coverage scale, and it motivates treating immunization predictors as "risk-factor-like" quantities in regression models.
+
+```{python}
+# | label: coverage-interpretation
+# | results: asis
+# | echo: false
+from IPython.display import Markdown, display
+
+polio_col = str(LECol.POLIO)
+target_col = str(LECol.TARGET)
+polio_raw = float(base_corr.matrix.loc[polio_col, target_col])
+polio_shortfall = float(inv_corr.matrix.loc[f"~{polio_col}", target_col])
+polio_tf = float(inv_tf_corr.matrix.loc[polio_col, target_col])
+
+display(
+    Markdown(
+        f"For Polio coverage, the correlation with life expectancy shifts from "
+        f"$r$={polio_raw:.2f} (coverage) to $r$={polio_shortfall:.2f} (shortfall) and "
+        f"$r$={polio_tf:.2f} after the default transform, matching the sign flip seen in Figure @fig-coverage-inversion."
+    )
+)
+```
 
 In the next chapter, we use PCA to formalize the observed redundancy by extracting orthogonal components that summarize the dominant variance structure.
