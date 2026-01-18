@@ -26,6 +26,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from IPython.display import display
+import random
 
 from ama_tlbx.analysis import FeatureGroup
 from ama_tlbx.analysis.model_registry import ModelRegistry
@@ -35,6 +36,7 @@ from ama_tlbx.utils.plotting_config import DEFAULT_PLOT_CFG
 
 DEFAULT_PLOT_CFG.apply_global()
 np.random.seed(42)
+random.seed(42)
 
 TRAIN_YEAR = 2014
 HOLDOUT_YEAR = 2011
@@ -206,12 +208,16 @@ for pc_a, pc_b in combinations(top_pcs, 2):
         }
     )
 
-screen_df = pd.DataFrame(screen_rows).sort_values("delta_aic")
-interaction_candidates = (
-    screen_df.query("pval < 0.05 and delta_aic < 0").head(5)["term"].tolist()
-)
-if not interaction_candidates:
-    interaction_candidates = screen_df.head(3)["term"].tolist()
+screen_df = pd.DataFrame(screen_rows)
+if screen_df.empty:
+    interaction_candidates = []
+else:
+    screen_df = screen_df.sort_values("delta_aic")
+    interaction_candidates = (
+        screen_df.query("pval < 0.05 and delta_aic < 0").head(5)["term"].tolist()
+    )
+    if not interaction_candidates:
+        interaction_candidates = screen_df.head(3)["term"].tolist()
 
 interaction_paths, interaction_best_map, interaction_compare = (
     registry.run_selection_grid(
@@ -511,7 +517,7 @@ Interpretation of the most impactful PCs (largest |t| values) in terms of origin
 
 ```{python}
 # | label: supervised-pca-biplot
-# | fig-cap: "Biplot for the first two retained supervised PCs"
+# | fig-cap: "Biplot for the first two retained supervised PCs."
 pc_axes = kept_pc_names[:2] if len(kept_pc_names) >= 2 else []
 if len(pc_axes) == 2:
     biplot_fig = plot_biplot_plotly(
