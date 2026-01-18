@@ -512,7 +512,7 @@ for idx, feature in enumerate(data_to_analyse):
     # Plot
     ax.scatter(X_single, y_single, alpha=0.5, s=30)
     ax.plot(X_sorted, y_pred_sorted, 'r-', linewidth=2, label=f'Regression Line')
-    ax.set_xlabel(feature_name.replace('_', ' ').title())
+    ax.set_xlabel('sd from mean')
     ax.set_ylabel('Life Expectancy')
     ax.set_title(f'{feature_name.replace("_", " ").title()}\n(R² = {r2_single:.3f})')
     ax.grid(True, alpha=0.3)
@@ -625,7 +625,7 @@ if len(df_developing) > 1:
     ax.scatter(X_devg, y_devg, alpha=0.6, s=50, color='orange', label='Developing', edgecolors='darkorange', linewidth=0.5)
     ax.plot(X_sorted, y_pred_sorted, color='darkorange', linewidth=2.5, label=f'Developing (R²={r2_devg:.3f})')
 
-ax.set_xlabel('Alcohol Consumption (normalized)', fontsize=12)
+ax.set_xlabel('Alcohol Consumption (SD from mean)', fontsize=12)
 ax.set_ylabel('Life Expectancy (years)', fontsize=12)
 ax.set_title('Alcohol Consumption vs Life Expectancy by Development Status\n(Normalized Data)', fontsize=14, fontweight='bold')
 ax.grid(True, alpha=0.3)
