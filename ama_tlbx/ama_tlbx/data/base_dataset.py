@@ -1,9 +1,9 @@
 """Base dataset class for all dataset implementations."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Self
 
 import pandas as pd
 from matplotlib.figure import Figure
@@ -78,6 +78,29 @@ class BaseDataset(ABC):  # noqa: PLR0904
             DataFrame with pretty column names
         """
         return self.df.rename(columns={col: self.get_pretty_name(col) for col in self.df.columns})
+
+    def pipe(
+        self,
+        func: Callable[["pd.DataFrame"], "pd.DataFrame"] | Callable[[Self], Self],
+        *args: object,
+        **kwargs: object,
+    ) -> Self:
+        """Apply a function to the dataset or its DataFrame and return a dataset.
+
+        The function can be either:
+          - Callable[[pd.DataFrame], pd.DataFrame]
+          - Callable[[Self], Self]
+        """
+        try:
+            result = func(self, *args, **kwargs)
+        except TypeError:
+            result = func(self.df.copy(), *args, **kwargs)
+
+        if isinstance(result, BaseDataset):
+            return result
+        if isinstance(result, pd.DataFrame):
+            return self.__class__(df=result)
+        raise TypeError("pipe() expects func to return a DataFrame or a BaseDataset.")
 
     def add_iso3(
         self,
