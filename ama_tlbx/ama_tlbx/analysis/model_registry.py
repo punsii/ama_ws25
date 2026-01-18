@@ -199,9 +199,9 @@ class ModelRegistry:
 
     def evaluate_on(
         self,
-        name: str,
         df: pd.DataFrame,
         *,
+        name: str,
         label: str | None = None,
         target_col: str = LECol.TARGET,
     ) -> EvalMetrics:
@@ -542,8 +542,8 @@ class ModelRegistry:
         results: dict[str, EvalMetrics] = {}
         for name in self.models:
             results[name] = self.evaluate_on(
-                name,
                 df,
+                name=name,
                 label=label,
                 target_col=target_col,
             )
