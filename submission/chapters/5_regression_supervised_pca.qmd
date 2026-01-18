@@ -199,12 +199,17 @@ for pc_a, pc_b in combinations(top_pcs, 2):
         }
     )
 
-screen_df = pd.DataFrame(screen_rows).sort_values("delta_aic")
-interaction_candidates = (
-    screen_df.query("pval < 0.05 and delta_aic < 0").head(5)["term"].tolist()
-)
-if not interaction_candidates:
-    interaction_candidates = screen_df.head(3)["term"].tolist()
+# Handle empty screen_rows case
+if screen_rows:
+    screen_df = pd.DataFrame(screen_rows).sort_values("delta_aic")
+    interaction_candidates = (
+        screen_df.query("pval < 0.05 and delta_aic < 0").head(5)["term"].tolist()
+    )
+    if not interaction_candidates:
+        interaction_candidates = screen_df.head(3)["term"].tolist()
+else:
+    # No interactions to test, use empty list
+    interaction_candidates = []
 
 interaction_paths, interaction_best_map, interaction_compare = (
     registry.run_selection_grid(
