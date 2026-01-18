@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -20,14 +21,15 @@ def get_data_dir() -> Path:
     Returns:
         Path to the data directory
     """
-    data_dir = (Path(__file__).parents[3] / "_data").resolve()
+    data_dir_env = os.getenv("DATA_DIR")
+    data_dir = Path(data_dir_env) if data_dir_env is not None else (Path(__file__).parents[3] / "_data").resolve()
     assert data_dir.exists(), f"Data directory not found at {data_dir}"
     return data_dir
 
 
 def get_dataset_path(
     filename: Literal["life_expectancy", "life_expectancy_updated", "milk", "siebenkampf", "undp_hdr"] | str,
-) -> Path:  # noqa: PYI051
+) -> Path:
     """Get the full path to a dataset file in the data directory.
 
     Args:

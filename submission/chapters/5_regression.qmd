@@ -85,23 +85,18 @@ To anchor the analysis, we start with a compact, transparent baseline on the cou
 baseline_ds = LifeExpectancyDataset.from_csv(
     aggregate_by_country=TRAIN_YEAR,
     resolve_nand_pred="carry_forward",
-)
-baseline_df_raw = baseline_ds.tf_and_norm().drop(columns=[LECol.YEAR])
-
-baseline_pca = (
-    LifeExpectancyDataset(df=baseline_df_raw)
-    .make_pca_dim_reduction_analyzer(
-        feature_groups,
-        columns=reduced_columns,
-        standardized=False,
-        min_var_explained=0.8,
-    )
-    .fit()
-    .result()
+    aggregate_by_country=2011,
 )
 
-baseline_pc = baseline_pca.reduced_df.copy()
-baseline_df = baseline_pc.assign(**baseline_df_raw.drop(columns=reduced_columns))
+dataset_latest = LifeExpectancyDataset.from_csv(
+    resolve_nand_pred="carry_forward",
+    aggregate_by_country=2014,
+)
+
+assert not dataset.df.empty
+assert not dataset_latest.df.empty
+
+
 
 baseline_X = baseline_df.select_dtypes(include=["number"]).drop(
     columns=[LECol.TARGET, LECol.HDI],
@@ -109,15 +104,15 @@ baseline_X = baseline_df.select_dtypes(include=["number"]).drop(
 )
 baseline_rhs = " + ".join(baseline_X.columns.astype(str))
 
-baseline_registry = ModelRegistry()
-baseline_registry.fit(baseline_df, name="baseline_simple", rhs=baseline_rhs)
-baseline_diag = baseline_registry.get("baseline_simple").diag
-
-hdi_baseline_df = baseline_df.dropna(subset=[LECol.HDI])
-hdi_baseline_diag = baseline_registry.fit(
-    hdi_baseline_df,
-    name="baseline_hdi",
-    rhs=LECol.HDI,
+# Concatenate columns for 2014 dataset
+column_concatinator = ColumnConcatenator(dataset)
+dataset2 = column_concatinator.concatenate(
+    columns=[
+        LECol.HEPATITIS_B,
+        LECol.POLIO,
+        LECol.DIPHTHERIA,
+    ],
+    new_column_name="Immunisation",
 )
 ```
 
@@ -148,6 +143,48 @@ plot_observed_vs_fitted(baseline_diag)
 baseline_registry.assumptions_table(names=["baseline_simple"]).rename(
     index={"baseline_simple": "Baseline (no HDI)"}
 )
+concat_dataset = dataset4
+
+# Concatenate columns for latest dataset
+column_concatinator_latest = ColumnConcatenator(dataset_latest)
+dataset2_latest = column_concatinator_latest.concatenate(
+    columns=[
+        LECol.HEPATITIS_B,
+        LECol.POLIO,
+        LECol.DIPHTHERIA,
+    ],
+    new_column_name="Immunisation",
+)
+
+column_concatinator2_latest = ColumnConcatenator(dataset2_latest)
+dataset3_latest = column_concatinator2_latest.concatenate(
+    columns=[
+        LECol.THINNESS_1_19_YEARS,
+        LECol.THINNESS_5_9_YEARS,
+    ],
+    new_column_name="Child Thinness",
+)
+
+column_concatinator3_latest = ColumnConcatenator(dataset3_latest)
+dataset4_latest = column_concatinator3_latest.concatenate(
+    columns=[
+        LECol.INFANT_DEATHS,
+        LECol.UNDER_FIVE_DEATHS,
+    ],
+    new_column_name="Baby Deaths",
+)
+concat_dataset_latest = dataset4_latest
+
+assert not concat_dataset.df.empty
+assert not concat_dataset_latest.df.empty
+
+# Keep untransformed versions for analyses that need original columns
+df_raw = concat_dataset.df
+df_latest_raw = concat_dataset_latest.df
+
+# Create normalized versions for regression
+df = concat_dataset.tf_and_norm()
+df_latest = concat_dataset_latest.tf_and_norm()
 ```
 
 <!--  TODO: Remove this code cell, don't render python to markdown -->
@@ -676,402 +713,609 @@ plt.ylabel(pretty_map.get(str(LECol.TARGET), "Life expectancy"))
 plt.show()
 ```
 
-<!-- TODO: fit the models at in the sections where they are being introduced! For each model allow to fold / unflod *overview of all relvant summar statistics and plots, directly interact with RegressionResult and its child dataclasses, so do this in a callout box or what ever element allow fold / unfold of the contents -->
+We see that after performing the analysis that the majority of the residuals remain within the `|y| < 2` range showing a good fit. This is especially good since a lot of them are clumped towards `leverage = 0`, indicating that each residual isn't being an extreme outlier.
+
+The most notable outliers are **Austria**, **Malta**, and **India**. Austria and Malta show high studentized residuals (around 2-3) with moderate leverage, while India appears as a high-leverage point at the far right of the plot. However, most countries including **Sierra Leone**, **Lesotho**, and **Angola** (which show as large circles indicating high Cook's distance) remain within acceptable bounds (`|y| < 2`), suggesting the model is generally robust despite these influential points.
+
+### Predictive capabilities
+
+To test some predictive capabilities we decided to perform some single variable analyses, here we chose `Schooling` because it showed the strongest univariate relationship with life expectancy (R² = 0.601) among features that don't suffer from data leakage.
+
+**Note on HDI Exclusion**: While Human Development Index showed the highest R² (0.799) in initial analysis, it was excluded from predictive modeling because HDI is calculated using life expectancy as one of its three components. Using HDI to predict life expectancy would constitute data leakage—using the target variable to predict itself—which artificially inflates performance and produces unreliable models.
+
 ```{python}
-# | label: tbl-m0-coefs
-# | tbl-cap: "M0 baseline coefficients (economic development PC1)."
-coef_table(registry.get("m0_baseline_econ").diag.model, pretty_map)
+# | label: pred-plot-function
+# | echo: false
+
+def pred_plot(model, feature_col, df):
+    """Plot actual vs predicted values for a single feature regression"""
+    feature_name = str(feature_col)
+
+    # Get predictions with confidence intervals
+    predictions = model.get_prediction(df)
+    pred_summary = predictions.summary_frame(alpha=0.05)  # 95% CI
+
+    # Sort by feature for clean line plots
+    sort_idx = df[feature_name].argsort()
+    x_sorted = df[feature_name].iloc[sort_idx]
+
+    plt.figure(figsize=(10, 6))
+
+    # Plot actual data
+    plt.scatter(df[feature_name], df['life_expectancy'], alpha=0.6, label='Actual', zorder=3)
+
+    # Plot regression line
+    plt.plot(x_sorted, pred_summary['mean'].iloc[sort_idx],
+             color='red', linewidth=2, label='Regression Line', zorder=2)
+
+    # Plot 95% confidence interval
+    plt.fill_between(x_sorted,
+                     pred_summary['mean_ci_lower'].iloc[sort_idx],
+                     pred_summary['mean_ci_upper'].iloc[sort_idx],
+                     alpha=0.2, color='red', label='95% CI', zorder=1)
+
+    plt.xlabel(feature_name.replace('_', ' ').title())
+    plt.ylabel('Life Expectancy')
+    plt.title(f'Life Expectancy vs {feature_name.replace("_", " ").title()}')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+```
+```{python}
+# | label: prediction-schooling
+# | fig-cap: prediction_schooling
+# | echo: false
+
+pred = f"{LECol.SCHOOLING}"
+model = sm.formula.ols(f"life_expectancy ~ {pred}", data=df).fit()
+
+print(model.summary())
+pred_plot(model, LECol.SCHOOLING, df)
+
 ```
 
-Table @tbl-m0-coefs shows a strong positive association between the economic‑development PC and life expectancy. This model is intentionally simple and serves as the benchmark for subsequent improvements. Figure @fig-baseline visualizes the positive bivariate gradient that motivates the baseline specification.
+In the plot for schooling we see a reasonably strong positive relationship with life expectancy. While the 95% confidence interval is relatively narrow, there is still considerable scatter around the regression line, indicating that schooling alone explains only about 60% of the variance (R² = 0.601). This demonstrates that while education is an important predictor, other factors are necessary for a comprehensive model of life expectancy. The clear positive trend confirms our expectation that countries with higher education levels tend to have longer life expectancies.
+
+## Comparison: 2011 vs 2014 Data
+
+To understand how well regression models generalize across time, we compare three scenarios using data from 2011 ("Old") and 2014 ("Latest"). This cross-temporal analysis reveals whether the relationships between predictors and life expectancy remain stable over time.
+
+The 2011 model achieves `R² = 0.892` on its own test data, demonstrating strong predictive power for that year. The 2014 model, trained on data three years later, shows `R² = 0.786` on its test set—still a good result, explaining nearly 79% of the variance, though noticeably lower than the 2011 model. This difference could reflect changes in data quality, sample size, or the relationships between variables over time.
+
+```{python}
+# | label: comparison-models
+# | fig-cap: "Comparing 2014 vs Latest Year Models"
+# | echo: false
+
+# Prepare old data
+reg_df_old = df.dropna(subset=[LECol.LIFE_EXPECTANCY])
+X_old = reg_df_old.select_dtypes(include=['number']).drop(columns=[LECol.LIFE_EXPECTANCY])
+y_old = reg_df_old[LECol.LIFE_EXPECTANCY]
+
+# Prepare latest year data
+reg_df_latest = df_latest.dropna(subset=[LECol.LIFE_EXPECTANCY])
+X_latest = reg_df_latest.select_dtypes(include=['number']).drop(columns=[LECol.LIFE_EXPECTANCY])
+y_latest = reg_df_latest[LECol.LIFE_EXPECTANCY]
+
+# Train/test split for both datasets
+X_train_old, X_test_old, y_train_old, y_test_old = train_test_split(
+    X_old, y_old, test_size=0.2, random_state=42
+)
+X_train_latest, X_test_latest, y_train_latest, y_test_latest = train_test_split(
+    X_latest, y_latest, test_size=0.2, random_state=42
+)
+
+# Fit old model
+model_old = LinearRegression()
+model_old.fit(X_train_old, y_train_old)
+y_pred_old_on_old = model_old.predict(X_test_old)
+
+# Fit latest year model
+model_latest = LinearRegression()
+model_latest.fit(X_train_latest, y_train_latest)
+y_pred_latest_on_latest = model_latest.predict(X_test_latest)
+
+# Apply old model to latest year data (cross-temporal prediction)
+y_pred_old_on_latest = model_old.predict(X_test_latest)
+
+# Calculate metrics for old model on its own data
+r2_old_on_old = r2_score(y_test_old, y_pred_old_on_old)
+rmse_old_on_old = np.sqrt(mean_squared_error(y_test_old, y_pred_old_on_old))
+
+# Calculate metrics for latest model on its own data
+r2_latest_on_latest = r2_score(y_test_latest, y_pred_latest_on_latest)
+rmse_latest_on_latest = np.sqrt(mean_squared_error(y_test_latest, y_pred_latest_on_latest))
+
+# Calculate metrics for old model applied to latest data
+r2_old_on_latest = r2_score(y_test_latest, y_pred_old_on_latest)
+rmse_old_on_latest = np.sqrt(mean_squared_error(y_test_latest, y_pred_old_on_latest))
+
+# Create comparison dataframe
+comparison = pd.DataFrame({
+    'Model': ['Old → Old test', 'Latest → Latest test', 'Old → Latest test'],
+    'R² Score': [r2_old_on_old, r2_latest_on_latest, r2_old_on_latest],
+    'RMSE': [rmse_old_on_old, rmse_latest_on_latest, rmse_old_on_latest],
+    'Training Size': [len(y_train_old), len(y_train_latest), len(y_train_old)],
+    'Test Size': [len(y_test_old), len(y_test_latest), len(y_test_latest)]
+})
+
+print("\nModel Performance Comparison:")
+print(comparison.to_string(index=False))
+```
+
+```{python}
+# | label: comparison-plots
+# | fig-cap: "Comparison of Model Predictions: 2014 Model on Both Datasets"
+# | echo: false
+
+fig = plt.figure(figsize=(8, 8))
+gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+ax1 = fig.add_subplot(gs[0, 0])
+ax2 = fig.add_subplot(gs[0, 1])
+ax3 = fig.add_subplot(gs[1, :])
+
+# Old model on old data
+ax1.scatter(y_test_old, y_pred_old_on_old, alpha=0.5)
+ax1.plot([y_test_old.min(), y_test_old.max()],
+         [y_test_old.min(), y_test_old.max()], 'r--', lw=2)
+ax1.set_xlabel('Actual Life Expectancy')
+ax1.set_ylabel('Predicted Life Expectancy')
+ax1.set_title(f'Old Model on Old Data\n(R² = {r2_old_on_old:.3f})')
+ax1.grid(True, alpha=0.3)
+
+# Latest model on latest data
+ax2.scatter(y_test_latest, y_pred_latest_on_latest, alpha=0.5, color='green')
+ax2.plot([y_test_latest.min(), y_test_latest.max()],
+         [y_test_latest.min(), y_test_latest.max()], 'r--', lw=2)
+ax2.set_xlabel('Actual Life Expectancy')
+ax2.set_ylabel('Predicted Life Expectancy')
+ax2.set_title(f'Latest Model on Latest Data\n(R² = {r2_latest_on_latest:.3f})')
+ax2.grid(True, alpha=0.3)
+
+# Old model on latest data (cross-temporal)
+ax3.scatter(y_test_latest, y_pred_old_on_latest, alpha=0.5, color='orange')
+ax3.plot([y_test_latest.min(), y_test_latest.max()],
+         [y_test_latest.min(), y_test_latest.max()], 'r--', lw=2)
+ax3.set_xlabel('Actual Life Expectancy (2014)')
+ax3.set_ylabel('Predicted Life Expectancy (2011 Model)')
+ax3.set_title(f'Old Model on Latest Data\n(R² = {r2_old_on_latest:.3f})')
+ax3.grid(True, alpha=0.3)
+
+plt.show()
+```
+
+The comparison reveals the temporal stability of our predictive models:
+
+- **Old → Old test** (R² = 0.892): Strong baseline performance when the 2011 model predicts 2011 data
+- **Latest → Latest test** (R² = 0.786): Good performance when the 2014 model predicts 2014 data, though lower than the 2011 baseline
+- **Old → Latest test** (R² = 0.862): Surprisingly strong cross-temporal prediction—the 2011 model predicts 2014 data better than the 2014 model predicts its own data
+
+The third scenario is particularly noteworthy: the 2011 model achieves R² = 0.862 when predicting 2014 data, which exceeds the 2014 model's performance on its own test set (0.786). This suggests that the relationships between health, economic, and social factors learned from 2011 data generalized remarkably well to 2014, indicating relatively stable predictive patterns over this three-year period. The superior performance could also reflect better data quality or a larger sample size in the 2011 dataset, allowing the model to learn more robust relationships.
+
+## Univariate Regression Application (2011)
+
+To evaluate how well individual features predict life expectancy, we apply the 2011 model to perform single-variable regression analysis for each key predictor. This shows the relationship between each feature and life expectancy in isolation.
+
+```{python}
+# | label: monovariate-analysis
+# | fig-cap: "Single Variable Regression Analysis using 2011 Data"
+# | echo: false
+
+data_to_analyse = [
+    LECol.ALCOHOL,
+    LECol.SCHOOLING,
+    LECol.BMI,
+    LECol.TOTAL_EXPENDITURE,
+    LECol.PERCENTAGE_EXPENDITURE,
+    LECol.GDP,
+    LECol.POPULATION,
+    LECol.HIV_AIDS,
+    LECol.MEASLES,
+    "Baby Deaths",
+    "Child Thinness",
+    "Immunisation",
+]
+
+# Calculate number of rows needed (2 columns per row)
+n_features = len(data_to_analyse)
+n_rows = (n_features + 1) // 2  # Ceiling division
+
+fig, axes = plt.subplots(n_rows, 2, figsize=(8, n_rows * 3))
+axes = axes.flatten()  # Flatten to make indexing easier
+
+for idx, feature in enumerate(data_to_analyse):
+    ax = axes[idx]
+
+    # Prepare data for this feature
+    feature_name = str(feature)
+    df_feature = df[[feature_name, LECol.LIFE_EXPECTANCY]].dropna()
+
+    # Fit single-variable model
+    X_single = df_feature[[feature_name]]
+    y_single = df_feature[LECol.LIFE_EXPECTANCY]
+
+    model_single = LinearRegression()
+    model_single.fit(X_single, y_single)
+    y_pred_single = model_single.predict(X_single)
+
+    # Calculate R² for this feature
+    r2_single = r2_score(y_single, y_pred_single)
+
+    # Sort for clean line plot
+    sort_idx = X_single[feature_name].argsort()
+    X_sorted = X_single.iloc[sort_idx]
+    y_pred_sorted = y_pred_single[sort_idx]
+
+    # Plot
+    ax.scatter(X_single, y_single, alpha=0.5, s=30)
+    ax.plot(X_sorted, y_pred_sorted, 'r-', linewidth=2, label=f'Regression Line')
+    ax.set_xlabel(feature_name.replace('_', ' ').title())
+    ax.set_ylabel('Life Expectancy')
+    ax.set_title(f'{feature_name.replace("_", " ").title()}\n(R² = {r2_single:.3f})')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+# Hide any unused subplots
+for idx in range(n_features, len(axes)):
+    axes[idx].set_visible(False)
+
+plt.tight_layout()
+plt.show()
+```
+
+The monovariate regression analysis reveals distinct patterns in how individual features predict life expectancy:
+
+**Strong Predictors (R² > 0.5):**
+- **Schooling (R² = 0.601)**: The strongest valid single predictor, showing a clear positive relationship. Education consistently correlates with better health outcomes, as countries with higher average years of schooling tend to have longer life expectancies.
+- **HIV/AIDS (R² = 0.568)**: Strong negative correlation—higher HIV/AIDS prevalence significantly reduces life expectancy.
+
+**Note**: Human Development Index was initially observed to have the highest R² (0.799), but was excluded from analysis because it incorporates life expectancy as one of its components, creating data leakage that would artificially inflate model performance.
+
+**Moderate Predictors (0.1 < R² < 0.5):**
+- **BMI (R² = 0.381)**: Shows a positive relationship with life expectancy. Higher average BMI typically indicates better nutrition and food security.
+- **GDP (R² = 0.339)**: Economic output shows moderate predictive power, reflecting better healthcare access in wealthier nations.
+- **Percentage Expenditure (R² = 0.319)**: Healthcare spending as a percentage of GDP shows moderate predictive power.
+- **Child Thinness (R² = 0.203)**: Negative correlation as expected—higher malnutrition rates are associated with lower life expectancy, though the relationship is weaker than anticipated.
+- **Alcohol (R² = 0.144)**: Shows a positive relationship, possibly because wealthier nations with better healthcare also have higher alcohol consumption, creating a confounding effect.
+
+**Weak Predictors (R² < 0.1):**
+- **Immunisation (R² = 0.091)**: Despite being health-critical, immunization alone shows weak predictive power in isolation. Most countries have reached high vaccination rates, reducing variance.
+- **Baby Deaths (R² = 0.044)**: Very weak relationship, likely because this raw count is influenced by population size rather than mortality rates.
+- **Measles (R² = 0.039)**: Very weak negative correlation, suggesting measles cases have minimal direct linear impact on life expectancy.
+- **Total Expenditure (R² = 0.002)**: Essentially no linear relationship, suggesting health spending alone doesn't predict outcomes—how funds are allocated matters more than the amount spent.
+- **Population (R² = 0.002)**: No meaningful linear relationship with life expectancy.
+
+These results highlight why multivariate models outperform single-variable approaches. Features like Total Expenditure and Baby Deaths contribute meaningful information when combined with other predictors, even though they show minimal individual predictive power. The interaction between economic, social, and health factors provides a more complete picture than any single metric.
+
+### Alcohol Consumption Analysis
+
+To better understand the positive correlation between alcohol consumption and life expectancy (R² = 0.144 after normalization), we examine how this relationship differs between developed and developing countries.
+
+```{python}
+# | label: alcohol-by-status
+# | fig-cap: "Alcohol Consumption vs Life Expectancy by Development Status"
+# | echo: false
+
+# Split data by status for alcohol analysis - use raw data since STATUS is transformed to dummies in normalized version
+df_alcohol = df_raw[[LECol.ALCOHOL, LECol.LIFE_EXPECTANCY, LECol.STATUS]].dropna()
+
+# STATUS: 0 = Developing, 1 = Developed
+df_developed = df_alcohol[df_alcohol[LECol.STATUS] == 1]
+df_developing = df_alcohol[df_alcohol[LECol.STATUS] == 0]
+
+fig, ax = plt.subplots(figsize=(8, 5))
+
+has_data = False
+
+# Fit and plot developed countries
+if len(df_developed) > 1:
+    has_data = True
+    X_dev = df_developed[[LECol.ALCOHOL]]
+    y_dev = df_developed[LECol.LIFE_EXPECTANCY]
+
+    model_dev = LinearRegression()
+    model_dev.fit(X_dev, y_dev)
+    y_pred_dev = model_dev.predict(X_dev)
+    r2_dev = r2_score(y_dev, y_pred_dev)
+
+    # Sort for line plot
+    sort_idx = X_dev[LECol.ALCOHOL].argsort()
+    X_sorted = X_dev.iloc[sort_idx]
+    y_pred_sorted = y_pred_dev[sort_idx]
+
+    # Plot
+    ax.scatter(X_dev, y_dev, alpha=0.6, s=50, color='blue', label='Developed', edgecolors='darkblue', linewidth=0.5)
+    ax.plot(X_sorted, y_pred_sorted, 'b-', linewidth=2.5, label=f'Developed (R²={r2_dev:.3f})')
+
+# Fit and plot developing countries
+if len(df_developing) > 1:
+    has_data = True
+    X_devg = df_developing[[LECol.ALCOHOL]]
+    y_devg = df_developing[LECol.LIFE_EXPECTANCY]
+
+    model_devg = LinearRegression()
+    model_devg.fit(X_devg, y_devg)
+    y_pred_devg = model_devg.predict(X_devg)
+    r2_devg = r2_score(y_devg, y_pred_devg)
+
+    # Sort for line plot
+    sort_idx = X_devg[LECol.ALCOHOL].argsort()
+    X_sorted = X_devg.iloc[sort_idx]
+    y_pred_sorted = y_pred_devg[sort_idx]
+
+    # Plot
+    ax.scatter(X_devg, y_devg, alpha=0.6, s=50, color='orange', label='Developing', edgecolors='darkorange', linewidth=0.5)
+    ax.plot(X_sorted, y_pred_sorted, color='darkorange', linewidth=2.5, label=f'Developing (R²={r2_devg:.3f})')
+
+ax.set_xlabel('Alcohol Consumption (liters per capita)', fontsize=12)
+ax.set_ylabel('Life Expectancy (years)', fontsize=12)
+ax.set_title('Alcohol Consumption vs Life Expectancy by Development Status', fontsize=14, fontweight='bold')
+ax.grid(True, alpha=0.3)
+
+if has_data:
+    ax.legend(fontsize=10)
+
+plt.tight_layout()
+plt.show()
+```
+
+The stratified analysis provides crucial insights into the alcohol-life expectancy relationship:
+
+**Key Findings:**
+- **Developed Countries (Blue, R² = 0.019)**: The regression line is nearly flat with a slight negative slope, and the extremely low R² indicates virtually no predictive relationship. Among developed nations, alcohol consumption does not meaningfully predict life expectancy—these countries cluster at high life expectancy (mostly 75-87 years) regardless of alcohol consumption levels.
+
+- **Developing Countries (Orange, R² = 0.037)**: Shows a weak positive correlation, though still with very low R². The much wider spread in life expectancy (50-85 years) suggests that factors other than alcohol consumption are far more influential in determining outcomes.
+
+If we look at the overall positive correlation (R² = 0.175) observed in the combined data above. When separated by development status, alcohol shows almost no predictive power within each group. The apparent correlation exists primarily because:
+1. Developed countries tend to have both higher alcohol consumption and higher baseline life expectancy due to better healthcare, infrastructure, and living conditions
+2. Within developed countries, increasing alcohol consumption actually shows a slight negative trend (decline in the regression line)
+3. The relationship is driven by confounding socioeconomic factors rather than any beneficial effect of alcohol
+
+This demonstrates why univariate analysis can be deceptive—the positive correlation disappears when controlling for development status, revealing alcohol as a poor predictor of life expectancy within similar economic contexts.
+
+## Multivariate Regression Analysis
+
+After examining individual predictors, we now combine the selected features to build a multivariate regression model. This allows us to see if the combined predictive power exceeds what any single variable can achieve.
+
+```{python}
+# | label: multivariate-analysis
+# | fig-cap: "Multi Variable Regression Analysis using 2011 Data"
+# | echo: false
 
 ### Step 1: add mortality burden (M1)
 
-We add adult mortality and HIV/AIDS burden to test whether direct health risks explain additional variation beyond socioeconomic status.
-```{python}
-# | label: tbl-m1-coefs
-# | tbl-cap: "M1 coefficients after adding adult mortality and HIV/AIDS."
-coef_table(registry.get("m1_add_mortality").diag.model, pretty_map)
-```
+# Prepare data with selected features
+df_multi = df[data_to_analyse + [LECol.LIFE_EXPECTANCY]].dropna()
+X_multi = df_multi[data_to_analyse]
+y_multi = df_multi[LECol.LIFE_EXPECTANCY]
 
-In Table @tbl-m1-coefs, both mortality burden variables enter with clear negative associations (adult mortality and HIV/AIDS), while the baseline economic-development PC remains positive. This indicates that macroeconomic gradients persist even after accounting for direct health risks.
-
-### Step 2: add development and economic context (M2)
-
-We extend the model with development status, total health expenditure, and the economic development PCA block, which jointly capture macroeconomic context.
-
-```{python}
-# | label: tbl-m2-coefs
-# | tbl-cap: "M2 coefficients after adding development status, spending, and economic PCs."
-coef_table(registry.get("m2_add_development").diag.model, pretty_map)
-```
-
-Table @tbl-m2-coefs suggests that macroeconomic and institutional context adds explanatory power while keeping the mortality effects stable in sign. Development status, total health expenditure, and the economic PC(s) are positive, indicating that institutional and economic context contributes beyond mortality burden.
-
-### Step 3: add child health burden (M3)
-
-We then add the PCA blocks for child mortality and child nutrition. These capture early-life health conditions that may be correlated with both adult outcomes and development.
-
-```{python}
-# | label: tbl-m3-coefs
-# | tbl-cap: "M3 coefficients after adding child mortality and child nutrition PCs."
-coef_table(registry.get("m3_add_child_health").diag.model, pretty_map)
-```
-
-The child health PCs in Table @tbl-m3-coefs are negative and statistically supported: child mortality PC1 is about **-0.48 years** (p = 0.046) and child nutrition PC1 about **-0.55 years** (p = 0.028). This is consistent with the idea that higher early-life burden is associated with lower life expectancy, while the earlier effects remain interpretable.
-
-### Step 4: add immunization coverage (M4)
-
-Finally, we add the immunization PCA block, reflecting preventive health interventions at the population level.
-
-```{python}
-# | label: tbl-m4-coefs
-# | tbl-cap: "M4 coefficients after adding immunization PCs."
-coef_table(registry.get("m4_add_immunization").diag.model, pretty_map)
-```
-
-Table @tbl-m4-coefs indicates whether immunization adds explanatory power and how its direction compares with other health predictors. The first immunization PC is negative (about **-0.61 years**, p = 0.006), while PC2 is not significant. Because PCA signs are arbitrary, the key point is that the block adds signal; retention is judged in the model comparison stage.
-
-### Step 5: interaction effects (M_int)
-
-We screen a small set of interaction candidates and retain only those with $p < 0.05$ when added to the full main‑effects specification. In the 2014 training cross‑section, two interactions meet this criterion: adult mortality $\times$ HIV/AIDS and development status $\times$ HIV/AIDS. (A binary alcohol indicator `alcohol = 0` vs `> 0` is not usable because essentially all countries have positive alcohol values after filtering.) The interactions are added after the main blocks to preserve interpretability and to allow model comparison.
-
-```{python}
-# | label: tbl-int1-coefs
-# | tbl-cap: "Interaction model M_int1: adult mortality x HIV/AIDS and status x HIV/AIDS (significant terms only)."
-coef_table(registry.get("m_int1_mortality_hiv").diag.model, pretty_map)
-```
-
-```{python}
-# | label: fig-interaction
-# | fig-cap: "Interaction illustration: predicted life expectancy across adult mortality at low, median, and high HIV/AIDS (M_int1) with $95\\%$ bootstrap bands."
-final_int = registry.get("m_int1_mortality_hiv").diag
-rhs_int = registry.get("m_int1_mortality_hiv").rhs
-hiv_levels = np.quantile(df_train_model[str(LECol.HIV_AIDS)].dropna(), [0.1, 0.5, 0.9])
-
-grid = pd.DataFrame(
-    {
-        str(LECol.ADULT_MORTALITY): np.linspace(
-            df_train_model[str(LECol.ADULT_MORTALITY)].quantile(0.05),
-            df_train_model[str(LECol.ADULT_MORTALITY)].quantile(0.95),
-            60,
-        )
-    }
+# Train/test split
+X_train_multi, X_test_multi, y_train_multi, y_test_multi = train_test_split(
+    X_multi, y_multi, test_size=0.2, random_state=42
 )
 
-# Hold other covariates at typical values
-for col in df_train_model.columns:
-    if col in (str(LECol.TARGET), str(LECol.ADULT_MORTALITY), str(LECol.HIV_AIDS)):
-        continue
-    if col == STATUS_DUMMY:
-        grid[col] = int(df_train_model[col].mode().iloc[0])
+# Fit multivariate model
+model_multi = LinearRegression()
+model_multi.fit(X_train_multi, y_train_multi)
+y_pred_multi = model_multi.predict(X_test_multi)
+
+# Calculate metrics
+r2_multi = r2_score(y_test_multi, y_pred_multi)
+rmse_multi = np.sqrt(mean_squared_error(y_test_multi, y_pred_multi))
+
+print(f"Multivariate Model Performance:")
+print(f"R² Score: {r2_multi:.4f}")
+print(f"RMSE: {rmse_multi:.4f}")
+print(f"Number of features: {len(data_to_analyse)}")
+print(f"Training samples: {len(y_train_multi)}")
+print(f"Test samples: {len(y_test_multi)}")
+
+# Create visualization with wider figure to accommodate labels
+fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+
+# Plot 1: Actual vs Predicted
+axes[0].scatter(y_test_multi, y_pred_multi, alpha=0.6, s=50)
+axes[0].plot([y_test_multi.min(), y_test_multi.max()],
+             [y_test_multi.min(), y_test_multi.max()], 'r--', lw=2, label='Perfect Prediction')
+axes[0].set_xlabel('Actual Life Expectancy', fontsize=11)
+axes[0].set_ylabel('Predicted Life Expectancy', fontsize=11)
+axes[0].set_title(f'Multivariate Model: Actual vs Predicted\n(R² = {r2_multi:.4f})', fontsize=12, fontweight='bold')
+axes[0].grid(True, alpha=0.3)
+axes[0].legend()
+
+# Plot 2: Feature Coefficients
+coefficients = pd.DataFrame({
+    'Feature': [str(f).replace('_', ' ').title() for f in data_to_analyse],
+    'Coefficient': model_multi.coef_
+}).sort_values('Coefficient', key=abs, ascending=False)
+
+# Create bar chart with adjusted margins
+colors = ['green' if c > 0 else 'red' for c in coefficients['Coefficient']]
+bars = axes[1].barh(coefficients['Feature'], coefficients['Coefficient'], color=colors, alpha=0.7)
+
+# Add value labels on the bars with smart positioning
+for i, (idx, row) in enumerate(coefficients.iterrows()):
+    value = row['Coefficient']
+
+    # Position labels to the right of bars to avoid overlap
+    if value < 0:
+        x_pos = max(-0.5,value - 0.15)  # Left of negative bars
+        ha = 'right'
     else:
-        grid[col] = df_train_model[col].median()
+        x_pos = min(0.5,value + 0.15)  # Right of positive bars
+        ha = 'left'
 
-# Bootstrap bands for the interaction curves
-N_BOOT_INT = 200
-rng = np.random.default_rng(42)
-n_train = df_train_model.shape[0]
-x_grid = grid[str(LECol.ADULT_MORTALITY)].to_numpy()
+    axes[1].text(x_pos, i, f'{value:.2f}',
+                va='center', ha=ha,
+                fontsize=9, fontweight='bold', color='black')
 
-boot_lines: dict[float, np.ndarray] = {
-    float(level): np.empty((N_BOOT_INT, len(grid)), dtype=float) for level in hiv_levels
-}
+axes[1].set_xlabel('Coefficient Value', fontsize=11)
+axes[1].set_title('Feature Importance (Coefficients)', fontsize=12, fontweight='bold')
+axes[1].axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+axes[1].grid(True, alpha=0.3, axis='x')
+# Adjust subplot to prevent label cutoff
+plt.subplots_adjust(left=0.15, right=0.95)
 
-# TODO: use method chaining whereever possible
-for b in range(N_BOOT_INT):
-    sample_idx = rng.integers(0, n_train, size=n_train)
-    boot_df = df_train_model.iloc[sample_idx]
-    boot_diag = fit_ols_formula(boot_df, rhs=rhs_int, target_col=LECol.TARGET)
-    for level in hiv_levels:
-        tmp = grid.copy()
-        tmp[str(LECol.HIV_AIDS)] = level
-        boot_lines[float(level)][b] = boot_diag.model.predict(tmp).to_numpy()
-
-plt.figure()
-for level in hiv_levels:
-    tmp = grid.copy()
-    tmp[str(LECol.HIV_AIDS)] = level
-    tmp["pred"] = final_int.model.predict(tmp)
-    band = boot_lines[float(level)]
-    lo = np.quantile(band, 0.025, axis=0)
-    hi = np.quantile(band, 0.975, axis=0)
-    plt.plot(x_grid, tmp["pred"], label=f"HIV/AIDS quantile = {level:.2f}")
-    plt.fill_between(x_grid, lo, hi, alpha=0.15)
-
-plt.xlabel(pretty_map.get(str(LECol.ADULT_MORTALITY), str(LECol.ADULT_MORTALITY)))
-plt.ylabel(pretty_map.get(str(LECol.TARGET), "Life expectancy"))
-plt.legend(title="Conditioning level")
+plt.tight_layout()
 plt.show()
 ```
 
-Table @tbl-int1-coefs indicates whether the interaction slope differs from zero. The adult mortality x HIV/AIDS interaction is positive and statistically supported, meaning the negative mortality slope becomes less steep at higher HIV/AIDS levels. Figure @fig-interaction visualizes this attenuation: the lines are all downward sloping but the high‑HIV line is flatter and lower overall, with bootstrap bands indicating the uncertainty around the conditional mean predictions. (All other covariates are held at typical values—medians for continuous predictors and the modal category for the status dummy.)
+**Analysis:**
 
-## Model comparison and selection
+The multivariate model using normalized features achieves **R² = 0.7791**, which represents a substantial improvement over the best individual predictor (Schooling with R² = 0.601). This demonstrates the power of combining multiple features:
 
-We compare models using in-sample fit (R2, adjusted R2, AIC/BIC), cross-validated RMSE, and a year-based holdout evaluation (2011). This aligns with the course guidance: use both model-based criteria and out-of-sample error for selection.
+**Key Insights:**
+1. **Synergistic Effects**: Features that showed weak individual predictive power (like Total Expenditure, R² = 0.002) contribute meaningfully when combined with other variables, capturing interaction effects that aren't visible in isolation.
 
-```{python}
-# | label: model-comparison
-# | include: false
-for name in list(registry.models.keys()):
-    registry.evaluate_on(
-        name,
-        df_holdout_model,
-        label=f"year{HOLDOUT_YEAR}",
-    )
+2. **Feature Coefficients**: The bar chart reveals the strongest predictors after normalization:
+   - **HIV/AIDS (-4.76)**: Strongest negative impact—diseases dramatically reduce life expectancy
+   - **Schooling (+3.39)**: Strongest positive impact—education remains the most beneficial factor
+   - **Percentage Expenditure (+1.85)**: Healthcare spending shows substantial positive effect
+   - **Alcohol (+0.91)** and **GDP (-0.95)**: Moderate effects, though GDP's negative coefficient may reflect confounding
+   - **Measles (-0.52)**, **Baby Deaths (-0.23)**: Smaller but still meaningful negative impacts
+   - Other features show coefficients below ±0.3
 
-comparison = registry.compare(sort_by="aic")
+3. **Normalization Impact**: The normalized model (R² = 0.7791) differs from the raw data model, as standardization changes how features interact. The coefficient magnitudes now reflect standardized units, making them directly comparable.
 
-# Tidy columns for reporting
-cols = [
-    "r2",
-    "adj_r2",
-    "aic",
-    "bic",
-    "rmse",
-    "cv_rmse",
-    f"year{HOLDOUT_YEAR}_rmse",
-    f"year{HOLDOUT_YEAR}_r2",
-]
+The difference reveals how much additional predictive power comes from features beyond our selected 7, suggesting that including more comprehensive health, economic, and demographic indicators improves the model further.
 
-comparison_report = comparison.loc[:, [c for c in cols if c in comparison.columns]].copy()
-comparison_report["cv_rmse"] = comparison_report["cv_rmse"].abs()
-comparison_report = comparison_report.round(3)
-sort_cols = [f"year{HOLDOUT_YEAR}_rmse", "aic"]
-sort_cols = [c for c in sort_cols if c in comparison_report.columns]
-final_name = (
-    comparison_report.sort_values(sort_cols).index[0]
-    if sort_cols
-    else comparison_report.index[0]
-)
-comparison_report
-```
+## Multivariate Regression with Outlier Removal
+
+To assess whether extreme observations are disproportionately affecting our model, we now repeat the multivariate analysis after removing outliers based on studentized residuals. Countries with `|studentized residual| > 2` are excluded, which removes observations that deviate significantly from the model's predictions. This approach helps us understand whether the model's performance is driven by a few unusual cases or reflects genuine patterns across the majority of countries.
 
 ```{python}
-# | label: tbl-model-compare
-# | tbl-cap: "Model comparison (fit, information criteria, cross-validation, and holdout performance)."
-comparison_report
-```
+# | label: multivariate-no-outliers
+# | fig-cap: "Multivariate Regression with Outliers Removed (|y| > 2)"
+# | echo: false
 
-Table @tbl-model-compare provides the full model sequence. Fit and prediction improve substantially from the baseline (R2 from **0.693** to about **0.86**; holdout RMSE from **5.11** to about **3.37 years**), indicating large gains from adding mortality and contextual predictors. The best holdout RMSE is achieved by the interaction model (M_int1), while AIC also favors the mortality × HIV specification. We therefore balance interpretability and generalization when selecting the final model.
+# Fit initial model to identify outliers
+df_multi_clean = df[data_to_analyse + [LECol.LIFE_EXPECTANCY]].dropna()
+X_multi_clean = df_multi_clean[data_to_analyse]
+y_multi_clean = df_multi_clean[LECol.LIFE_EXPECTANCY]
 
-## Diagnostics and assumption checks (final model)
+# Fit OLS model to get studentized residuals
+X_multi_clean_sm = sm.add_constant(X_multi_clean)
+ols_model_clean = sm.OLS(y_multi_clean, X_multi_clean_sm).fit()
 
-We treat the best-performing model in Table @tbl-model-compare as the final specification and evaluate OLS assumptions with both tests and plots. In cross-sectional data, independence is a coarse diagnostic; emphasis is on residual structure, heteroscedasticity, and influence.
+# Get studentized residuals
+influence = ols_model_clean.get_influence()
+studentized_resids = influence.resid_studentized_internal
 
-```{python}
-# | label: final-model
-final_diag = registry.get(final_name).diag
-```
+# Remove outliers with |studentized residual| > 2
+outlier_mask = np.abs(studentized_resids) <= 2
+n_outliers_removed = (~outlier_mask).sum()
 
-```{python}
-# | label: tbl-final-metrics
-# | tbl-cap: "Final model fit metrics."
-final_metrics = pd.DataFrame(
-    {
-        "metric": ["r2", "adj_r2", "rmse", "aic", "aicc", "bic", "mdl"],
-        "value": [
-            final_diag.metrics.r2,
-            final_diag.metrics.adj_r2,
-            final_diag.metrics.rmse,
-            final_diag.metrics.aic,
-            final_diag.metrics.aicc,
-            final_diag.metrics.bic,
-            final_diag.metrics.mdl,
-        ],
-    }
-)
-final_metrics.assign(value=lambda d: d.value.astype(float).round(3))
-```
+print(f"Outliers removed: {n_outliers_removed} countries (|studentized residual| > 2)")
+print(f"Remaining samples: {outlier_mask.sum()} countries\n")
 
-```{python}
-# | label: tbl-final-effects
-# | tbl-cap: "Largest standardized effects in the final model (absolute estimate, excluding intercept)."
-final_coefs = coef_table(final_diag.model, pretty_map)
-(
-    final_coefs.loc[final_coefs.term_pretty != "Intercept"]
-    .assign(abs_estimate=lambda d: d.estimate.abs())
-    .sort_values("abs_estimate", ascending=False)
-    .drop(columns=["abs_estimate"])
-    .head(10)
-)
-```
+# Filter data
+X_multi_clean = X_multi_clean[outlier_mask]
+y_multi_clean = y_multi_clean[outlier_mask]
 
-Table @tbl-final-effects highlights which predictors matter most in standardized units. The largest negative associations are HIV/AIDS and adult mortality, while the economic‑development PC remains positive. Child nutrition and other contextual PCs contribute additional, smaller effects, providing a direct answer to the first research question.
-
-```{python}
-# | label: tbl-assumption-tests
-# | tbl-cap: "Assumption checks for the final model (test statistics and p-values)."
-registry.assumptions_table(names=[final_name])
-```
-
-```{python}
-# | label: tbl-vif
-# | tbl-cap: "Variance inflation factors (VIF) for the final model."
-final_diag.vif.sort_values("vif", ascending=False).head(12).round(2)
-```
-
-```{python}
-# | label: fig-resid-fitted
-# | fig-cap: "Residuals vs fitted values (final model)."
-final_diag.plot_residuals_vs_fitted()
-```
-
-```{python}
-# | label: fig-scale-location
-# | fig-cap: "Scale-location plot (final model)."
-final_diag.plot_scale_location()
-```
-
-```{python}
-# | label: fig-qq
-# | fig-cap: "Normal Q-Q plot of residuals (final model)."
-final_diag.plot_qq()
-```
-
-```{python}
-# | label: fig-influence
-# | fig-cap: "Influence plot with Cook's distance (final model)."
-final_diag.plot_influence()
-```
-
-The diagnostic plots (Figures @fig-resid-fitted to @fig-influence), the test summary (Table @tbl-assumption-tests), and the multicollinearity check (Table @tbl-vif) are interpreted jointly. The residual Q-Q plot shows heavier tails than a normal distribution, and the normality tests are significant (JB p < 0.001; Shapiro/AD p = 0.001), so inference should not rely solely on normal errors. The Breusch–Pagan and White tests indicate heteroscedasticity; consequently, **the HC3 robust standard errors in Table @tbl-robust-se are treated as the primary inference**, and the classical SEs are secondary. VIFs are mostly modest, indicating only mild multicollinearity. The main mitigation is to interpret standard errors cautiously and check robustness with alternative variance estimates or sensitivity refits.
-
-```{python}
-# | label: tbl-robust-se
-# | tbl-cap: "Final model coefficients with HC3 robust standard errors (sensitivity)."
-robust = final_diag.model.get_robustcov_results(cov_type="HC3")
-coef_table(robust, pretty_map)
-```
-
-```{python}
-# | label: tbl-influence-sensitivity
-# | tbl-cap: "Sensitivity refit after dropping observations with Cook's distance > 4/n."
-cooks = final_diag.assumptions.cooks_distance
-cook_thresh = 4 / len(cooks)
-keep_mask = cooks <= cook_thresh
-
-rhs_final = registry.get(final_name).rhs
-
-sens_diag = fit_ols_formula(
-    df_train_model.loc[keep_mask],
-    rhs=rhs_final,
-    target_col=LECol.TARGET,
+# Train/test split on cleaned data
+X_train_clean, X_test_clean, y_train_clean, y_test_clean = train_test_split(
+    X_multi_clean, y_multi_clean, test_size=0.2, random_state=42
 )
 
-coef_full = coef_table(final_diag.model, pretty_map).rename(
-    columns={"estimate": "estimate_full", "ci_low": "ci_low_full", "ci_high": "ci_high_full"}
-)
-coef_sens = coef_table(sens_diag.model, pretty_map).rename(
-    columns={"estimate": "estimate_sens", "ci_low": "ci_low_sens", "ci_high": "ci_high_sens"}
-)
+# Fit model on cleaned data
+model_clean = LinearRegression()
+model_clean.fit(X_train_clean, y_train_clean)
+y_pred_clean = model_clean.predict(X_test_clean)
 
-coef_full.merge(coef_sens, on="term_pretty", how="inner").round(3)
-```
+# Calculate metrics
+r2_clean = r2_score(y_test_clean, y_pred_clean)
+rmse_clean = np.sqrt(mean_squared_error(y_test_clean, y_pred_clean))
 
-The HC3 robust standard errors (Table @tbl-robust-se) preserve the main effects and reduce the certainty for the interaction term (p = 0.059), suggesting the interaction is informative but not dominant. The sensitivity refit excluding high Cook’s distance observations (Table @tbl-influence-sensitivity) preserves the sign and magnitude of the core effects, indicating the results are not driven by a small set of influential countries.
+print(f"Model Performance (without outliers):")
+print(f"R² Score: {r2_clean:.4f}")
+print(f"RMSE: {rmse_clean:.4f}")
+print(f"Training samples: {len(y_train_clean)}")
+print(f"Test samples: {len(y_test_clean)}")
+print(f"\nComparison to original model:")
+print(f"Original R²: {r2_multi:.4f}")
+print(f"Improvement: {(r2_clean - r2_multi):.4f} ({((r2_clean - r2_multi) / r2_multi * 100):.1f}%)")
 
-## Out-of-sample performance
+# Create visualization
+fig, axes = plt.subplots(1, 2, figsize=(8, 4))
 
-We evaluate predictive performance on the 2011 holdout year and visualize calibration.
+# Plot 1: Actual vs Predicted (cleaned data)
+axes[0].scatter(y_test_clean, y_pred_clean, alpha=0.6, s=50, color='steelblue')
+axes[0].plot([y_test_clean.min(), y_test_clean.max()],
+             [y_test_clean.min(), y_test_clean.max()], 'r--', lw=2, label='Perfect Prediction')
+axes[0].set_xlabel('Actual Life Expectancy', fontsize=11)
+axes[0].set_ylabel('Predicted Life Expectancy', fontsize=11)
+axes[0].set_title(f'Without Outliers: Actual vs Predicted\n(R² = {r2_clean:.4f})', fontsize=12, fontweight='bold')
+axes[0].grid(True, alpha=0.3)
+axes[0].legend()
 
-```{python}
-# | label: tbl-holdout-summary
-# | tbl-cap: "Holdout-year performance summary for the final model."
-final_eval = registry.get(final_name).eval_metrics
-holdout_summary = pd.DataFrame(
-    {
-        "metric": ["RMSE", "R2", "n_obs"],
-        "value": [final_eval.rmse, final_eval.r2, final_eval.n_obs],
-    }
-)
+# Plot 2: Feature Coefficients (cleaned model)
+coefficients_clean = pd.DataFrame({
+    'Feature': [str(f).replace('_', ' ').title() for f in data_to_analyse],
+    'Coefficient': model_clean.coef_
+}).sort_values('Coefficient', key=abs, ascending=False)
 
-holdout_summary.assign(value=lambda d: d.value.astype(float).round(3))
-```
+colors_clean = ['green' if c > 0 else 'red' for c in coefficients_clean['Coefficient']]
+bars = axes[1].barh(coefficients_clean['Feature'], coefficients_clean['Coefficient'], color=colors_clean, alpha=0.7)
 
-To quantify predictive uncertainty without relying on homoscedastic, normal residuals, we use bootstrap refits of the final model. (Statsmodels can compute analytical prediction intervals via `get_prediction().summary_frame()`, but the diagnostics above show heteroscedasticity and non‑normality, so we prefer bootstrap intervals for the mean predictions.)
+# Add value labels
+for i, (idx, row) in enumerate(coefficients_clean.iterrows()):
+    value = row['Coefficient']
 
-```{python}
-# | label: tbl-holdout-bootstrap
-# | tbl-cap: "Bootstrap uncertainty for holdout predictions (final model; B=300 refits)."
-# | code-fold: true
-# | output: false
+    if value < 0:
+        x_pos = max(-0.5, value - 0.15)
+        ha = 'right'
+    else:
+        x_pos = min(0.5, value + 0.15)
+        ha = 'left'
 
-N_BOOT = 300
-rng = np.random.default_rng(42)
-rhs_final = registry.get(final_name).rhs
+    axes[1].text(x_pos, i, f'{value:.2f}',
+                va='center', ha=ha,
+                fontsize=9, fontweight='bold', color='black')
 
-y_holdout = df_holdout_model[LECol.TARGET].to_numpy()
-n_train = df_train_model.shape[0]
-n_holdout = len(y_holdout)
+axes[1].set_xlabel('Coefficient Value', fontsize=11)
+axes[1].set_title('Feature Importance (Without Outliers)', fontsize=12, fontweight='bold')
+axes[1].axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+axes[1].grid(True, alpha=0.3, axis='x')
+plt.subplots_adjust(left=0.15, right=0.95)
 
-pred_boot = np.empty((N_BOOT, n_holdout), dtype=float)
-rmse_boot = np.empty(N_BOOT, dtype=float)
-
-for b in range(N_BOOT):
-    sample_idx = rng.integers(0, n_train, size=n_train)
-    boot_df = df_train_model.iloc[sample_idx]
-    boot_diag = fit_ols_formula(boot_df, rhs=rhs_final, target_col=LECol.TARGET)
-    boot_pred = boot_diag.model.predict(df_holdout_model).to_numpy()
-    pred_boot[b] = boot_pred
-    rmse_boot[b] = np.sqrt(np.mean((y_holdout - boot_pred) ** 2))
-
-pred_boot_lo = np.quantile(pred_boot, 0.025, axis=0)
-pred_boot_hi = np.quantile(pred_boot, 0.975, axis=0)
-pred_boot_med = np.quantile(pred_boot, 0.5, axis=0)
-pred_boot_width = pred_boot_hi - pred_boot_lo
-
-boot_summary = pd.DataFrame(
-    {
-        "metric": [
-            "RMSE (median)",
-            "RMSE 2.5%",
-            "RMSE 97.5%",
-            "Mean 95% CI width (mean pred)",
-            "Median 95% CI width (mean pred)",
-        ],
-        "value": [
-            float(np.median(rmse_boot)),
-            float(np.quantile(rmse_boot, 0.025)),
-            float(np.quantile(rmse_boot, 0.975)),
-            float(np.mean(pred_boot_width)),
-            float(np.median(pred_boot_width)),
-        ],
-    }
-)
-
-boot_summary.assign(value=lambda d: d.value.astype(float).round(3))
-```
-
-```{python}
-# | label: fig-pred-vs-obs
-# | fig-cap: "Holdout-year calibration: observed vs predicted life expectancy (final model) with $95\\%$ bootstrap intervals for mean predictions."
-exog = df_holdout_model
-pred = final_diag.model.predict(exog)
-obs = exog[LECol.TARGET]
-
-order = np.argsort(pred)
-pred_sorted = np.asarray(pred)[order]
-obs_sorted = np.asarray(obs)[order]
-lo_sorted = pred_boot_lo[order]
-hi_sorted = pred_boot_hi[order]
-
-plt.figure()
-sns.scatterplot(x=pred, y=obs, alpha=0.3)
-plt.fill_between(pred_sorted, lo_sorted, hi_sorted, color="tab:blue", alpha=0.15)
-min_v = float(np.nanmin([pred.min(), obs.min()]))
-max_v = float(np.nanmax([pred.max(), obs.max()]))
-plt.plot([min_v, max_v], [min_v, max_v], linewidth=2)
-plt.xlabel("Predicted life expectancy (holdout)")
-plt.ylabel("Observed life expectancy (holdout)")
+plt.tight_layout()
 plt.show()
 ```
 
-The holdout RMSE and R2 (Table @tbl-model-compare and Table @tbl-holdout-summary) quantify generalization to another year. For the final model, RMSE is **about 3.37 years** and R2 is **about 0.86**, which indicates strong out-of-sample performance. The bootstrap refits (Table @tbl-holdout-bootstrap) show a narrow RMSE band across resamples and typical $95\\%$ mean‑prediction intervals on the order of a few years (capturing model uncertainty but not irreducible noise). The calibration plot in Figure @fig-pred-vs-obs shows points clustered around the 45‑degree line, with the bootstrap band widening slightly at the extremes, suggesting generally well‑calibrated predictions with some error for very low or very high life expectancy values.
+**Analysis:**
 
-## Summary and limitations
+Removing outliers with studentized residuals `|y| > 2` reveals several important insights about model robustness:
 
-The stepwise results show that **economic development** (GDP/expenditure PC), together with mortality burdens (adult mortality, HIV/AIDS, and child nutrition), explains substantial variation in life expectancy, with health‑risk terms entering negatively as expected. The adult mortality × HIV interaction suggests that mortality’s marginal effect is attenuated at higher HIV burden. Out-of-sample performance indicates that the 2014-trained model explains about **86%** of the 2011 variance with a typical error of **~3.4 years**, which is strong for a linear model on cross-sectional data.
+**Model Performance:**
+- The cleaned model achieves **R² = 0.8128** compared to R² = 0.7791 with outliers included
+- This represents a **+0.0337 improvement (+4.3%)** in explained variance
+- The tighter scatter around the perfect prediction line shows reduced prediction errors
+- Removing extreme cases allows the model to better capture the core relationships for typical countries
 
-Limitations include the observational design, potential residual confounding, and reliance on standardized predictors (effect sizes are per standard deviation rather than original units). Diagnostics and sensitivity checks suggest mild heteroscedasticity and non-normal residuals, so coefficient uncertainty should be interpreted with caution. A natural extension is to compare against more flexible nonlinear models (e.g., trees or boosting) to test whether predictive performance improves beyond OLS.
+**Coefficient Changes:**
+
+Comparing the feature importance before and after outlier removal:
+
+| Feature | Original | Without Outliers | Change |
+|---------|----------|------------------|--------|
+| **HIV/AIDS** | -4.76 | -4.70 | +0.06 (stable) |
+| **Schooling** | +3.39 | +3.30 | -0.09 (stable) |
+| **Percentage Expenditure** | +1.85 | +1.88 | +0.03 (stable) |
+| **GDP** | -0.95 | -1.02 | -0.07 (stable) |
+| **Alcohol** | +0.91 | +0.17 | -0.74 (reduced) |
+| **BMI** | +0.31 | +0.62 | +0.31 (increased) |
+| **Total Expenditure** | +0.03 | +0.50 | +0.47 (increased) |
+| **Baby Deaths** | -0.23 | -0.20 | +0.03 (stable) |
+
+**Key Findings:**
+
+1. **Improved Predictive Power**: The R² improvement from 0.7791 to 0.8128 indicates that outliers were introducing noise rather than capturing genuine patterns. The model now explains 81% of variance in typical countries, up from 78%.
+
+2. **Robust Core Predictors**: HIV/AIDS (-4.70), Schooling (+3.30), and Percentage Expenditure (+1.88) maintain their dominance and relative magnitudes. This confirms these relationships are consistent across all country types, not driven by extreme cases.
+
+3. **Outlier-Sensitive Features**:
+   - **Alcohol** coefficient dropped dramatically from +0.91 to +0.17, suggesting the positive alcohol-longevity relationship was largely driven by outlier countries
+   - **BMI** and **Total Expenditure** became more important (+0.31 and +0.47 increases), indicating outliers were masking their true contributions
+
+4. **Practical Implications**: For policy applications, the cleaned model is more reliable for predicting outcomes in typical development scenarios. The stability of HIV/AIDS, Schooling, and Healthcare Expenditure as top predictors reinforces their importance regardless of country context, while the alcohol relationship appears less robust and may reflect confounding rather than causal effects.

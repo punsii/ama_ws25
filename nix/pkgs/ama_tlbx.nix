@@ -11,12 +11,15 @@ python.pkgs.buildPythonPackage {
     matplotlib
     numpy
     pandas
+    patsy
     plotly
+    pycountry
     pytest
     scikit-learn
     scipy
     seaborn
     statsmodels
+    streamlit
     sympy
   ];
 }
