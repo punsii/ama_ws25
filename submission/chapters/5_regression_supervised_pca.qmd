@@ -16,7 +16,7 @@ This chapter isolates the supervised PCA regression workflow and its interpretat
 
 We follow the supervised principal components (SPCA) idea: screen predictors by their association with the outcome, run PCA on the screened subset, and regress on the resulting PCs. This aligns with the canonical SPCA framework of Bair et al. @Bair01032006.
 
-Motivation: even when n > p (as here), unsupervised PCA can emphasize variance unrelated to the outcome, which can weaken predictive focus and interpretability. SPCA filters predictors by outcome association before PCA, so the resulting components remain low-dimensional but outcome-relevant. The approach highlights important variables and keeps the regression model interpretable while allowing covariates and interaction terms. @Bair01032006
+<!-- Motivation: even when n > p (as here), unsupervised PCA can emphasize variance unrelated to the outcome, which can weaken predictive focus and interpretability. SPCA filters predictors by outcome association before PCA, so the resulting components remain low-dimensional but outcome-relevant. The approach highlights important variables and keeps the regression model interpretable while allowing covariates and interaction terms. @Bair01032006 -->
 
 ```{python}
 # | label: setup
@@ -206,17 +206,12 @@ for pc_a, pc_b in combinations(top_pcs, 2):
         }
     )
 
-# Handle empty screen_rows case
-if screen_rows:
-    screen_df = pd.DataFrame(screen_rows).sort_values("delta_aic")
-    interaction_candidates = (
-        screen_df.query("pval < 0.05 and delta_aic < 0").head(5)["term"].tolist()
-    )
-    if not interaction_candidates:
-        interaction_candidates = screen_df.head(3)["term"].tolist()
-else:
-    # No interactions to test, use empty list
-    interaction_candidates = []
+screen_df = pd.DataFrame(screen_rows).sort_values("delta_aic")
+interaction_candidates = (
+    screen_df.query("pval < 0.05 and delta_aic < 0").head(5)["term"].tolist()
+)
+if not interaction_candidates:
+    interaction_candidates = screen_df.head(3)["term"].tolist()
 
 interaction_paths, interaction_best_map, interaction_compare = (
     registry.run_selection_grid(
@@ -335,8 +330,8 @@ BP borderline failure with White passing implies mild heteroscedasticity: coeffi
 # | label: supervised-pca-eval
 # | tbl-cap: "Holdout-year performance (2011) for supervised PCA model."
 eval_holdout = registry.evaluate_on(
-    best_model_name,
-    holdout_pca_df,
+    df=holdout_pca_df,
+    name=best_model_name,
     label=f"year{HOLDOUT_YEAR}",
 )
 eval_holdout
@@ -377,7 +372,7 @@ for year in years_eval:
         yr_full = yr_full.assign(**{STATUS_DUMMY: yr_full[LECol.STATUS].astype(int)})
     yr_pca = pca_result.transform(yr_full)
     yr_df = yr_pca.assign(**yr_full[[LECol.TARGET]])
-    metrics = registry.evaluate_on(best_model_name, yr_df, label=f"year{year}")
+    metrics = registry.evaluate_on(df=yr_df, name=best_model_name, label=f"year{year}")
     rows.append(
         {
             "year": year,
@@ -446,7 +441,7 @@ for year in years_eval_all:
     yr_pca = pca_result.transform(yr_full)
     yr_df = yr_pca.assign(**yr_full[[LECol.TARGET]])
     for model in model_labels.keys():
-        metrics = registry.evaluate_on(model, yr_df, label=f"year{year}")
+        metrics = registry.evaluate_on(df=yr_df, name=model, label=f"year{year}")
         rows.append(
             {
                 "year": year,

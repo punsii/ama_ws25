@@ -241,6 +241,25 @@ def _tf_label(col: str) -> str:
     return _tf_expr(col)
 
 
+def fit_additive(
+    registry: ModelRegistry,
+    df: pd.DataFrame,
+    *,
+    name: str,
+    terms: list[str | LECol],
+    extra_terms: list[str] | None = None,
+    target_col: str = LECol.TARGET,
+    refit: bool = False,
+):
+    rhs_terms = [str(t) for t in terms]
+    if extra_terms:
+        rhs_terms.extend(extra_terms)
+    rhs = " + ".join(rhs_terms)
+    cols = [target_col, *terms]
+    data = df[cols].dropna()
+    return registry.fit(data, name=name, rhs=rhs, refit=refit)
+
+
 ```
 
 :::{.callout-note collapse="true"}
@@ -294,11 +313,11 @@ with pd.option_context("display.max_colwidth", None):
 registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
 
 # Example: adult mortality only
-rhs_m1 = str(LECol.ADULT_MORTALITY)
-m1 = registry.fit(
-    df_train[[LECol.TARGET, LECol.ADULT_MORTALITY]].dropna(),
+m1 = fit_additive(
+    registry,
+    df_train,
     name="m1_adult_mortality",
-    rhs=rhs_m1,
+    terms=[LECol.ADULT_MORTALITY],
 )
 
 display(m1)
@@ -322,11 +341,11 @@ _ = m1.plot_residual_diags()
 # | label: baseline-model-adult-mortality-hdi
 # | code-fold: true
 # HDI upper-bound check (HDI embeds life expectancy).
-rhs_m1_hdi = " + ".join([str(LECol.ADULT_MORTALITY), str(LECol.HDI)])
-m1_hdi = registry.fit(
-    df_train[[LECol.TARGET, LECol.ADULT_MORTALITY, LECol.HDI]].dropna(),
+m1_hdi = fit_additive(
+    registry,
+    df_train,
     name="m1_adult_mortality_hdi",
-    rhs=rhs_m1_hdi,
+    terms=[LECol.ADULT_MORTALITY, LECol.HDI],
 )
 display(m1_hdi)
 ```
@@ -347,6 +366,14 @@ Influence diagnostics indicate that a small subset of countries has disproportio
 
 In the interpretability-focused models below, we therefore **avoid using HDI**. We also treat `adult_mortality` as a near-tautological benchmark predictor: it provides an informative baseline for predictive performance, but it is too close to the outcome’s definition to serve as the central explanatory variable when the goal is to identify modifiable determinants.
 :::
+
+```{python}
+# | label: tbl-baseline-compare
+# | tbl-cap: "Baseline models compared (sorted by AIC)."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m1_adult_mortality", "m1_adult_mortality_hdi"]]
+```
 
 ```{python}
 # | label: undp-socio-pca
@@ -422,31 +449,30 @@ if undp_pc1 is None:
     raise ValueError("UNDP socio PC1 missing; check UNDP merge/PCA block.")
 
 # (1) econ PCs only
-rhs_socio_1 = " + ".join([str(econ_pc1), str(econ_pc2)])
-socio_1 = registry.fit(
-    df_train[[LECol.TARGET, econ_pc1, econ_pc2]],
+socio_1 = fit_additive(
+    registry,
+    df_train,
     name="m_socio_eco_pcs",
-    rhs=rhs_socio_1,
+    terms=[econ_pc1, econ_pc2],
 )
 display(socio_1)
 
 # (2) add status + UNDP socio PC1
-rhs_socio_2 = " + ".join([STATUS_DUMMY, str(econ_pc1), str(econ_pc2), str(undp_pc1)])
-socio_2 = registry.fit(
-    df_train[[LECol.TARGET, STATUS_DUMMY, econ_pc1, econ_pc2, undp_pc1]],
+socio_2 = fit_additive(
+    registry,
+    df_train,
     name="m_socio_eco_undp",
-    rhs=rhs_socio_2,
+    terms=[STATUS_DUMMY, econ_pc1, econ_pc2, undp_pc1],
 )
 display(socio_2)
 
 # (3) status + econ PC1 + quadratic UNDP PC1
-rhs_socio_3 = " + ".join(
-    [STATUS_DUMMY, str(econ_pc1), str(undp_pc1), f"I({undp_pc1} ** 2)"]
-)
-socio_3 = registry.fit(
-    df_train[[LECol.TARGET, STATUS_DUMMY, econ_pc1, undp_pc1]],
+socio_3 = fit_additive(
+    registry,
+    df_train,
     name="m_socio_eco_undp_quad",
-    rhs=rhs_socio_3,
+    terms=[STATUS_DUMMY, econ_pc1, undp_pc1],
+    extra_terms=[f"I({undp_pc1} ** 2)"],
 )
 display(socio_3)
 ```
@@ -491,20 +517,19 @@ immun_base_block = [STATUS_DUMMY, LECol.HIV_AIDS]
 if econ_pc1 is not None:
     immun_base_block.append(econ_pc1)
 
-base_cols = [LECol.TARGET, *immun_base_block]
-base_diag = registry.fit(
-    df_train[base_cols],
+base_diag = fit_additive(
+    registry,
+    df_train,
     name="m_immun_base",
-    rhs=" + ".join(str(c) for c in immun_base_block),
+    terms=immun_base_block,
 )
 display(base_diag)
 
-immun_cols = [LECol.TARGET, *immun_base_block, immun_pc1]
-rhs_immun_reduced = " + ".join(str(c) for c in immun_cols if c != LECol.TARGET)
-immun_reduced = registry.fit(
-    df_train[immun_cols],
+immun_reduced = fit_additive(
+    registry,
+    df_train,
     name="m_immunization_reduced",
-    rhs=rhs_immun_reduced,
+    terms=[*immun_base_block, immun_pc1],
     refit=True,
 )
 display(immun_reduced)
@@ -542,14 +567,12 @@ if econ_pc1 is not None:
 
 health = [LECol.ALCOHOL, LECol.BMI]
 
-model_cols = [LECol.TARGET, *controls, *health]
-train_alc = df_train[model_cols].dropna()
-
-rhs_alc = " + ".join(str(c) for c in model_cols if c != LECol.TARGET)
-alc_diag = registry.fit(
+train_alc = df_train[[LECol.TARGET, *controls, *health]].dropna()
+alc_diag = fit_additive(
+    registry,
     train_alc,
     name="m_alcohol_bmi",
-    rhs=rhs_alc,
+    terms=[*controls, *health],
 )
 display(alc_diag)
 ```
@@ -558,6 +581,14 @@ display(alc_diag)
 # | label: alcohol-bmi-diagnostics
 # | fig-cap: "Alcohol and BMI model diagnostics."
 _ = alc_diag.plot_residual_diags()
+```
+
+```{python}
+# | label: tbl-alcohol-bmi-compare
+# | tbl-cap: "Alcohol/BMI model compared (sorted by AIC)."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_alcohol_bmi"]]
 ```
 
 Conditional on development status, total health expenditure, and the economic‑development PC, `bmi` remains positively associated with life expectancy (**+1.93 years per 1 SD**, p < 0.001; 95% CI **[1.00, 2.86]**). In contrast, `alcohol` is small and not statistically different from zero (**-0.33 years per 1 SD**, p = 0.514; 95% CI **[-1.33, 0.67]**). The model is jointly significant (F‑test p < 0.001), but overall fit is comparatively weak (**$R^2 = 0.608$**, RMSE = **5.07 years**). Normality fails (JB p < 0.001; Shapiro p = 0.001) and BP indicates heteroskedasticity (BP p = 0.008), so p‑values and CIs should be treated cautiously.
@@ -580,15 +611,24 @@ nl_base = [LECol.HIV_AIDS, STATUS_DUMMY, *nl_terms]
 nl_df = df_train[[LECol.TARGET, *nl_base]].dropna()
 
 rhs_linear = " + ".join(str(t) for t in nl_base)
-nl_linear = registry.fit(
+nl_linear = fit_additive(
+    registry,
     nl_df,
     name="m_nonlinear_linear",
-    rhs=rhs_linear,
+    terms=nl_base,
 )
 display(nl_linear)
 ```
 
 This parsimonious linear specification explains **$R^2 = 0.798$** of the variance (RMSE = **3.64 years**) and is jointly significant (F‑test p < 0.001). Key effects (years per 1 SD) are: `hiv_aids` **-3.40** (p < 0.001; 95% CI **[-4.00, -2.80]**), `economic_development_PC1` **+2.80** (p < 0.001; 95% CI **[2.24, 3.36]**), `total_expenditure` **+0.67** (p = 0.033; 95% CI **[0.06, 1.29]**), and `immunization_PC1` **-1.13** (p < 0.001; 95% CI **[-1.51, -0.76]**). Normality is acceptable (JB p = 0.119; Shapiro p = 0.111), but heteroskedasticity persists (BP p = 0.002; White p = 0.011), so OLS SEs/CIs may be biased. Cook’s distance flags **12** observations, so we treat this as a **robust baseline association model** rather than precise causal inference.
+
+```{python}
+# | label: tbl-nonlinearity-compare
+# | tbl-cap: "Nonlinearity baseline model compared (sorted by AIC)."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_nonlinear_linear"]]
+```
 
 ## Effect modification (interactions)
 
@@ -613,19 +653,21 @@ if immun_pc1 is not None:
 rhs_main = " + ".join(str(t) for t in main_terms)
 train_int = df_train[[LECol.TARGET, *main_terms]].dropna()
 
-int_base = registry.fit(
+int_base = fit_additive(
+    registry,
     train_int,
     name="m_interactions_base",
-    rhs=rhs_main,
+    terms=main_terms,
     refit=True,
 )
 display(int_base)
 
-rhs_int_reduced = " + ".join([rhs_main, f"{STATUS_DUMMY}:{LECol.ALCOHOL}"])
-int_diag = registry.fit(
+int_diag = fit_additive(
+    registry,
     train_int,
     name="m_interactions_reduced",
-    rhs=rhs_int_reduced,
+    terms=main_terms,
+    extra_terms=[f"{STATUS_DUMMY}:{LECol.ALCOHOL}"],
     refit=True,
 )
 display(int_diag)
@@ -658,6 +700,14 @@ int_diag.plot_residual_diags()
 display(int_diag.vif)
 ```
 
+```{python}
+# | label: tbl-interaction-compare
+# | tbl-cap: "Interaction models compared (sorted by AIC)."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_interactions_base", "m_interactions_reduced"]]
+```
+
 The interaction plot shows **opposing alcohol slopes** by development status: a mildly positive slope for developing countries and a negative slope for developed countries. In the interaction model, `alcohol` is positive (**+0.87 years per 1 SD**, p = 0.026; 95% CI **[0.11, 1.64]**) while the interaction term is negative (**-3.71**, p = 0.055; 95% CI **[-7.49, 0.08]**), implying a developed‑country slope of roughly **-2.84 years per 1 SD**. The model is jointly significant (F‑test p < 0.001), but normality fails (JB p = 0.002; Shapiro p = 0.006) and BP indicates heteroskedasticity (BP p = 0.002), so p‑values/CIs should be treated cautiously. Collinearity is substantial (max VIF **12.6**, @tbl-interaction-vif), which inflates SEs and weakens stability. We therefore treat effect modification as **exploratory** and do not use this interaction specification as the chapter’s final interpretable model.
 
 ## Influence and outliers
@@ -669,21 +719,26 @@ Trimmed refit: same formula as the nonlinearity model, estimated after excluding
 ```{python}
 # | label: influence-sensitivity
 # | code-fold: true
-final_diag = nl_linear
-cooks = final_diag.assumptions.cooks_distance
-threshold = 4 / len(cooks)
-keep = cooks <= threshold
-
-sens_diag = registry.fit(
-    nl_df.loc[keep],
+threshold = 4 / len(nl_df)
+sens_initial, sens_diag = registry.fit(
+    nl_df,
     name="m_nonlinear_linear_trimmed",
     rhs=rhs_linear,
     refit=True,
+    cook_distance_threshold=threshold,
 )
 display(sens_diag)
 ```
 
 Trimming a small set of influential observations (Cook’s distance > 4/n) is a simple sensitivity check. In our data this removes **13 countries** (179 $\rightarrow$ 166 observations). The trimmed model remains jointly significant (F‑test p < 0.001) with stable key effects (`hiv_aids` **-3.59** years; 95% CI **[-4.21, -2.97]**, `total_expenditure` **+1.21** years; 95% CI **[0.64, 1.77]**, `immunization_PC1` **-1.00** years; 95% CI **[-1.35, -0.66]**). Normality is acceptable (JB p = 0.307; Shapiro p = 0.129), but BP still flags heteroskedasticity (BP p = 0.012), so CIs may still be conservative. The largest absolute coefficient change is about **0.86 years** (for `status_developed`), and holdout RMSE changes only marginally (**4.01 $\rightarrow$ 4.02 years**). The influence plots suggest outliers concentrated in a few high‑leverage countries (e.g., **Lesotho**, **Eswatini**, **South Africa**, **Nigeria**), but the main coefficient signs remain stable, supporting the qualitative conclusions of the baseline model.
+
+```{python}
+# | label: tbl-influence-compare
+# | tbl-cap: "Influence sensitivity: base vs trimmed nonlinearity model."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_nonlinear_linear", "m_nonlinear_linear_trimmed"]]
+```
 
 ## Generalization and holdout performance
 
@@ -756,13 +811,21 @@ if STATUS_DUMMY not in panel_df.columns and LECol.STATUS in panel_df.columns:
 panel_cols = [LECol.TARGET, LECol.ADULT_MORTALITY, LECol.HIV_AIDS, STATUS_DUMMY]
 panel_train = panel_df[panel_cols].dropna()
 
-rhs_panel = " + ".join(str(c) for c in panel_cols if c != LECol.TARGET)
-panel_diag = panel_registry.fit(
+panel_diag = fit_additive(
+    panel_registry,
     panel_train,
     name="m_panel",
-    rhs=rhs_panel,
+    terms=[LECol.ADULT_MORTALITY, LECol.HIV_AIDS, STATUS_DUMMY],
 )
 display(panel_diag)
+```
+
+```{python}
+# | label: tbl-panel-compare
+# | tbl-cap: "Panel model summary (single model)."
+panel_registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_panel"]]
 ```
 
 The Durbin–Watson statistic is far below 2 (**DW = 0.48**), indicating strong positive autocorrelation in the panel residuals. The model is jointly significant (F‑test p < 0.001) with sizable effects (e.g., `adult_mortality` **-2.62** years per 1 SD, 95% CI **[-2.92, -2.33]**; `hiv_aids` **-4.43**, CI **[-4.72, -4.14]**; `status_developed` **+6.20**, CI **[5.55, 6.84]**), but autocorrelation and heteroskedasticity (BP p < 0.001; White p < 0.001) violate OLS assumptions. As a result, standard errors and CIs are not reliable in the pooled panel fit (despite $R^2 = 0.709$ and RMSE = 4.71 years). We keep the panel model only as a descriptive sensitivity check and base inference on the cross‑sectional models. A rigorous panel treatment would require country‑clustered or time‑clustered standard errors, or an explicit panel model (fixed effects / random effects / GLS with AR(1) errors), which is outside the scope of this chapter.
