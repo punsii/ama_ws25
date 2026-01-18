@@ -7,7 +7,7 @@ format:
 execute:
   warning: false
   message: false
-  cache: false
+  cache: true
 ---
 
 # Regression: Supervised PCA
@@ -110,7 +110,7 @@ print(strong_features)
 ```
 
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### Supervised PCA fit
 
 The first reduction step is **statistical and pragmatic**: we retain only those PCs that are significant at the 5% level in an initial OLS fit on all PCs. This yields a reduced PC regression that remains high-performing in-sample ($R^2 \approx 0.97$) while discarding PCs that contribute little conditional signal.
@@ -137,7 +137,13 @@ pc_holdout = pca_result.transform(holdout_full)
 
 train_pca_df = pc_train.assign(**train_full[[LECol.TARGET]])
 holdout_pca_df = pc_holdout.assign(**holdout_full[[LECol.TARGET]])
-print(f"#PCs: {len(pc_train.columns.tolist())}")
+```
+
+```{python}
+# | label: supervised-pca-debug
+# | include: false
+print(f"strong_features: {len(strong_features)}")
+print(f"supervised_pcs: {pc_train.shape[1]}")
 ```
 
 Because PCs are orthogonal by construction, multicollinearity is minimal (VIF $\approx 1$ by design). However, normality and homoscedasticity still need to be checked at the residual level: in the untrimmed reduced PC fit, Breusch–Pagan tends to be more sensitive (often rejecting), while White’s test may not reject, indicating that any heteroscedasticity is likely **mild and form-dependent** rather than severe or systematically misspecified.
@@ -174,7 +180,7 @@ The reduced supervised-PCA model explains most variance in life expectancy ($R^2
 :::
 
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 
 ### Stepwise AIC model selection
 
@@ -203,7 +209,7 @@ The stepwise AIC model is only marginally different from the reduced model (AIC 
 :::
 
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### Interaction-augmented fit
 
 We continue by considering pairwise interactions among the top PCs (by |t|) in the reduced supervised-PCA model. Each candidate interaction is screened by its individual p-value and AIC improvement when added to the set of potential terms which are subsequently considered in another stepwise AIC selection.
@@ -266,7 +272,7 @@ The resulting interaction-augmented model improves AIC substantially (AIC $\appr
 
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### Cook's distance trim (interaction model)
 
 We proceed by trimming influential points from the interaction model using Cook's distance (threshold $4/n$). This removes points that have a disproportionate influence on the fit, stabilizing inference and diagnostics.
@@ -292,7 +298,7 @@ The Cook's-distance trimming step resulted in the removal of 12 data points (cou
 
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### Final model specification (trimmed)
 
 The final step is to remove the two non-significant terms from the Cook's-trimmed interaction model to yield the final specification, which is then refit on the trimmed data.
