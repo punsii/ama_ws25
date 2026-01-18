@@ -78,6 +78,11 @@ registry = ModelRegistry(eval_year=HOLDOUT_YEAR)
 
 ## Supervised PCA regression
 
+### Reduction to an outcome-relevant PC basis
+
+We first screen predictors using their absolute marginal correlation with the target (threshold $|r|>0.25$ following @Bair01032006) and exclude the HDI feature to avoid mechanical target leakage. PCA is then fitted on this screened subset, producing an orthogonal PC basis.
+
+
 ```{python}
 # | label: supervised-pca
 # | code-fold: false
@@ -104,8 +109,12 @@ strong_features = [
 print(strong_features)
 ```
 
+
 :::{.callout-note collapse="true"}
 ### Supervised PCA fit
+
+The first reduction step is **statistical and pragmatic**: we retain only those PCs that are significant at the 5% level in an initial OLS fit on all PCs. This yields a reduced PC regression that remains high-performing in-sample ($R^2 \approx 0.97$) while discarding PCs that contribute little conditional signal.
+
 ```{python}
 # | label: tbl-supervised-pca-fit
 # | code-fold: true
@@ -130,6 +139,8 @@ train_pca_df = pc_train.assign(**train_full[[LECol.TARGET]])
 holdout_pca_df = pc_holdout.assign(**holdout_full[[LECol.TARGET]])
 print(f"#PCs: {len(pc_train.columns.tolist())}")
 ```
+
+Because PCs are orthogonal by construction, multicollinearity is minimal (VIF $\approx 1$ by design). However, normality and homoscedasticity still need to be checked at the residual level: in the untrimmed reduced PC fit, Breusch–Pagan tends to be more sensitive (often rejecting), while White’s test may not reject, indicating that any heteroscedasticity is likely **mild and form-dependent** rather than severe or systematically misspecified.
 
 ```{python}
 # | label: supervised-pca-initial
@@ -158,13 +169,16 @@ spca_reduced = registry.fit(
 )
 display(spca_reduced)
 ```
+
+The reduced supervised-PCA model explains most variance in life expectancy ($R^2 \approx 0.97$) with low in-sample error (RMSE $\approx$ 1.36). All retained PCs are statistically significant at 5%, indicating that the supervised PCA basis concentrates signal across multiple orthogonal axes rather than a single dominant factor.
 :::
 
-The reduced supervised-PCA model explains most variance in life expectancy (R^2 ~ 0.97) with low in-sample error (RMSE ~ 1.36). All retained PCs are statistically significant at 5%, indicating that the supervised PCA basis concentrates signal across multiple orthogonal axes rather than a single dominant factor.
 
 :::{.callout-note collapse="true"}
 
 ### Stepwise AIC model selection
+
+Instead of using all significant PCs, we can also run stepwise AIC selection among the PCs to find a more parsimonious subset.
 
 ```{python}
 # | label: supervised-pca-stepwise
@@ -183,12 +197,17 @@ spca_stepwise_name = stepwise_best_map.loc[0, "model"]
 spca_stepwise = registry.get(spca_stepwise_name).diag
 display(spca_stepwise)
 ```
+
+The stepwise AIC model is only marginally different from the reduced model (AIC $\approx$ 645 vs 647), adding PC2 (borderline $p \approx 0.052$). This suggests the reduced model is already near the AIC optimum while keeping the specification simpler.
+
 :::
 
-The stepwise AIC model is only marginally different from the reduced model (AIC ~ 645 vs 647), adding PC2 (borderline p ~ 0.052). This suggests the reduced model is already near the AIC optimum while keeping the specification simpler.
 
 :::{.callout-note collapse="true"}
 ### Interaction-augmented fit
+
+We continue by considering pairwise interactions among the top PCs (by |t|) in the reduced supervised-PCA model. Each candidate interaction is screened by its individual p-value and AIC improvement when added to the set of potential terms which are subsequently considered in another stepwise AIC selection.
+
 ```{python}
 # | label: supervised-pca-interactions
 # | code-fold: true
@@ -242,14 +261,16 @@ spca_interactions_name = interaction_best_map.loc[0, "model"]
 spca_interactions = registry.get(spca_interactions_name).diag
 display(spca_interactions)
 ```
+
+The resulting interaction-augmented model improves AIC substantially (AIC $\approx$ 528 vs 645) and adds three significant interactions.
+
 :::
-
-Interaction-augmented stepwise fit (top PCs only) offers a targeted check for nonlinear combinations of disease-burden and development axes. Treat the result as exploratory and validate across years before drawing causal conclusions.
-
-Cook's-distance trimming is treated as a sensitivity analysis rather than data cleaning; exclusions require substantive justification.
 
 :::{.callout-note collapse="true"}
 ### Cook's distance trim (interaction model)
+
+We proceed by trimming influential points from the interaction model using Cook's distance (threshold $4/n$). This removes points that have a disproportionate influence on the fit, stabilizing inference and diagnostics.
+
 ```{python}
 # | label: supervised-pca-cooks
 # | code-fold: true
@@ -264,12 +285,17 @@ spca_cooks_initial, spca_cooks = registry.fit(
 registry.remove("m_inter_trim_initial")  # keep only final trimmed model in registry
 removed = len(spca_cooks_initial.design_matrix) - len(spca_cooks.design_matrix)
 print(f"Cook's threshold: {cooks_thresh:.4f} | removed: {removed}")
-display(spca_cooks_initial)
+display(spca_cooks)
 ```
+
+The Cook's-distance trimming step resulted in the removal of 12 data points (countries) and yielded a reduction in AIC of 93 points to 535, which indicates a substantial improvement in model fit and stability; However, we acknowledge that this is a sensitivity analysis rather than a principled exclusion without substantive justification for the removed countries. However, the trimmed model now contains two non-significant terms (`supervised_PC12` and `supervised_PC3:supervised_PC10`).
+
 :::
 
 :::{.callout-note collapse="true"}
 ### Final model specification (trimmed)
+
+The final step is to remove the two non-significant terms from the Cook's-trimmed interaction model to yield the final specification, which is then refit on the trimmed data.
 
 ```{python}
 final_formula = (
@@ -287,11 +313,14 @@ spca_cooks_initial, spca_final = registry.fit(
 )
 registry.remove("m_final_initial")  # keep only final trimmed model in registry
 removed = len(spca_cooks_initial.design_matrix) - len(spca_final.design_matrix)
+
+display(spca_final)
 ```
+
+While the AIC increase only marginally (from 535.1 to 535.2), the final trimmed model has an improved diagnostic profile with fewer borderline significance terms. It should be noted that the refit based on the cooks-distances of the residuals removed 10 points in this step, which is fewer than the previous trimming step.
 
 :::
 
-This Cook's-distance trimming step (threshold 4/n, removing 4 points) is a sensitivity analysis rather than a data-cleaning rule. It can stabilize inference but should not be treated as a principled exclusion without substantive justification for the removed countries.
 
 ### Model comparison
 
@@ -304,11 +333,6 @@ comp_tbl = registry.compare(sort_by="aic").drop(columns=["rhs"])[
 comp_tbl
 ```
 
-**Model evolution (concise):** full supervised-PCA (all PCs) -> reduced to significant PCs @tbl-supervised-pca-fit -> stepwise AIC among PCs -> add screened interactions -> Cook's-distance trim -> final model.
-
-**AIC comparability:** interpret AIC only within the same sample size (trimmed vs untrimmed models are not directly comparable).
-
-**Best-model criterion:** choose by mean cross-year RMSE/MAE for forecasting; use AIC for 2014 cross-sectional fit.
 
 ### Best model diagnostics
 
@@ -322,7 +346,7 @@ best_model = best_model.diag
 display(best_model)
 ```
 
-The AIC-ranked model is the best **in-sample** fit. Cross-year generalization favors the interaction model (mean RMSE 3.311; @tbl-supervised-pca-eval-all-models). Use AIC for 2014 cross-sectional fit and mean RMSE/MAE for forecasting across years.
+The final trimmed interaction model (`m_final`) has the best **in-sample** fit in terms of AIC and all other metrics on the train set.
 
 ```{python}
 # | label: supervised-pca-diagnostics
@@ -331,11 +355,9 @@ best_model.plot_residual_diags()
 plt.show()
 ```
 
-Diagnostics for the final model are largely favorable (see diagnostics plots below): JB p=0.560 and Shapiro p=0.774 do not reject normality; residual plots show only mild curvature. Heteroscedasticity is weak: BP p=0.048 is borderline while White p=0.529 passes, suggesting mild, form-dependent variance changes. Durbin-Watson ~ 1.99 indicates no autocorrelation. The condition number (~84) and max VIF (~1.7) are moderate, so multicollinearity is not a concern. For inference, non-robust SEs/CIs are slightly optimistic; prefer HC3/robust or bootstrap CIs. Prediction impacts are minor.
+Diagnostics for the final model are largely favorable (see diagnostics plots above): JB p=0.560 and Shapiro p=0.774 do not reject normality; residual plots show only mild curvature. Heteroscedasticity is weak: BP p=0.048 is borderline while White p=0.529 passes, suggesting mild, form-dependent variance changes where the heteroscedastic funnels don't appear to be correlated with any of the predictors. Durbin-Watson $\approx$ 1.99 indicates no autocorrelation. The condition number ($\approx$ 84) and max VIF ($\approx$ 1.7) are moderate, so multicollinearity is not a concern. For inference, non-robust SEs/CIs are slightly optimistic; While the CIs should be reasonably trustworthy, we nonetheless compute bootstrap CIs for greater reliability.
 
-Because the model was selected via significance screening, stepwise AIC, interaction screening, and trimming, coefficient p-values/CIs are post-selection and should be interpreted as exploratory.
-
-BP borderline failure with White passing implies mild heteroscedasticity: coefficients remain unbiased under exogeneity, but default SEs/CIs can be miscalibrated (often too narrow), and prediction intervals can be optimistic at the extremes.
+The BP borderline failure with White passing implies mild heteroscedasticity: coefficients remain unbiased under exogeneity, but default SEs/CIs can be overly narrow, and prediction intervals can be optimistic at the extremes.
 
 ## Holdout evaluation and bootstrap CIs
 
@@ -350,7 +372,7 @@ eval_holdout = registry.evaluate_on(
 eval_holdout
 ```
 
-Holdout performance (2011) is strong (RMSE 1.924, MAE 1.455, R^2 0.950; see table above). Bootstrap CIs quantify evaluation-sample uncertainty for a fixed model, not refit uncertainty.
+Holdout performance (2011) is strong (RMSE 1.924, MAE 1.455, $R^2$ 0.950).
 
 ```{python}
 # | label: supervised-pca-eval-ci
@@ -439,7 +461,6 @@ model_labels = {
     spca_stepwise_name: "Stepwise AIC",
     spca_interactions_name: "Interactions",
     "m_inter_trim": "Cooks-trimmed",
-    "m_final": "Final model",
 }
 
 rows = []
@@ -513,27 +534,20 @@ plot_loadings_heatmap(
 ).show()
 ```
 
+The final supervised PCA (SPCA) regression model (`m_inter_trim`) uses the additive PCs PC1, PC3, PC4, PC5, PC6, PC7, PC8, PC9, PC10, PC11, PC13, PC14, and PC17, as well as two interaction terms: PC3:PC4 and PC10:PC4. All PCs are computed from standardized predictors after outcome-based screening, so each PC represents an **orthogonal axis** in the screened feature space.
 
-
-The final supervised PCA (SPCA) regression model (`m_final`) uses the additive PCs
-PC1, PC3, PC4, PC5, PC6, PC7, PC8, PC9, PC10, PC11, PC13, PC14, and PC17,
-as well as two interaction terms: PC3:PC4 and PC10:PC4.
-All PCs are computed from standardized predictors after outcome-based screening, so each PC represents
-an **orthogonal axis** in the screened feature space.
-
-### How PCs are interpreted (rule)
+### How PCs are interpreted
 
 A PC is not a “variable”; it is a weighted contrast of original predictors. Interpretation therefore proceeds in two steps:
 
-1. **Loadings → meaning:** identify the dominant positive and negative loadings (top $|loading|$) from the loadings heatmap.
+1. **Loadings $\rightarrow$ meaning:** identify the dominant positive and negative loadings (top $|loading|$) from the loadings heatmap.
    These define what a “high” vs “low” score on a PC means in terms of original variables.
 2. **Coefficient sign → association:** given the regression coefficient $\beta_k$, increasing the PC score by one unit changes the prediction by $\beta_k$ years.
    Hence, the side of the PC axis that increases life expectancy is determined by the joint sign structure of loadings and $\beta_k$.
 
-Because PC signs are arbitrary, we do **not** interpret “positive PC values” per se; we interpret the **direction in original-variable space**
-that corresponds to higher predicted life expectancy.
+Because PC signs are arbitrary, we do **not** interpret “positive PC values” per se; we interpret the **direction in original-variable space** that corresponds to higher predicted life expectancy.
 
-### Which PCs matter most (relative importance)
+### Which PCs matter most
 
 The t-statistics indicate that the model is dominated by a small number of axes.
 PC1 is by far the strongest contributor (|t| $\approx 78.5$), followed by PC3, PC4, PC10, PC11, PC14, PC5, and PC8 (all |t| $\gtrsim 8$).
@@ -570,7 +584,7 @@ if len(pc_axes) == 2:
     biplot_fig.show()
 ```
 
-**PC4 — “Health spending / nutrition / development-composition contrast” (moderator axis).**
+**PC4 — “Health spending / nutrition / development-composition contrast”.**
 PC4 combines expenditure and anthropometric structure (e.g., BMI and expenditure-related variables) against development-status/expenditure composition
 in a way that is orthogonal to PC1 and PC3. Its main-effect coefficient is negative ($\beta_{PC4} < 0$),
 so higher scores along the PC4 direction are associated with lower life expectancy *at the reference levels of other PCs*.
@@ -676,3 +690,12 @@ if len(pc_axes_3d) == 3:
     biplot_fig_3d.show()
 ```
 
+## Conclusion
+
+Supervised PCA regression provides a compact and diagnostically stable representation of the life expectancy predictor space. In the final trimmed specification (`m_final`), the in-sample fit for 2014 is extremely high ($R^2 \approx 0.98$; RMSE $\approx 1.07$ years), and standard diagnostic checks are largely favorable: residual normality is not rejected (JB and Shapiro), autocorrelation is negligible (Durbin–Watson $\approx 2$), and multicollinearity is low by construction (orthogonal PCs; modest condition number and VIF). The only systematic caveat is mild heteroscedasticity: Breusch–Pagan is borderline while White’s test passes, which suggests weak, form-dependent non-constant variance. For inference, this means classical standard errors may be slightly optimistic; robust (HC3) or bootstrap intervals are therefore preferable, even though point predictions are typically less affected.
+
+Out-of-sample performance on the 2011 holdout remains strong (RMSE $\approx 1.92$; $R^2 \approx 0.95$), indicating that the supervised PCA basis captures a large fraction of the predictable cross-sectional structure. When generalizing across many years using the same 2014 PCA mapping, errors increase as expected for early years (largest distribution shift relative to 2014), and the mean cross-year RMSE favors the untrimmed interaction specification over the trimmed “best-in-sample” model. This highlights a recurring trade-off: **models optimized for 2014 explanation and clean diagnostics are not automatically optimal for forecasting under temporal shift**. In the report, `m_final` is therefore most defensible as a 2014 explanatory model, while the interaction model is the more credible choice when the primary objective is stability across years.
+
+Substantively, the retained PCs support a consistent narrative: the dominant axis is a development–mortality gradient (high mortality burden vs high schooling/income proxies), with additional orthogonal axes capturing residual HIV-related burden and spending/nutrition/immunization contrasts. The inclusion of PC interactions implies effect modification: the association of the “HIV/mortality” axis and the “development/disease” axis depends on the structural contrast represented by PC4, consistent with the idea that the life-expectancy penalty of specific burdens is not uniform across broader development and resource contexts.
+
+Finally, all coefficient p-values and confidence intervals must be interpreted as **post-selection** (screening $\rightarrow$ PCA $\rightarrow$ stepwise/interactions $\rightarrow$ trimming). The chapter therefore treats statistical significance as a descriptive guide to structure rather than a confirmatory claim of causal effects. The most reliable takeaways are the direction and relative importance of the dominant axes, the robustness of predictive accuracy on all held-out years, and the interpretability of the PCA-based decomposition via loadings.
