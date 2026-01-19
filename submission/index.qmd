@@ -27,22 +27,22 @@ We analyze the WHO “Life Expectancy” country-year panel (183 countries, 2000
 ## Exploratory analysis and dimensionality reduction
 
 - [Correlation Analysis](chapters/3_correlation.qmd) — Correlation structure, multicollinearity, and feature-group motivation for PCA/regression ~ **Jan Duchscherer**.
-- [Principal Component Analysis](chapters/3_pca.qmd) — Dimensionality reduction and PCA-based feature combination/interpretation ~ **Jens Christian Toftdahl**.
+- [Principal Component Analysis](chapters/3_pca.qmd) — Data Dimensionality reduction and PCA-based feature combination/interpretation ~ **Jens Christian Toftdahl**.
 
 ## Clustering
 
-- [Clustering](chapters/4_clustering.qmd) — K-means clustering (with PCA visualization) on standardized country profiles ~ **Paul Menhart**.
+- [Clustering](chapters/4_clustering.qmd) — K-means clustering, visualization, interpretations and comparison with other clustering methods on standardized country profiles ~ **Paul Menhart**.
 
 ## Regression analysis
 
-- [Regression Analysis](chapters/5_regression.qmd) — OLS models with PCA-based reduction, diagnostics, and year-based out-of-sample evaluation ~ **Jens Christian Toftdahl**.
+- [Regression Analysis OLS](chapters/5_regression.qmd) — OLS based regression analysis models with PCA-based reduction, diagnostics, and year-based out-of-sample evaluation ~ **Jens Christian Toftdahl**.
 - [Regression Analysis II](chapters/5_regression_2.qmd) — OLS models with interaction terms, diagnostics, and year-based out-of-sample evaluation, bootstrapping and non-linear effects (splines) ~ **Jan Duchscherer**.
 - [Regression with Supervised PCA](chapters/5_regression_supervised_pca.qmd) — OLS models using supervised PCA for dimension reduction ~ **Jan Duchscherer**.
 
 
 ## Model selection
 
-- [Model Selection](chapters/6_model_selection.qmd) — Criteria (AIC/BIC/Cp, adjusted $R^2$), stepwise procedures, and selection caveats ~ **Paul Menhart**.
+- [Model Selection](chapters/6_model_selection.qmd) — Criteria (AIC/BIC), stepwise procedures, and selection caveats ~ **Paul Menhart**.
 
 
 # The AMA Toolbox

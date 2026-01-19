@@ -169,7 +169,7 @@ country_names = reg_df[LECol.COUNTRY] if LECol.COUNTRY in reg_df.columns else re
 print(ols_model.summary())
 ```
 
-Based on our OLS Regression result we get an `R-Squared: 0.991` Which means that the model explains 99% of the variance of the dataset. `Adj. R-Squared: 0.979` Shows that if you adjust for the number of features the amount still remains high. Showing that the majority of features play a signficant part of the analysis.
+Based on our OLS Regression result we get an `R-Squared: 0.981` Which means that the model explains 99% of the variance of the dataset. `Adj. R-Squared: 0.979` Shows that if you adjust for the number of features the amount still remains high. Showing that the majority of features play a signficant part of the analysis.
 
 ```{python}
 # | label: liniar-reg-fig
