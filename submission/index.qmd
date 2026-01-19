@@ -32,7 +32,7 @@ We analyze the WHO “Life Expectancy” country-year panel (183 countries, 2000
 
 ## Clustering
 
-- [Clustering](chapters/4_clustering.qmd) — K-means clustering (with PCA visualization) on standardized country profiles ~ **Paul Menhart**.
+- [Clustering](chapters/4_clustering.qmd) — K-means clustering, visualization, interpretations and comparison with other clustering methods on standardized country profiles ~ **Paul Menhart**.
 
 ## Regression analysis
 
@@ -43,7 +43,7 @@ We analyze the WHO “Life Expectancy” country-year panel (183 countries, 2000
 
 ## Model selection
 
-- [Model Selection](chapters/6_model_selection.qmd) — Criteria (AIC/BIC/Cp, adjusted $R^2$), stepwise procedures, and selection caveats ~ **Paul Menhart**.
+- [Model Selection](chapters/6_model_selection.qmd) — Criteria (AIC/BIC), stepwise procedures, and selection caveats ~ **Paul Menhart**.
 
 
 # The AMA Toolbox
