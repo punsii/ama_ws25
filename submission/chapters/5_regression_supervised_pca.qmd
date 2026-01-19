@@ -513,11 +513,202 @@ plt.show()
 rmse_by_year.groupby("model")[["rmse", "mae", "r2"]].mean().sort_values("rmse")
 ```
 
+## Residual calibration across years with a KAN (pykan)
+
+Cross-year evaluation in @tbl-supervised-pca-eval-all-models indicates that the **Interactions** OLS specification (`spca_interactions`) is the best baseline for temporal generalization among the fitted SPCA variants. To further improve predictive accuracy across years, we fit a **Kolmogorov–Arnold Network (KAN)** @liu2025kankolmogorovarnoldnetworks to the *residuals* of this baseline model using:
+
+- `year_rel = year - 2014` (encoded as a standardized numeric feature), it would have been more optimal to train the model on a year somewhere in the middle of the range, but for simplicity we keep 2014 as the reference point,
+- `region` and `country` (one-hot encoded; `country` acts as a country-specific intercept).
+
+This model is a pragmatic **residual calibrator**. Because it uses country identifiers, it improves prediction for *known countries* in the dataset, but it is not designed to generalize to unseen countries.
+
+```{python}
+# | label: supervised-pca-kan
+# | include: false
+import io
+from contextlib import redirect_stderr, redirect_stdout
+
+import torch
+from kan import KAN
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from ama_tlbx.analysis.ols_helper import evaluate_model
+
+torch.manual_seed(42)
+np.random.seed(42)
+
+baseline_model_name = spca_interactions_name
+baseline_diag = registry.get(baseline_model_name).diag
+
+frames = []
+for year in all_years:
+    if year == 2015:
+        continue
+    yr_ds = LifeExpectancyDataset.from_csv_updated(
+        aggregate_by_country=year,
+        resolve_nand_pred="carry_forward",
+    )
+    yr_full = yr_ds.tf_and_norm().drop(columns=[LECol.YEAR])
+    if STATUS_DUMMY not in yr_full.columns and LECol.STATUS in yr_full.columns:
+        yr_full = yr_full.assign(**{STATUS_DUMMY: yr_full[LECol.STATUS].astype(int)})
+    yr_pca = pca_result.transform(yr_full)
+    yr_df = yr_pca.assign(**yr_full[[LECol.TARGET]])
+
+    em = evaluate_model(baseline_diag, yr_df, label=f"year{year}")
+    resid = em.y_true - em.y_pred
+
+    meta = yr_ds.df[["region"]].copy()
+    meta["country"] = meta.index
+    meta = meta.loc[resid.index]
+
+    frames.append(
+        pd.DataFrame(
+            {
+                "year": year,
+                "year_rel": year - TRAIN_YEAR,
+                "country": meta["country"],
+                "region": meta["region"],
+                "y_true": em.y_true,
+                "y_pred_baseline": em.y_pred,
+                "residual": resid,
+            },
+        ),
+    )
+
+res_df = pd.concat(frames, ignore_index=True).dropna()
+train_df, test_df = train_test_split(
+    res_df,
+    test_size=0.2,
+    random_state=42,
+    shuffle=True,
+)
+```
+
+```{python}
+# | label: supervised-pca-kan-2
+pre = ColumnTransformer(
+    transformers=[
+        (
+            "cat",
+            OneHotEncoder(handle_unknown="ignore", sparse_output=False),
+            ["country", "region"],
+        ),
+        ("num", StandardScaler(), ["year_rel"]),
+    ],
+    remainder="drop",
+)
+X_train = pre.fit_transform(train_df[["country", "region", "year_rel"]])
+X_test = pre.transform(test_df[["country", "region", "year_rel"]])
+
+y_train = train_df["residual"].to_numpy(dtype=np.float32)[:, None]
+y_test = test_df["residual"].to_numpy(dtype=np.float32)[:, None]
+
+device = torch.device("cpu")
+dataset = {
+    "train_input": torch.tensor(X_train, dtype=torch.float32, device=device),
+    "test_input": torch.tensor(X_test, dtype=torch.float32, device=device),
+    "train_label": torch.tensor(y_train, dtype=torch.float32, device=device),
+    "test_label": torch.tensor(y_test, dtype=torch.float32, device=device),
+}
+
+kan = KAN(
+    width=[dataset["train_input"].shape[1], 1],
+    grid=3,
+    k=3,
+    seed=42,
+    auto_save=False,
+    device=device,
+)
+
+with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+    kan.fit(dataset, opt="LBFGS", steps=25, lamb=1e-2)
+
+with torch.no_grad():
+    resid_pred = kan(dataset["test_input"]).cpu().numpy()[:, 0]
+
+y_true = test_df["y_true"].to_numpy(dtype=float)
+y_pred_baseline = test_df["y_pred_baseline"].to_numpy(dtype=float)
+y_pred_kan = y_pred_baseline + resid_pred
+
+```
+
+```{python}
+# | label: supervised-pca-kan-train
+# | code-fold: true
+
+
+def _rmse(y: np.ndarray, yhat: np.ndarray) -> float:
+    return float(np.sqrt(np.mean((y - yhat) ** 2)))
+
+
+def _mae(y: np.ndarray, yhat: np.ndarray) -> float:
+    return float(np.mean(np.abs(y - yhat)))
+
+
+def _r2(y: np.ndarray, yhat: np.ndarray) -> float:
+    ss_res = float(np.sum((y - yhat) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    return float("nan") if ss_tot == 0 else 1.0 - ss_res / ss_tot
+
+
+global_perf = pd.DataFrame(
+    [
+        {
+            "model": "Interactions (OLS baseline)",
+            "rmse": _rmse(y_true, y_pred_baseline),
+            "mae": _mae(y_true, y_pred_baseline),
+            "r2": _r2(y_true, y_pred_baseline),
+        },
+        {
+            "model": "Interactions + KAN residual",
+            "rmse": _rmse(y_true, y_pred_kan),
+            "mae": _mae(y_true, y_pred_kan),
+            "r2": _r2(y_true, y_pred_kan),
+        },
+    ],
+).set_index("model")
+
+global_perf
+```
+
+```{python}
+# | label: fig-supervised-pca-kan-test
+# | fig-cap: "Test-set RMSE across years (global 80/20 split): Interactions baseline vs KAN residual calibration."
+rows = []
+for year, grp in test_df.assign(y_pred_kan=y_pred_kan).groupby("year"):
+    y = grp["y_true"].to_numpy(dtype=float)
+    y_base = grp["y_pred_baseline"].to_numpy(dtype=float)
+    y_final = grp["y_pred_kan"].to_numpy(dtype=float)
+    rows.append({"year": year, "model": "Interactions (OLS baseline)", "rmse": _rmse(y, y_base)})
+    rows.append({"year": year, "model": "Interactions + KAN residual", "rmse": _rmse(y, y_final)})
+
+perf_by_year = pd.DataFrame(rows).sort_values(["model", "year"])
+plt.figure(figsize=(9, 4.5))
+sns.lineplot(data=perf_by_year, x="year", y="rmse", hue="model", marker="o")
+plt.axvline(TRAIN_YEAR, color="grey", linestyle="--", linewidth=1, alpha=0.7)
+plt.ylabel("Test RMSE")
+plt.xlabel("Year")
+plt.tight_layout()
+plt.show()
+```
+
 ## Conclusions on model choice
 
 Two candidates emerge: the **Interactions model** (untrimmed) and the **Final model** (trimmed + simplified). The Final model is best **in-sample for 2014** ($R^2=0.981$, RMSE=1.066, AIC=533.2) and has the **most stable diagnostics** (JB p=0.560, Shapiro p=0.774, White p=0.529; BP borderline p=0.048; low VIF~1.7; max Cook's=0.056). Its drawback is **poorer temporal generalization**: mean RMSE across years is 3.403, the worst among candidates. The Interactions model generalizes **best across years** (mean RMSE=3.311; mean MAE=2.791; mean $R^2=0.865$), with the Final model worse by +0.092 RMSE (+2.79%) and +0.003 MAE (+0.10%). It also shows **less stable inference** (BP p=0.036; max Cook's=0.417; 12 points exceed 4/n), indicating higher influence sensitivity and more heteroscedasticity.
 
 **Conclusion:** If the goal is **explain 2014 cross-sectional structure with stable diagnostics**, report the **Final model** (with a robust-SE/boot CI caveat). If the goal is **prediction across years**, select the **Interactions model** as the best generalizer despite less stable inference.
+
+### Residual calibration across years (KAN)
+
+If the primary objective is **temporal generalization**, a practical extension is to treat the SPCA-OLS model (trained on a single year) as an interpretable baseline and then fit a flexible learner to the **residuals** across all years. A Kolmogorov–Arnold Network (KAN; `pykan`) can model systematic residual structure as a function of a year offset (e.g., `year_rel = year - 2014`) and optional country/region encodings, yielding a corrected predictor
+
+$$
+\hat y = \hat y_{\mathrm{OLS}}^{2014}(\mathrm{PC1}, \ldots, \mathrm{PC10:PC4}) + \hat r_{\mathrm{KAN}}(\Delta\mathrm{year}, \mathbb{1}[\mathrm{country}], \mathbb{1}[\mathrm{region}])
+$$.
+
+![OLS baseline + KAN residual calibration (schematic).](../figures/spca_ols_kan_architecture.svg){#fig-spca-ols-kan-architecture width="80%"}
 
 
 ## Interpretation of principal components in the final SPCA model
