@@ -715,11 +715,14 @@ We subsequently inspect holdout calibration for the "best" socioeconomic baselin
 # | fig-cap: "Holdout calibration (2011) for best AIC socioeconomic baseline with bootstrap 95% CIs."
 # | code-fold: true
 plt.figure(figsize=(7, 5))
-eval_socio[best_socio_econ_name].plot_calibration(
+ax = eval_socio[best_socio_econ_name].plot_calibration(
     bins=10,
     bootstrap=N_BOOTSTRAP,
     random_state=42,
 )
+target_pretty = scaled_train_ds.get_pretty_name(str(LECol.TARGET))
+ax.set_xlabel(f"Predicted {target_pretty}")
+ax.set_ylabel(f"Observed {target_pretty}")
 plt.show()
 ```
 
@@ -896,6 +899,8 @@ sns.regplot(
     lowess=True,
 )
 axes[0].set_title("Life Expectancy vs Alcohol Consumption")
+axes[0].set_xlabel(scaled_train_ds.get_pretty_name(str(LECol.ALCOHOL)))
+axes[0].set_ylabel(scaled_train_ds.get_pretty_name(str(LECol.TARGET)))
 sns.regplot(
     x=LECol.BMI,
     y=LECol.TARGET,
@@ -905,6 +910,8 @@ sns.regplot(
     lowess=True,
 )
 axes[1].set_title("Life Expectancy vs BMI")
+axes[1].set_xlabel(scaled_train_ds.get_pretty_name(str(LECol.BMI)))
+axes[1].set_ylabel(scaled_train_ds.get_pretty_name(str(LECol.TARGET)))
 plt.tight_layout()
 plt.show()
 ```
@@ -1110,8 +1117,8 @@ def _plot_fit_lowess(
     )
 
     ax.set_title(title)
-    ax.set_xlabel(x_col)
-    ax.set_ylabel("Life expectancy")
+    ax.set_xlabel(scaled_train_ds.get_pretty_name(x_col))
+    ax.set_ylabel(scaled_train_ds.get_pretty_name(str(LECol.TARGET)))
     ax.legend()
 
 
@@ -1184,12 +1191,15 @@ display(int_diag)
 from ama_tlbx.plotting.regression_plots import plot_interaction_effect
 
 plt.figure(figsize=(8, 4))
-plot_interaction_effect(
+ax = plot_interaction_effect(
     int_diag,
     x=str(LECol.ALCOHOL),
     by=STATUS_DUMMY,
     df=train_int,
 )
+target_pretty = scaled_train_ds.get_pretty_name(str(LECol.TARGET))
+ax.set_xlabel(scaled_train_ds.get_pretty_name(str(LECol.ALCOHOL)))
+ax.set_ylabel(f"Predicted {target_pretty}")
 plt.show()
 ```
 
@@ -1423,6 +1433,9 @@ else:
             df=df_health,
             ax=ax,
         )
+        target_pretty = scaled_train_ds.get_pretty_name(str(LECol.TARGET))
+        ax.set_xlabel(scaled_train_ds.get_pretty_name(x_col))
+        ax.set_ylabel(f"Predicted {target_pretty}")
     plt.tight_layout()
     plt.show()
 ```
@@ -1476,7 +1489,10 @@ best_name = (
 
 metrics = registry.get(best_name).eval_metrics_by_label[f"year{HOLDOUT_YEAR}"]
 plt.figure(figsize=(7, 5))
-metrics.plot_calibration(bins=10, bootstrap=300, random_state=42)
+ax = metrics.plot_calibration(bins=10, bootstrap=300, random_state=42)
+target_pretty = scaled_train_ds.get_pretty_name(str(LECol.TARGET))
+ax.set_xlabel(f"Predicted {target_pretty}")
+ax.set_ylabel(f"Observed {target_pretty}")
 plt.show()
 ```
 
