@@ -60,16 +60,16 @@ TRAIN_YEAR = 2014
 HOLDOUT_YEAR = 2011
 STATUS_DUMMY = "status_developed"
 
+```
 
+```{python}
+# | include: false
 def _rename_hdi(dataset: LifeExpectancyDataset) -> LifeExpectancyDataset:
     df = dataset.df
     if str(LECol.HDI) not in df.columns and str(HDRCol.HDI) in df.columns:
         df = df.rename(columns={str(HDRCol.HDI): str(LECol.HDI)})
     return LifeExpectancyDataset(df=df)
-```
 
-```{python}
-# | include: false
 def _tf_expr(feature: str | LECol) -> str:
     name = str(feature)
     label = LECol.transform_label(feature)
@@ -118,6 +118,11 @@ def fit_additive(
         refit=refit,
         cook_distance_threshold=cook_distance_threshold,
     )
+
+def cmp_tbl(registry: ModelRegistry, features: list[str]) -> pd.DataFrame:
+    return registry.compare(sort_by="aic").loc[features].sort_values(
+        "aic"
+    ).drop(columns=["rhs"])[["aic", "rmse", "r2", "adj_r2", "n_obs"]]
 ```
 
 
@@ -154,6 +159,7 @@ def make_dataset(year: int) -> pd.DataFrame:
         .pipe(_rename_hdi)
         .tf_and_norm()
         .set_index("iso3")
+        .pipe(lambda df: df[df.index.notna()])
         .drop(
             columns=[
                 LECol.YEAR,
@@ -205,7 +211,7 @@ pca_groups = (
     .make_pca_dim_reduction_analyzer(
         feature_groups=feature_groups,
         standardized=True,
-        min_var_explained=1.0,
+        min_var_explained=0.8,
     )
     .fit()
     .result()
@@ -234,7 +240,7 @@ pca_groups.plot_group_variance_summary().show()
 pca_groups.explained_variance_table().round(3)
 ```
 
-The PCA variance summary in @fig-pca-group-variance shows that **child mortality** and **child nutrition** are essentially one-dimensional (PC1 captures >99%), **economic development** requires two PCs to explain >80% of variance, however the second PC explains just 22% of the variance so the first PC captures the main signal. Whether both PCs provide explanatory power will be tested in the subsequent sections. In the **immunization** block, PC1 captures overall vaccination coverage (HepB, diphtheria, polio), while the second and thrid PCs capture residual variations.
+The PCA variance summary in @fig-pca-group-variance shows that **child mortality** and **child nutrition** are essentially one-dimensional (PC1 captures >99%), **economic development** requires two PCs to explain >80% of variance, however the second PC explains just 22% of the variance so the first PC captures the main signal. Whether both PCs provide explanatory power will be tested in the subsequent sections. In the **immunization** block, PC1 captures overall vaccination coverage (HepB, diphtheria, polio), while the second and third PCs capture residual variations.
 
 <!-- To interpret coefficients that use the PCA-compressed predictors, we inspect the loadings in @fig-pca-group-loadings and @tbl-tbl-pca-group-variance. In the **economic development** block, PC1 is dominated by GDP and health expenditure, so higher `economic_development_PC1` reflects a more affluent / higher-spending profile (up to sign).  Because PCA component signs are arbitrary, we always interpret the *direction* of a PC coefficient jointly with its loadings. -->
 :::
@@ -353,6 +359,8 @@ pca_groups.plot_group_variance_summary().show()
 # | tbl-cap: "Explained variance per group and PC (multi-index)."
 pca_groups.explained_variance_table().round(3)
 ```
+
+Considering that the first principal component already captures ~89.4% of the variance in the social development block (@fig-pca-group-variance-2) consisting of six features, we retain only the first PC and treat it as a compact summary of the social-development dimension for life expectancy modeling.
 :::
 
 ```{python}
@@ -379,7 +387,7 @@ df_test = holdout_scaled.copy()
 
 To verify the transformations and standardization, we summarize the training features in @tbl-feature-summary, sorted by correlation with life expectancy, along with the applied transformations in @tbl-transforms.
 
-For the UNDP HDR–based *social development* block, the grouped PCA loadings in @fig-pca-group-loadings-2 show that `social_development_PC1` is essentially an **education vs inequality** axis: it loads **positively** on schooling/education attainment (`schooling`, `se_f`, `se_m`, `mys`) and **negatively** on inequality measures (`ineq_edu`, `coef_ineq`). Since PC1 already captures ~**89%** of the block variance (@fig-pca-group-variance-2), this group is effectively one-dimensional. In the regressions below, a positive coefficient on `social_development_PC1` therefore means higher life expectancy in countries with more education and lower inequality (up to the arbitrary sign of PCA).
+For the UNDP HDR–based *social development* block, the grouped PCA loadings in @fig-pca-group-loadings-2 show that `social_development_PC1` is essentially an **education vs inequality** axis: it loads **positively** on schooling/education attainment (`schooling`, `se_f`, `se_m`, `mys`) and **negatively** on inequality measures (`ineq_edu`, `coef_ineq`). Since PC1 already captures ~**89%** of the block variance (@fig-pca-group-variance-2), this group is effectively one-dimensional. In the multivariate regressions below, interpret the `social_development_PC1` coefficient as a *conditional association* along this education/inequality direction (noting that (i) PCA signs are arbitrary and (ii) the partial effect can be sensitive when multiple correlated “development” summaries are included).
 
 ```{python}
 # | label: tbl-feature-summary
@@ -473,7 +481,7 @@ Adding HDI yields a substantially tighter fit (**$R^2 = 0.955$**, RMSE = **1.73 
 
 Substantively, this model is best treated as a **benchmark / upper bound**, not a mechanistic explanation. HDI is a composite index whose construction is closely tied to population health and (in many definitions) directly incorporates life expectancy or closely related quantities. As a result, including HDI risks **target leakage** and can inflate apparent explanatory power. The correct takeaway is therefore limited but useful: *given a mortality proxy and a high-level development/health proxy, little residual variance remains in the cross-section*. This does not justify interpreting HDI as an “independent driver” in the same sense as the domain predictors that follow.
 
-From a numerical stability perspective, the model is well-conditioned (condition number **2.90**, max VIF **2.63**), so the large standard errors typical of severe multicollinearity are not the main issue here. The main caveat is the error structure. The residual diagnostics in Figure @fig-baseline-diagnostics-hdi show clear tail deviations (normality tests reject: JB $p<0.001$, Shapiro $p<0.001$) and persistent heteroscedasticity (Breusch–Pagan $p=0.007$, White $p=0.005$). This means the default “nonrobust” OLS standard errors and confidence intervals can be biased; for confirmatory inference one would prefer heteroscedasticity-robust standard errors (e.g., HC3). For our purposes, we emphasize effect sizes, uncertainty, and sensitivity checks rather than marginal p-values.
+From a numerical stability perspective, the model is well-conditioned (condition number **2.90**, max VIF **2.63**), so the large standard errors typical of severe multicollinearity are not the main issue here. The main caveat is the error structure. The residual diagnostics in @fig-baseline-diagnostics-hdi show clear tail deviations (normality tests reject: JB $p<0.001$, Shapiro $p<0.001$) and persistent heteroscedasticity (Breusch–Pagan $p=0.007$, White $p=0.005$). This means the default “nonrobust” OLS standard errors and confidence intervals can be biased; for confirmatory inference one would prefer heteroscedasticity-robust standard errors (e.g., HC3). For our purposes, we emphasize effect sizes, uncertainty, and sensitivity checks rather than marginal p-values.
 
 Influence diagnostics indicate that a small subset of countries has disproportionate impact on the fitted surface (Cook’s distance flags **10** observations above the $4/n$ heuristic; max leverage **0.139**, max Cook’s **0.395**). The influence plot highlights especially high-leverage cases (e.g., **Lesotho**; and a large negative-residual, influential case such as **Somalia**). These points do not invalidate the model, but they reinforce that the “near-perfect” fit partly relies on a few extreme observations.
 
@@ -483,9 +491,7 @@ In the interpretability-focused models below, we therefore **avoid using HDI**. 
 ```{python}
 # | label: tbl-baseline-compare
 # | tbl-cap: "Baseline models compared (sorted by AIC)."
-registry.compare(sort_by="aic").drop(columns=["rhs"])[
-    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
-].loc[["m1_adult_mortality", "m1_adult_mortality_hdi"]]
+cmp_tbl(registry, ["m1_adult_mortality", "m1_adult_mortality_hdi"])
 ```
 
 <!-- TODO: provide a brief flow-text overview of what's being done in undp-socio-pca -->
@@ -628,7 +634,7 @@ socio_econ_names.append("m_socio_eco_social")
 display(socio_4)
 ```
 
-While the newly added `social_development_PC1` is barely statistically significant (p = 0.045; CI **[-1.002, -0.001]**), it improves the model fit by about 2 points in AIC (900.32 $\rightarrow$ 898.15) and also improves the statistical stability in all diagnostics. This motivates us to trim down influential outliers via Cook's distance ($> 4/n$: **5** countries removed) to see wether this improves the models parsimony and stability further.
+The newly added `social_development_PC1` is only marginally significant in the full training sample (p = 0.045; CI **[-1.002, -0.001]**), but it improves fit slightly (AIC 900.32 $\rightarrow$ 898.15). To assess robustness of this socioeconomic baseline, we refit the same specification after removing influential observations via Cook’s distance ($> 4/n$: **5** countries removed). We treat this trimming as a sensitivity analysis (influential $\neq$ incorrect), not as evidence of data errors.
 
 ```{python}
 # | label: socioeconomic-baseline-model-4-cook
@@ -651,14 +657,11 @@ display(socio_4_cook)
 ```{python}
 # | label: tbl-socioeconomic-compare
 # | tbl-cap: "Socioeconomic baselines compared (sorted by AIC)."
-comp_tbl = (
-    registry.compare(sort_by="aic")
-    .loc[socio_econ_names]
-    .drop(columns=["rhs"])[["aic", "rmse", "r2", "adj_r2", "n_obs"]]
-    .sort_values("aic")
-)
+comp_tbl = cmp_tbl(registry, socio_econ_names)
+
 best_socio_econ_name = comp_tbl.index[0]
 best_socio_econ = registry.get(best_socio_econ_name).diag
+best_socio_econ_rhs = registry.get(best_socio_econ_name).rhs
 display(comp_tbl)
 ```
 
@@ -671,11 +674,19 @@ plt.show()
 ```
 
 
-Model `m_socio_eco_social` adds `social_development_PC1` (education vs inequality; see @fig-pca-group-loadings-2) on top of the two economic PCs. It explains **$R^2 = 0.700$** (RMSE **4.42 years**, $n=166$). Both economic components are strongly positive (`economic_development_PC1` **+3.28 years**, 95% CI **[2.44, 4.12]**; `economic_development_PC2` **+3.22**, CI **[1.82, 4.62]**; both p < 0.001). The social-development axis is also positive (`social_development_PC1` **+0.95**, CI **[0.45, 1.45]**, p < 0.001), consistent with the interpretation that *more education and less inequality* is associated with higher life expectancy even after controlling for economic structure. In contrast, `status_developed` is not statistically distinguishable from zero (**+0.91**, p = 0.419; CI **[-1.31, 3.14]**), suggesting that the continuous socioeconomic PCs already capture most of what the binary label adds.
+The best AIC socioeconomic baseline after Cook’s-distance sensitivity trimming is
+`life_expectancy ~ status_developed + economic_development_PC1 + social_development_PC1 + undp_socio_PC1 + I(undp_socio_PC1^2)` ($n=156$).
+On the 2014 training cross-section, it achieves **$R^2=0.861$** (adj. **0.857**) with **RMSE = 2.81 years**, showing that broad development indicators alone already explain most cross-sectional variation in life expectancy.
 
-Diagnostics in @fig-socioeconomic-diagnostics show mild curvature in residuals vs fitted (remaining nonlinearity), and heteroskedasticity consistent with the tests (Breusch–Pagan p = 0.013; White p = 0.049). The QQ-plot shows pronounced tail deviations (JB p < 0.001; Shapiro p < 0.001), so t-tests and confidence intervals should be treated cautiously (especially for tail-sensitive effects). Influence is concentrated in a small set of high-leverage countries (max Cook’s **0.133**, Cook’s > 4/n: **6**), so coefficient magnitudes should be interpreted as descriptive associations rather than precise causal effects.
+All coefficients are **conditional associations** (not causal effects). Developed status remains substantial (**+4.33 years**, $t=5.06$, $p<0.001$) even after the continuous development PCs. The economic-development component is positive (**+1.10 years per 1 SD**, $t=3.84$, $p<0.001$). The UNDP socioeconomic component dominates the fit and is nonlinear: the linear term is large (**-2.53**, $t=-9.41$, $p<0.001$) and the quadratic term is also negative (**-0.53**, $t=-8.70$, $p<0.001$), implying concavity (non-constant marginal association). The `social_development_PC1` effect is small (**-0.53**, $p=0.013$) and is plausibly sensitive to overlap and suppression between multiple correlated “development” summaries (moderate collinearity; max VIF $\approx 6.17$).
 
-Compared across baselines (@tbl-socioeconomic-compare), adding `social_development_PC1` improves the pure economic-PC benchmark (AIC **986.7 $\rightarrow$ 974.6**, RMSE **4.64 $\rightarrow$ 4.42**), but it is still dominated by the UNDP socioeconomic PC baseline, especially with the quadratic term (`m_socio_eco_undp_quad`, AIC **894.2**, RMSE **3.47**).
+To interpret the quadratic UNDP term, let $x$ denote the UNDP PC1 score. The fitted contribution is $\beta_1 x + \beta_2 x^2$, so the marginal association is
+$$
+\frac{\partial \hat{y}}{\partial x} = \beta_1 + 2\beta_2 x \approx -2.53 - 1.05x.
+$$
+Because PCA signs are arbitrary, interpretation should be stated via the loadings; equivalently, one may flip a PC’s sign to align “more development” with increasing predicted life expectancy (predictions unchanged), yielding a narrative of increasing life expectancy with diminishing returns.
+
+Diagnostics in @fig-socioeconomic-diagnostics are favorable after trimming: residual normality is not rejected (Jarque–Bera $p=0.195$; Shapiro $p=0.121$) and heteroscedasticity tests do not reject (Breusch–Pagan $p=0.087$; White $p=0.331$). Influence is bounded (max Cook’s **0.035**, max leverage **0.162**), indicating that the estimates are not dominated by a single high-leverage country. We treat Cook’s-distance trimming as a **sensitivity analysis** (influential $\neq$ incorrect) and use it primarily to improve stability and diagnostics; note that AIC values are most comparable across models fit on the same dataset and sample size.
 
 ### Holdout evaluation (socioeconomic baselines)
 
@@ -726,11 +737,17 @@ plt.show()
 
 **RQ3:** quantify the effect of immunization coverage (e.g., DTP3, HepB, Polio) controlling for development and mortality burden.
 
-Base model: `life_expectancy ~ status_developed + hiv_aids + economic_development_PC1`
-Immunization model: `life_expectancy ~ status_developed + hiv_aids + economic_development_PC1 + immunization_PC1`
+Baseline (socioeconomic): `m_socio_eco_social_cook` (RQ2)
 
+HIV burden: `life_expectancy ~ m_socio_eco_social_cook + hiv_aids`
+Immunization model: `life_expectancy ~ m_socio_eco_social_cook + immunization_PC1`
+Immunization and HIV/AIDS model: `life_expectancy ~ m_socio_eco_social_cook + immunization_PC1 + hiv_aids`
+
+:::{.callout-note collapse="true"}
+
+### M1: HIV Burden
 ```{python}
-# | label: immunization-model
+# | label: tab-hiv-burden-model
 # | code-fold: true
 immun_pc1 = immun_pcs[0] if immun_pcs else None
 if immun_pc1 is None:
@@ -738,40 +755,61 @@ if immun_pc1 is None:
         "Immunization PC group is missing; check `feature_groups` in data prep."
     )
 
-econ_pc1 = econ_pcs[0] if econ_pcs else None
-immun_base_block = [STATUS_DUMMY, LECol.HIV_AIDS]
-if econ_pc1 is not None:
-    immun_base_block.append(econ_pc1)
+SOCIO_BASE_NAME = "m_socio_eco_social_cook"
+if SOCIO_BASE_NAME not in registry.models:
+    raise KeyError(
+        f"Expected socioeconomic baseline '{SOCIO_BASE_NAME}' missing; check RQ2 section."
+    )
 
-base_diag = fit_additive(
+# Use the selected socioeconomic baseline terms from RQ2 and add mortality burden (HIV/AIDS).
+socio_terms = [STATUS_DUMMY, econ_pc1, social_le_undp_pc1, undp_pc1]
+socio_extra = [f"I({undp_pc1} ** 2)"]
+COOK_THR = 4 / len(df_train)
+
+hiv_initial, hiv_diag = fit_additive(
     registry,
     df_train,
-    name="m_immun_base",
-    terms=immun_base_block,
-)
-display(base_diag)
-
-immun_reduced = fit_additive(
-    registry,
-    df_train,
-    name="m_immunization_reduced",
-    terms=[*immun_base_block, immun_pc1],
+    name="m_hiv_base",
+    terms=[*socio_terms, LECol.HIV_AIDS],
+    extra_terms=socio_extra,
     refit=True,
+    cook_distance_threshold=COOK_THR,
 )
-display(immun_reduced)
+registry.remove("m_hiv_base_initial")
+display(hiv_diag)
+```
+
+```{python}
+# | label: fig-hiv-diagnostics
+# | fig-cap: "HIV burden model diagnostics."
+hiv_diag.plot_residual_diags()
+```
+:::
+
+:::{.callout-note collapse="true"}
+### M2: Immunization PC1
+```{python}
+# | label: immunization-model
+# | code-fold: true
+immun_initial, immun_diag = fit_additive(
+    registry,
+    df_train,
+    name="m_immunization",
+    terms=[*socio_terms, immun_pc1],
+    extra_terms=socio_extra,
+    refit=True,
+    cook_distance_threshold=COOK_THR,
+)
+registry.remove("m_immunization_initial")
+display(immun_diag)
 ```
 
 ```{python}
 # | label: fig-immunization-diagnostics
 # | fig-cap: "Immunization model diagnostics."
-immun_reduced.plot_residual_diags()
+immun_diag.plot_residual_diags()
 ```
-
-```{python}
-# | label: tbl-immunization-compare
-# | tbl-cap: "Immunization block added vs base model."
-registry.compare(sort_by="aic").loc[["m_immun_base", "m_immunization_reduced"]]
-```
+:::
 
 Adding `immunization_PC1` improves fit relative to the base model (**$R^2$: 0.743 $\rightarrow$ 0.792**, RMSE: **4.11 $\rightarrow$ 3.69 years**, @tbl-immunization-compare). The model is jointly significant (F‑test p < 0.001), and `immunization_PC1` is negative and precise (**-1.17 years per 1 SD**, p < 0.001; 95% CI **[-1.55, -0.80]**). Because PCA component signs are arbitrary, we interpret the *direction* of `immunization_PC1` via its loadings in @fig-pca-group-loadings: higher vaccination coverage corresponds to higher life expectancy.
 
@@ -781,80 +819,100 @@ Diagnostics in @fig-immunization-diagnostics show normality is acceptable for th
 
 **RQ4:** test whether alcohol and BMI remain positive once economic development is controlled (and whether signs flip).
 
-Model: `life_expectancy ~ status_developed + total_expenditure + economic_development_PC1 + alcohol + bmi`
+Baseline (socioeconomic): `m_socio_eco_social_cook` (RQ2)
 
+M1: `life_expectancy ~ m_socio_eco_social_cook + alcohol`
+M2: `life_expectancy ~ m_socio_eco_social_cook + bmi`
+
+:::{.callout-note collapse="true"}
+### M1: Alcohol
 ```{python}
-# | label: alcohol-bmi-model
+# | label: alcohol-model
 # | code-fold: true
-econ_pc1 = econ_pcs[0] if econ_pcs else None
-controls = [STATUS_DUMMY, LECol.TOTAL_EXPENDITURE]
-if econ_pc1 is not None:
-    controls.append(econ_pc1)
+SOCIO_BASE_NAME = "m_socio_eco_social_cook"
+if SOCIO_BASE_NAME not in registry.models:
+    raise KeyError(
+        f"Expected socioeconomic baseline '{SOCIO_BASE_NAME}' missing; check RQ2 section."
+    )
 
-health = [LECol.ALCOHOL, LECol.BMI]
+socio_terms = [STATUS_DUMMY, econ_pc1, social_le_undp_pc1, undp_pc1]
+socio_extra = [f"I({undp_pc1} ** 2)"]
 
-train_alc = df_train[[LECol.TARGET, *controls, *health]].dropna()
-alc_diag = fit_additive(
+controls = socio_terms
+
+alc_initial, alc_diag = fit_additive(
     registry,
-    train_alc,
-    name="m_alcohol_bmi",
-    terms=[*controls, *health],
+    df_train,
+    name="m_alcohol",
+    terms=[*controls, LECol.ALCOHOL],
+    extra_terms=socio_extra,
+    cook_distance_threshold=4 / len(df_train),
 )
+registry.remove("m_alcohol_initial")
 display(alc_diag)
 ```
 
 ```{python}
-# | label: alcohol-bmi-diagnostics
-# | fig-cap: "Alcohol and BMI model diagnostics."
+# | label: alcohol-diagnostics
+# | fig-cap: "Alcohol model diagnostics."
 _ = alc_diag.plot_residual_diags()
+```
+:::
+
+:::{.callout-note collapse="true"}
+### M1: BMI
+```{python}
+# | label: bmi-model
+# | code-fold: true
+bmi_initial, bmi_diag = fit_additive(
+    registry,
+    df_train,
+    name="m_bmi",
+    terms=[*controls, LECol.BMI],
+    extra_terms=socio_extra,
+    cook_distance_threshold=4 / len(df_train),
+)
+registry.remove("m_bmi_initial")
+display(bmi_diag)
 ```
 
 ```{python}
-# | label: tbl-alcohol-bmi-compare
-# | tbl-cap: "Alcohol/BMI model compared (sorted by AIC)."
-registry.compare(sort_by="aic").drop(columns=["rhs"])[
-    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
-].loc[["m_alcohol_bmi"]]
+# | label: bmi-diagnostics
+# | fig-cap: "BMI model diagnostics."
+_ = bmi_diag.plot_residual_diags()
 ```
+
+```{python}
+# | label: tbl-alc-bmi-scatter
+# | fig-cap: "Scatter plots of life expectancy against alcohol consumption and BMI (with linear fit lines)."
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+sns.regplot(
+    x=LECol.ALCOHOL,
+    y=LECol.TARGET,
+    data=df_train,
+    ax=axes[0],
+    scatter_kws={"alpha": 0.6},
+    lowess=True,
+)
+axes[0].set_title("Life Expectancy vs Alcohol Consumption")
+sns.regplot(
+    x=LECol.BMI,
+    y=LECol.TARGET,
+    data=df_train,
+    ax=axes[1],
+    scatter_kws={"alpha": 0.6},
+    lowess=True,
+)
+axes[1].set_title("Life Expectancy vs BMI")
+plt.tight_layout()
+plt.show()
+```
+:::
+
 
 Conditional on development status, total health expenditure, and the economic‑development PC, `bmi` remains positively associated with life expectancy (**+1.93 years per 1 SD**, p < 0.001; 95% CI **[1.00, 2.86]**). In contrast, `alcohol` is small and not statistically different from zero (**-0.33 years per 1 SD**, p = 0.514; 95% CI **[-1.33, 0.67]**). The model is jointly significant (F‑test p < 0.001), but overall fit is comparatively weak (**$R^2 = 0.608$**, RMSE = **5.07 years**). Normality fails (JB p < 0.001; Shapiro p = 0.001) and BP indicates heteroskedasticity (BP p = 0.008), so p‑values and CIs should be treated cautiously.
 
 The influence plot highlights a small set of countries with disproportionate impact on the fit (Cook’s distance flags **11** countries under the 4/n rule), so any alcohol-related conclusion should be framed as **fragile** in cross-sectional OLS unless it remains stable under sensitivity checks.
-
-## Nonlinearity and thresholds
-
-**RQ4 (continued):** test diminishing returns for GDP, health expenditure, and immunization using simple quadratic terms.
-
-Model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + immunization_PC1`
-
-```{python}
-# | label: nonlinearity-models
-# | code-fold: true
-econ_pc1 = econ_pcs[0] if econ_pcs else None
-immun_pc1 = immun_pcs[0] if immun_pcs else None
-nl_terms = [t for t in (econ_pc1, LECol.TOTAL_EXPENDITURE, immun_pc1) if t is not None]
-nl_base = [LECol.HIV_AIDS, STATUS_DUMMY, *nl_terms]
-nl_df = df_train[[LECol.TARGET, *nl_base]].dropna()
-
-rhs_linear = " + ".join(str(t) for t in nl_base)
-nl_linear = fit_additive(
-    registry,
-    nl_df,
-    name="m_nonlinear_linear",
-    terms=nl_base,
-)
-display(nl_linear)
-```
-
-This parsimonious linear specification explains **$R^2 = 0.798$** of the variance (RMSE = **3.64 years**) and is jointly significant (F‑test p < 0.001). Key effects (years per 1 SD) are: `hiv_aids` **-3.40** (p < 0.001; 95% CI **[-4.00, -2.80]**), `economic_development_PC1` **+2.80** (p < 0.001; 95% CI **[2.24, 3.36]**), `total_expenditure` **+0.67** (p = 0.033; 95% CI **[0.06, 1.29]**), and `immunization_PC1` **-1.13** (p < 0.001; 95% CI **[-1.51, -0.76]**). Normality is acceptable (JB p = 0.119; Shapiro p = 0.111), but heteroskedasticity persists (BP p = 0.002; White p = 0.011), so OLS SEs/CIs may be biased. Cook’s distance flags **12** observations, so we treat this as a **robust baseline association model** rather than precise causal inference.
-
-```{python}
-# | label: tbl-nonlinearity-compare
-# | tbl-cap: "Nonlinearity baseline model compared (sorted by AIC)."
-registry.compare(sort_by="aic").drop(columns=["rhs"])[
-    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
-].loc[["m_nonlinear_linear"]]
-```
 
 ## Effect modification (interactions)
 
@@ -866,15 +924,8 @@ Interaction model: `life_expectancy ~ hiv_aids + status_developed + economic_dev
 ```{python}
 # | label: interaction-models
 # | code-fold: true
-econ_pc1 = econ_pcs[0] if econ_pcs else None
-immun_pc1 = immun_pcs[0] if immun_pcs else None
 
-main_terms = [LECol.HIV_AIDS, STATUS_DUMMY]
-if econ_pc1 is not None:
-    main_terms.append(econ_pc1)
-main_terms.extend([LECol.TOTAL_EXPENDITURE, LECol.ALCOHOL])
-if immun_pc1 is not None:
-    main_terms.append(immun_pc1)
+main_terms = [*controls, LECol.HIV_AIDS, LECol.ALCOHOL]
 
 rhs_main = " + ".join(str(t) for t in main_terms)
 train_int = df_train[[LECol.TARGET, *main_terms]].dropna()
@@ -883,7 +934,7 @@ int_base = fit_additive(
     registry,
     train_int,
     name="m_interactions_base",
-    terms=main_terms,
+    terms=[*main_terms],
     refit=True,
 )
 display(int_base)
@@ -899,6 +950,7 @@ int_diag = fit_additive(
 display(int_diag)
 ```
 
+<!--  TODO: plot a matrix: ALCOHOL against all control features  -->
 ```{python}
 # | label: interaction-slopes
 # | fig-cap: "Interaction plot: predicted alcohol slope by development status."
@@ -936,36 +988,6 @@ registry.compare(sort_by="aic").drop(columns=["rhs"])[
 
 The interaction plot shows **opposing alcohol slopes** by development status: a mildly positive slope for developing countries and a negative slope for developed countries. In the interaction model, `alcohol` is positive (**+0.87 years per 1 SD**, p = 0.026; 95% CI **[0.11, 1.64]**) while the interaction term is negative (**-3.71**, p = 0.055; 95% CI **[-7.49, 0.08]**), implying a developed‑country slope of roughly **-2.84 years per 1 SD**. The model is jointly significant (F‑test p < 0.001), but normality fails (JB p = 0.002; Shapiro p = 0.006) and BP indicates heteroskedasticity (BP p = 0.002), so p‑values/CIs should be treated cautiously. Collinearity is substantial (max VIF **12.6**, @tbl-interaction-vif), which inflates SEs and weakens stability. We therefore treat effect modification as **exploratory** and do not use this interaction specification as the chapter’s final interpretable model.
 
-## Influence and outliers
-
-**RQ6:** evaluate sensitivity to influential countries using Cook’s distance and leverage.
-
-Trimmed refit: same formula as the nonlinearity model, estimated after excluding observations with Cook’s distance > 4/n.
-
-```{python}
-# | label: influence-sensitivity
-# | code-fold: true
-threshold = 4 / len(nl_df)
-sens_initial, sens_diag = registry.fit(
-    nl_df,
-    name="m_nonlinear_linear_trimmed",
-    rhs=rhs_linear,
-    refit=True,
-    cook_distance_threshold=threshold,
-)
-display(sens_diag)
-```
-
-Trimming a small set of influential observations (Cook’s distance > 4/n) is a simple sensitivity check. In our data this removes **13 countries** (179 $\rightarrow$ 166 observations). The trimmed model remains jointly significant (F‑test p < 0.001) with stable key effects (`hiv_aids` **-3.59** years; 95% CI **[-4.21, -2.97]**, `total_expenditure` **+1.21** years; 95% CI **[0.64, 1.77]**, `immunization_PC1` **-1.00** years; 95% CI **[-1.35, -0.66]**). Normality is acceptable (JB p = 0.307; Shapiro p = 0.129), but BP still flags heteroskedasticity (BP p = 0.012), so CIs may still be conservative. The largest absolute coefficient change is about **0.86 years** (for `status_developed`), and holdout RMSE changes only marginally (**4.01 $\rightarrow$ 4.02 years**). The influence plots suggest outliers concentrated in a few high‑leverage countries (e.g., **Lesotho**, **Eswatini**, **South Africa**, **Nigeria**), but the main coefficient signs remain stable, supporting the qualitative conclusions of the baseline model.
-
-```{python}
-# | label: tbl-influence-compare
-# | tbl-cap: "Influence sensitivity: base vs trimmed nonlinearity model."
-registry.compare(sort_by="aic").drop(columns=["rhs"])[
-    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
-].loc[["m_nonlinear_linear", "m_nonlinear_linear_trimmed"]]
-```
-
 ## Generalization and holdout performance
 
 **RQ7:** evaluate predictive performance on 2011.
@@ -999,13 +1021,15 @@ The global comparison in @tbl-global-compare confirms the pattern above: the `ad
 # | label: fig-holdout-calibration
 # | fig-cap: "Observed vs predicted life expectancy on holdout year (best interpretable model)."
 candidate_models = [
-    "m_immunization_reduced",
-    "m_nonlinear_linear",
-    "m_alcohol_bmi",
+    "m_immunization",
+    "m_alcohol",
+    "m_bmi",
 ]
+available_models = [m for m in candidate_models if m in compare_tbl.index]
+holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
 best_name = (
-    compare_tbl.loc[candidate_models, holdout_rmse_col].dropna().idxmin()
-    if candidate_models
+    compare_tbl.loc[available_models, holdout_rmse_col].dropna().idxmin()
+    if available_models
     else compare_tbl[holdout_rmse_col].dropna().idxmin()
 )
 
@@ -1049,9 +1073,7 @@ display(panel_diag)
 ```{python}
 # | label: tbl-panel-compare
 # | tbl-cap: "Panel model summary (single model)."
-panel_registry.compare(sort_by="aic").drop(columns=["rhs"])[
-    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
-].loc[["m_panel"]]
+cmp_tbl(panel_registry, ["m_panel"])
 ```
 
 The Durbin–Watson statistic is far below 2 (**DW = 0.48**), indicating strong positive autocorrelation in the panel residuals. The model is jointly significant (F‑test p < 0.001) with sizable effects (e.g., `adult_mortality` **-2.62** years per 1 SD, 95% CI **[-2.92, -2.33]**; `hiv_aids` **-4.43**, CI **[-4.72, -4.14]**; `status_developed` **+6.20**, CI **[5.55, 6.84]**), but autocorrelation and heteroskedasticity (BP p < 0.001; White p < 0.001) violate OLS assumptions. As a result, standard errors and CIs are not reliable in the pooled panel fit (despite $R^2 = 0.709$ and RMSE = 4.71 years). We keep the panel model only as a descriptive sensitivity check and base inference on the cross‑sectional models. A rigorous panel treatment would require country‑clustered or time‑clustered standard errors, or an explicit panel model (fixed effects / random effects / GLS with AR(1) errors), which is outside the scope of this chapter.
@@ -1061,7 +1083,7 @@ The Durbin–Watson statistic is far below 2 (**DW = 0.48**), indicating strong 
 Across the 2014 cross-section, we find a clear hierarchy of associations with life expectancy:
 
 - **RQ1 (strongest association):** `adult_mortality` is the single strongest predictor (coef **-7.70 years per 1 SD**, $R^2 = 0.904$), but it is too close to the definition of life expectancy to serve as an interpretable “driver”.
-- **RQ2 (socioeconomic-only prediction):** a socioeconomic baseline already captures a large share of the life expectancy gradient (see @tbl-socioeconomic-compare). The best AIC baseline is `m_socio_eco_undp_quad` (AIC **894.2**, RMSE **3.47 years**), and its 2011 calibration/uncertainty is summarized in @fig-socioeconomic-calibration and @tbl-socioeconomic-eval-ci.
+- **RQ2 (socioeconomic-only prediction):** a socioeconomic baseline already captures a large share of the life expectancy gradient (see @tbl-socioeconomic-compare). The best AIC baseline after Cook’s-distance sensitivity trimming is `m_socio_eco_social_cook` (AIC **776.5**, RMSE **2.81 years** on the 2014 training cross-section); its 2011 calibration/uncertainty is summarized in @fig-socioeconomic-calibration and @tbl-socioeconomic-eval-ci.
 - **RQ3 (immunization impact):** adding `immunization_PC1` improves fit beyond development status, HIV/AIDS burden, and economic development ($R^2$: **0.743 $\rightarrow$ 0.792**; RMSE: **4.11 $\rightarrow$ 3.69** years), with a sizeable immunization component (coef **-1.17 years per 1 SD**, p < 0.001).
 - **RQ4 (alcohol/BMI conditional effects):** `bmi` remains positively associated after controls (coef **+1.93**, p < 0.001), while `alcohol` is not robustly different from zero (coef **-0.33**, p = 0.514).
 - **RQ5 (effect modification):** the status × alcohol point estimate suggests a sign flip, but the interaction term is only marginal (coef **-3.71**, p = 0.055) once economic development is controlled for; we treat this as exploratory and do not retain interaction terms in the final model.
