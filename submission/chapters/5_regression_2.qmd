@@ -381,7 +381,7 @@ social_pcs = pca_groups.group_results[0].pc_scores.columns.tolist()
 df_test = holdout_scaled.copy()
 ```
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 
 ### Feature summary and transformations
 
@@ -456,7 +456,7 @@ _ = m1.plot_residual_diags()
 
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### Model: Baseline with adult mortality + HDI
 ```{python}
 # | label: baseline-model-adult-mortality-hdi
@@ -477,7 +477,7 @@ display(m1_hdi)
 _ = m1_hdi.plot_residual_diags()
 ```
 
-Adding HDI yields a substantially tighter fit (**$R^2 = 0.955$**, RMSE = **1.73 years**, $n=165$), and both predictors remain statistically precise. Because the predictors are z-standardized, the coefficients can be read as **years of life expectancy per 1 SD change** in the predictor. Holding HDI constant, a one-standard-deviation increase in adult mortality is associated with **−5.38 years** of life expectancy (95% CI **[−5.81, −4.94]**, $p<0.001$). Holding adult mortality constant, a one-standard-deviation increase in HDI is associated with **+2.95 years** (95% CI **[2.51, 3.38]**, $p<0.001$). In this specification, adult mortality contributes the stronger marginal signal, while HDI still adds a large incremental association.
+Adding HDI yields a substantially tighter fit (**$R^2 = 0.955$**, RMSE = **1.73 years**, $n=165$), and both predictors remain statistically precise. Because the predictors are z-standardized, the coefficients can be read as **years of life expectancy per 1 SD change** in the predictor. Holding HDI constant, a one-standard-deviation increase in adult mortality is associated with **-5.38 years** of life expectancy (95% CI **[-5.81, -4.94]**, $p<0.001$). Holding adult mortality constant, a one-standard-deviation increase in HDI is associated with **+2.95 years** (95% CI **[2.51, 3.38]**, $p<0.001$). In this specification, adult mortality contributes the stronger marginal signal, while HDI still adds a large incremental association.
 
 Substantively, this model is best treated as a **benchmark / upper bound**, not a mechanistic explanation. HDI is a composite index whose construction is closely tied to population health and (in many definitions) directly incorporates life expectancy or closely related quantities. As a result, including HDI risks **target leakage** and can inflate apparent explanatory power. The correct takeaway is therefore limited but useful: *given a mortality proxy and a high-level development/health proxy, little residual variance remains in the cross-section*. This does not justify interpreting HDI as an “independent driver” in the same sense as the domain predictors that follow.
 
@@ -563,7 +563,7 @@ if social_le_undp_pc1 is None:
 socio_econ_names = []
 ```
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 
 ### M1: LE ~ econ PCs
 ```{python}
@@ -582,7 +582,7 @@ display(socio_1)
 ```
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### M2: LE ~ status + econ PCs + UNDP econ PC1
 ```{python}
 # | label: socioeconomic-baseline-model-2
@@ -599,7 +599,7 @@ display(socio_2)
 ```
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### M3: LE ~ status + econ PCs + UNDP econ PC1 ^ 2
 ```{python}
 # | label: socioeconomic-baseline-model-3
@@ -617,7 +617,7 @@ display(socio_3)
 ```
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### M4: LE ~ status + econ PC1 + UNDP econ PC1 ^ 2 + social PC1
 ```{python}
 # | label: socioeconomic-baseline-model-4
@@ -675,16 +675,10 @@ plt.show()
 
 
 The best AIC socioeconomic baseline after Cook’s-distance sensitivity trimming is
-`life_expectancy ~ status_developed + economic_development_PC1 + social_development_PC1 + undp_socio_PC1 + I(undp_socio_PC1^2)` ($n=156$).
+`life_expectancy ~ status_developed + economic_development_PC1 + social_development_PC1 + undp_socio_PC1 + I(undp_socio_PC1^2)` ($n=156$; `m_socio_eco_social_cook`).
 On the 2014 training cross-section, it achieves **$R^2=0.861$** (adj. **0.857**) with **RMSE = 2.81 years**, showing that broad development indicators alone already explain most cross-sectional variation in life expectancy.
 
-All coefficients are **conditional associations** (not causal effects). Developed status remains substantial (**+4.33 years**, $t=5.06$, $p<0.001$) even after the continuous development PCs. The economic-development component is positive (**+1.10 years per 1 SD**, $t=3.84$, $p<0.001$). The UNDP socioeconomic component dominates the fit and is nonlinear: the linear term is large (**-2.53**, $t=-9.41$, $p<0.001$) and the quadratic term is also negative (**-0.53**, $t=-8.70$, $p<0.001$), implying concavity (non-constant marginal association). The `social_development_PC1` effect is small (**-0.53**, $p=0.013$) and is plausibly sensitive to overlap and suppression between multiple correlated “development” summaries (moderate collinearity; max VIF $\approx 6.17$).
-
-To interpret the quadratic UNDP term, let $x$ denote the UNDP PC1 score. The fitted contribution is $\beta_1 x + \beta_2 x^2$, so the marginal association is
-$$
-\frac{\partial \hat{y}}{\partial x} = \beta_1 + 2\beta_2 x \approx -2.53 - 1.05x.
-$$
-Because PCA signs are arbitrary, interpretation should be stated via the loadings; equivalently, one may flip a PC’s sign to align “more development” with increasing predicted life expectancy (predictions unchanged), yielding a narrative of increasing life expectancy with diminishing returns.
+Developed status remains substantial (**+4.33 years**, $t=5.06$, $p<0.001$) even after the continuous development PCs. The economic-development component is positive (**+1.10 years per 1 SD**, $t=3.84$, $p<0.001$). The UNDP socioeconomic component dominates the fit and is nonlinear: the linear term is large (**-2.53**, $t=-9.41$, $p<0.001$) and the quadratic term is also negative (**-0.53**, $t=-8.70$, $p<0.001$), implying concavity (non-constant marginal association). The `social_development_PC1` effect is small (**-0.53**, $p=0.013$) and is plausibly sensitive to overlap and suppression between multiple correlated “development” summaries (moderate collinearity; max VIF $\approx 6.17$).
 
 Diagnostics in @fig-socioeconomic-diagnostics are favorable after trimming: residual normality is not rejected (Jarque–Bera $p=0.195$; Shapiro $p=0.121$) and heteroscedasticity tests do not reject (Breusch–Pagan $p=0.087$; White $p=0.331$). Influence is bounded (max Cook’s **0.035**, max leverage **0.162**), indicating that the estimates are not dominated by a single high-leverage country. We treat Cook’s-distance trimming as a **sensitivity analysis** (influential $\neq$ incorrect) and use it primarily to improve stability and diagnostics; note that AIC values are most comparable across models fit on the same dataset and sample size.
 
@@ -693,6 +687,7 @@ Diagnostics in @fig-socioeconomic-diagnostics are favorable after trimming: resi
 ```{python}
 # | label: tbl-socioeconomic-eval
 # | tbl-cap: "Holdout-year performance (2011) for socioeconomic baselines."
+# | code-fold: true
 N_BOOTSTRAP = 3000
 
 eval_socio = dict.fromkeys(
@@ -711,17 +706,14 @@ eval_tbl.insert(0, "model", list(eval_socio.keys()))
 eval_tbl.set_index("model").sort_values("rmse").round(3)
 ```
 
-```{python}
-# | label: tbl-socioeconomic-eval-ci
-# | tbl-cap: "Bootstrap CIs for holdout metrics (best AIC socioeconomic baseline; B=3000)."
-eval_socio[best_socio_econ_name].bootstrap_ci(n_bootstrap=N_BOOTSTRAP, random_state=42).set_index(
-    "metric"
-)
-```
+Inspecting @tbl-socioeconomic-eval, that the trimmed socio-economic model, which we declared the winner on AIC grounds, has the second worst performance on the hold out set. This is an interesting observation that aligns with analogous findings in [Supervised PCA Regression](5_regression_supervised_pca.qmd), where the simplified and trimmed model did not generalize as well as the fuller models. However, since our primary goal is interpretability and stable effect estimation rather than pure prediction, we proceed with the trimmed socioeconomic baseline for subsequent analyses.
+
+We subsequently inspect holdout calibration for the "best" socioeconomic baseline:
 
 ```{python}
 # | label: fig-socioeconomic-calibration
 # | fig-cap: "Holdout calibration (2011) for best AIC socioeconomic baseline with bootstrap 95% CIs."
+# | code-fold: true
 plt.figure(figsize=(7, 5))
 eval_socio[best_socio_econ_name].plot_calibration(
     bins=10,
@@ -731,19 +723,18 @@ eval_socio[best_socio_econ_name].plot_calibration(
 plt.show()
 ```
 
-
+The bootstrapped CIs mirror closels the density of datapoints in the calibration plot, with wider CIs at lower predicted and ground-truth life expectancy values. Overall, the socioeconomic baseline shows reasonable calibration on the holdout year.
 
 ## Immunization impact
 
-**RQ3:** quantify the effect of immunization coverage (e.g., DTP3, HepB, Polio) controlling for development and mortality burden.
+**RQ3:** quantify the effect of immunization coverage (e.g., DTP3, HepB, Polio) controlling for development; furthermore we explore the impact of the number of HIV cases against this baseline.
 
 Baseline (socioeconomic): `m_socio_eco_social_cook` (RQ2)
 
 HIV burden: `life_expectancy ~ m_socio_eco_social_cook + hiv_aids`
 Immunization model: `life_expectancy ~ m_socio_eco_social_cook + immunization_PC1`
-Immunization and HIV/AIDS model: `life_expectancy ~ m_socio_eco_social_cook + immunization_PC1 + hiv_aids`
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 
 ### M1: HIV Burden
 ```{python}
@@ -783,10 +774,13 @@ display(hiv_diag)
 # | label: fig-hiv-diagnostics
 # | fig-cap: "HIV burden model diagnostics."
 hiv_diag.plot_residual_diags()
+plt.show()
 ```
+
+The HIV burden is clearly significant with a negative association (**-2.23 years per 1 SD increase in HIV cases**), p < 0.001; Adding HIV improves the model fit from and AIC of 772 to 740 while still satisfying all OLS assumptions.
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### M2: Immunization PC1
 ```{python}
 # | label: immunization-model
@@ -811,9 +805,16 @@ immun_diag.plot_residual_diags()
 ```
 :::
 
-Adding `immunization_PC1` improves fit relative to the base model (**$R^2$: 0.743 $\rightarrow$ 0.792**, RMSE: **4.11 $\rightarrow$ 3.69 years**, @tbl-immunization-compare). The model is jointly significant (F‑test p < 0.001), and `immunization_PC1` is negative and precise (**-1.17 years per 1 SD**, p < 0.001; 95% CI **[-1.55, -0.80]**). Because PCA component signs are arbitrary, we interpret the *direction* of `immunization_PC1` via its loadings in @fig-pca-group-loadings: higher vaccination coverage corresponds to higher life expectancy.
+```{python}
+# | label: tbl-immunization-compare
+# | tbl-cap: "HIV baseline vs immunization model (training fit), sorted by AIC."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_hiv_base", "m_immunization"]].sort_values("aic").round(3)
+```
 
-Diagnostics in @fig-immunization-diagnostics show normality is acceptable for the immunization model (JB p = 0.145; Shapiro p = 0.164), so t‑tests/CIs are reasonably interpretable, but heteroskedasticity persists (BP p = 0.002; White p = 0.005), which can bias OLS standard errors and confidence intervals. The influence plot highlights a small set of high‑leverage countries (e.g., **Lesotho**, **Eswatini**, **Nigeria**), so the immunization effect should be interpreted as a **robust association**, not a precise causal magnitude.
+Adding `immunization_PC1` worsens fit relative to the base model by 8 AIC points. While the `immunization_PC1` negative (it represents _under-coverage_), as expected it is not statistically significant (p = 0.462), hence we cannot reject the null hypothesis of no effect.
+
 
 ## Alcohol and BMI: conditional effects
 
@@ -824,7 +825,7 @@ Baseline (socioeconomic): `m_socio_eco_social_cook` (RQ2)
 M1: `life_expectancy ~ m_socio_eco_social_cook + alcohol`
 M2: `life_expectancy ~ m_socio_eco_social_cook + bmi`
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### M1: Alcohol
 ```{python}
 # | label: alcohol-model
@@ -859,7 +860,7 @@ _ = alc_diag.plot_residual_diags()
 ```
 :::
 
-:::{.callout-note collapse="true"}
+:::{.callout-note collapse="false"}
 ### M1: BMI
 ```{python}
 # | label: bmi-model
@@ -883,8 +884,8 @@ _ = bmi_diag.plot_residual_diags()
 ```
 
 ```{python}
-# | label: tbl-alc-bmi-scatter
-# | fig-cap: "Scatter plots of life expectancy against alcohol consumption and BMI (with linear fit lines)."
+# | label: fig-alc-bmi-scatter
+# | fig-cap: "Scatter plots of life expectancy against alcohol consumption and BMI (with LOWESS curves)."
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 sns.regplot(
     x=LECol.ALCOHOL,
@@ -910,16 +911,241 @@ plt.show()
 :::
 
 
-Conditional on development status, total health expenditure, and the economic‑development PC, `bmi` remains positively associated with life expectancy (**+1.93 years per 1 SD**, p < 0.001; 95% CI **[1.00, 2.86]**). In contrast, `alcohol` is small and not statistically different from zero (**-0.33 years per 1 SD**, p = 0.514; 95% CI **[-1.33, 0.67]**). The model is jointly significant (F‑test p < 0.001), but overall fit is comparatively weak (**$R^2 = 0.608$**, RMSE = **5.07 years**). Normality fails (JB p < 0.001; Shapiro p = 0.001) and BP indicates heteroskedasticity (BP p = 0.008), so p‑values and CIs should be treated cautiously.
+**Answer (RQ4):** conditional on the socioeconomic baseline, BMI shows a clear nonlinear association (increase at low-to-mid values with saturation at higher values), while alcohol shows only mild nonlinearity (mostly flat with an increase at the upper end).
 
-The influence plot highlights a small set of countries with disproportionate impact on the fit (Cook’s distance flags **11** countries under the 4/n rule), so any alcohol-related conclusion should be framed as **fragile** in cross-sectional OLS unless it remains stable under sensitivity checks.
+We fit low-complexity B-splines guided by @fig-alc-bmi-scatter: alcohol uses `degree=1` with `n_knots=2` ($df=3$), and BMI uses `degree=3` with `n_knots=2` ($df=5$).
+
+:::{.callout-note collapse="false"}
+### M2: Alcohol (B-spline)
+```{python}
+# | label: alcohol-model-bs
+# | code-fold: true
+def _bs_bounds(col: str) -> tuple[float, float]:
+    pooled = pd.concat([df_train[col], holdout_scaled[col]], axis=0).dropna()
+    return float(pooled.min()), float(pooled.max())
+
+
+def _spline_rhs(
+    *,
+    base_terms: list[str],
+    extra_terms: list[str],
+    x_col: str,
+    n_knots: int,
+    degree: int,
+    lower_bound: float,
+    upper_bound: float,
+) -> str:
+    df_spline = degree + n_knots
+    bs_term = (
+        f"bs({x_col}, df={df_spline}, degree={degree}, "
+        f"lower_bound={lower_bound:.6f}, upper_bound={upper_bound:.6f})"
+    )
+    return " + ".join([*base_terms, *extra_terms, bs_term])
+
+
+base_terms = [str(t) for t in controls]
+extra_terms = socio_extra
+
+alcohol_col = str(LECol.ALCOHOL)
+alcohol_lb, alcohol_ub = _bs_bounds(alcohol_col)
+ALCOHOL_BS_DEGREE = 1
+ALCOHOL_BS_KNOTS = 2
+
+rhs_alcohol_bs = _spline_rhs(
+    base_terms=base_terms,
+    extra_terms=extra_terms,
+    x_col=alcohol_col,
+    n_knots=ALCOHOL_BS_KNOTS,
+    degree=ALCOHOL_BS_DEGREE,
+    lower_bound=alcohol_lb,
+    upper_bound=alcohol_ub,
+)
+
+alc_bs_initial, alc_bs_diag = registry.fit(
+    df_train[[LECol.TARGET, *controls, LECol.ALCOHOL]].dropna(),
+    name="m_alcohol_bs",
+    rhs=rhs_alcohol_bs,
+    refit=True,
+    cook_distance_threshold=4 / len(df_train),
+)
+registry.remove("m_alcohol_bs_initial")
+display(alc_bs_diag)
+```
+:::
+
+:::{.callout-note collapse="false"}
+### M2: BMI (B-spline)
+```{python}
+# | label: bmi-model-bs
+# | code-fold: true
+bmi_col = str(LECol.BMI)
+bmi_lb, bmi_ub = _bs_bounds(bmi_col)
+BMI_BS_DEGREE = 3
+BMI_BS_KNOTS = 2
+
+rhs_bmi_bs = _spline_rhs(
+    base_terms=base_terms,
+    extra_terms=extra_terms,
+    x_col=bmi_col,
+    n_knots=BMI_BS_KNOTS,
+    degree=BMI_BS_DEGREE,
+    lower_bound=bmi_lb,
+    upper_bound=bmi_ub,
+)
+
+bmi_bs_initial, bmi_bs_diag = registry.fit(
+    df_train[[LECol.TARGET, *controls, LECol.BMI]].dropna(),
+    name="m_bmi_bs",
+    rhs=rhs_bmi_bs,
+    refit=True,
+    cook_distance_threshold=4 / len(df_train),
+)
+registry.remove("m_bmi_bs_initial")
+display(bmi_bs_diag)
+```
+:::
+
+```{python}
+# | label: tbl-alcohol-bmi-bs-compare
+# | tbl-cap: "Alcohol/BMI models (linear vs B-splines), sorted by AIC."
+registry.compare(sort_by="aic").drop(columns=["rhs"])[
+    ["aic", "rmse", "r2", "adj_r2", "n_obs"]
+].loc[["m_alcohol", "m_alcohol_bs", "m_bmi", "m_bmi_bs"]].sort_values("aic").round(3)
+```
+
+```{python}
+# | label: tbl-alcohol-bmi-bs-holdout
+# | tbl-cap: "Holdout performance (2011): linear vs B-spline models."
+# | include: false
+for name in ["m_alcohol", "m_alcohol_bs", "m_bmi", "m_bmi_bs"]:
+    _ = registry.evaluate_on(
+        name=name,
+        df=holdout_scaled,
+        label=f"year{HOLDOUT_YEAR}",
+    )
+
+holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
+holdout_r2_col = f"year{HOLDOUT_YEAR}_r2"
+
+registry.compare(sort_by=holdout_rmse_col).drop(columns=["rhs"])[
+    ["aic", "aicc", "rmse", holdout_rmse_col, holdout_r2_col, "n_obs"]
+].loc[["m_alcohol", "m_alcohol_bs", "m_bmi", "m_bmi_bs"]].round(3)
+```
+
+```{python}
+# | label: fig-alcohol-bmi-spline-curves
+# | fig-cap: "Observed LOWESS curve vs LOWESS-smoothed fitted values (linear vs B-spline). The fitted curves smooth model predictions at the observed covariate patterns, which makes them directly comparable to the bivariate LOWESS curve."
+# | echo: false
+import statsmodels.api as sm
+from typing import Any
+
+
+def _plot_fit_lowess(
+    *,
+    ax: plt.Axes,
+    x_col: str,
+    linear_model: Any,
+    spline_model: Any,
+    df_ref: pd.DataFrame,
+    title: str,
+    frac: float = 2 / 3,
+) -> None:
+    data = getattr(getattr(spline_model, "model", None), "data", None)
+    frame = getattr(data, "frame", None)
+    if not isinstance(frame, pd.DataFrame):
+        raise ValueError(
+            "Expected a formula-fitted statsmodels model with a training DataFrame."
+        )
+
+    target = str(getattr(data, "ynames", LECol.TARGET))
+    cols = [c for c in frame.columns if c != target]
+    used = df_ref[[target, *cols]].dropna()
+
+    x = used[x_col].astype(float)
+    y = used[target].astype(float)
+
+    sns.scatterplot(
+        x=x,
+        y=y,
+        alpha=0.25,
+        ax=ax,
+        color="tab:blue",
+        edgecolor="none",
+    )
+
+    obs_curve = sm.nonparametric.lowess(y, x, frac=frac, it=0, return_sorted=True)
+    ax.plot(
+        obs_curve[:, 0],
+        obs_curve[:, 1],
+        color="tab:blue",
+        linestyle=":",
+        linewidth=2.0,
+        label="LOWESS (observed)",
+    )
+
+    pred_lin = pd.Series(linear_model.predict(used), index=used.index)
+    pred_spl = pd.Series(spline_model.predict(used), index=used.index)
+
+    lin_curve = sm.nonparametric.lowess(
+        pred_lin, x, frac=frac, it=0, return_sorted=True
+    )
+    spl_curve = sm.nonparametric.lowess(
+        pred_spl, x, frac=frac, it=0, return_sorted=True
+    )
+
+    ax.plot(
+        lin_curve[:, 0],
+        lin_curve[:, 1],
+        color="tab:gray",
+        linestyle="--",
+        linewidth=2.0,
+        label="linear (fitted)",
+    )
+    ax.plot(
+        spl_curve[:, 0],
+        spl_curve[:, 1],
+        color="tab:red",
+        linewidth=2.5,
+        label="B-spline (fitted)",
+    )
+
+    ax.set_title(title)
+    ax.set_xlabel(x_col)
+    ax.set_ylabel("Life expectancy")
+    ax.legend()
+
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
+_plot_fit_lowess(
+    ax=axes[0],
+    x_col=str(LECol.ALCOHOL),
+    linear_model=registry.get("m_alcohol").diag.model,
+    spline_model=registry.get("m_alcohol_bs").diag.model,
+    df_ref=df_train,
+    title="Alcohol: fitted trend vs LOWESS",
+)
+_plot_fit_lowess(
+    ax=axes[1],
+    x_col=str(LECol.BMI),
+    linear_model=registry.get("m_bmi").diag.model,
+    spline_model=registry.get("m_bmi_bs").diag.model,
+    df_ref=df_train,
+    title="BMI: fitted trend vs LOWESS",
+)
+plt.tight_layout()
+plt.show()
+```
+
+In @fig-alcohol-bmi-spline-curves, the spline fits track the bivariate LOWESS trend closely. In-sample AIC improves for alcohol (spline vs linear) but not for BMI, so we treat the BMI nonlinearity as descriptive rather than as a strong improvement in predictive accuracy.
+
+Influence diagnostics indicate that a small set of countries has disproportionate impact on the fit, so alcohol/BMI conclusions should be framed as descriptive associations and checked for stability under sensitivity analyses.
 
 ## Effect modification (interactions)
 
-**RQ5:** test development-status interactions for immunization, expenditure, and alcohol.
+**RQ5:** test whether the alcohol association differs by development status (effect modification).
 
-Base model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + alcohol + immunization_PC1`
-Interaction model: `life_expectancy ~ hiv_aids + status_developed + economic_development_PC1 + total_expenditure + alcohol + immunization_PC1 + status_developed:alcohol`
+Base model: `life_expectancy ~ status_developed + economic_development_PC1 + social_development_PC1 + undp_socio_PC1 + I(undp_socio_PC1^2) + hiv_aids + alcohol`
+Interaction model: `life_expectancy ~ (...) + status_developed:alcohol`
 
 ```{python}
 # | label: interaction-models
@@ -935,6 +1161,7 @@ int_base = fit_additive(
     train_int,
     name="m_interactions_base",
     terms=[*main_terms],
+    extra_terms=socio_extra,
     refit=True,
 )
 display(int_base)
@@ -944,7 +1171,7 @@ int_diag = fit_additive(
     train_int,
     name="m_interactions_reduced",
     terms=main_terms,
-    extra_terms=[f"{STATUS_DUMMY}:{LECol.ALCOHOL}"],
+    extra_terms=[*socio_extra, f"{STATUS_DUMMY}:{LECol.ALCOHOL}"],
     refit=True,
 )
 display(int_diag)
@@ -952,7 +1179,7 @@ display(int_diag)
 
 <!--  TODO: plot a matrix: ALCOHOL against all control features  -->
 ```{python}
-# | label: interaction-slopes
+# | label: fig-interaction-slopes
 # | fig-cap: "Interaction plot: predicted alcohol slope by development status."
 from ama_tlbx.plotting.regression_plots import plot_interaction_effect
 
@@ -986,7 +1213,221 @@ registry.compare(sort_by="aic").drop(columns=["rhs"])[
 ].loc[["m_interactions_base", "m_interactions_reduced"]]
 ```
 
-The interaction plot shows **opposing alcohol slopes** by development status: a mildly positive slope for developing countries and a negative slope for developed countries. In the interaction model, `alcohol` is positive (**+0.87 years per 1 SD**, p = 0.026; 95% CI **[0.11, 1.64]**) while the interaction term is negative (**-3.71**, p = 0.055; 95% CI **[-7.49, 0.08]**), implying a developed‑country slope of roughly **-2.84 years per 1 SD**. The model is jointly significant (F‑test p < 0.001), but normality fails (JB p = 0.002; Shapiro p = 0.006) and BP indicates heteroskedasticity (BP p = 0.002), so p‑values/CIs should be treated cautiously. Collinearity is substantial (max VIF **12.6**, @tbl-interaction-vif), which inflates SEs and weakens stability. We therefore treat effect modification as **exploratory** and do not use this interaction specification as the chapter’s final interpretable model.
+```{python}
+# | label: tbl-alcohol-interaction-terms
+# | tbl-cap: "Key coefficients for the alcohol interaction model (main effect + slope difference by status)."
+model = int_diag.model
+params = model.params
+pvals = model.pvalues
+ci = model.conf_int().rename(columns={0: "ci_low", 1: "ci_high"})
+
+alcohol_term = str(LECol.ALCOHOL)
+interaction_term = f"{STATUS_DUMMY}:{LECol.ALCOHOL}"
+
+coef_tbl = (
+    pd.DataFrame(
+        {
+            "coef": params,
+            "p": pvals,
+        }
+    )
+    .join(ci)
+    .loc[[alcohol_term, interaction_term]]
+    .round(3)
+)
+display(coef_tbl)
+
+beta_alc = float(params[alcohol_term])
+beta_int = float(params[interaction_term])
+pd.DataFrame(
+    {
+        "alcohol_slope": {
+            "developing (status_developed=0)": beta_alc,
+            "developed (status_developed=1)": beta_alc + beta_int,
+            "difference (developed - developing)": beta_int,
+        }
+    }
+).round(3)
+```
+
+The interaction plot in @fig-interaction-slopes indicates that the **estimated alcohol slope differs by development status**, with the developed-country slope shifted relative to the developing baseline (see @tbl-alcohol-interaction-terms for the implied slopes).
+
+### Exploratory interaction search (child health and disease burden)
+
+As an additional exploratory check, we test whether the association of disease burden differs systematically with child-health conditions. We focus on four predictors: `child_mortality_PC1` (infant and under-5 deaths), `child_nutrition_PC1` (thinness), `hiv_aids`, and `measles`. Using the same socioeconomic baseline as in RQ2, we run a small interaction “grid search” (one interaction at a time) and then a stepwise selection using AICc as the criterion. We consider the following candidate interactions:
+
+```{python}
+# | label: interaction-health-grid-1
+# | include: false
+child_mortality_pc1 = pcs_by_group.get("child_mortality", [None])[0]
+child_thinness_pc1 = pcs_by_group.get("child_nutrition", [None])[0]
+if child_mortality_pc1 is None or child_thinness_pc1 is None:
+    raise ValueError(
+        "Expected child-health PCs missing; check the grouped PCA block (`feature_groups`)."
+    )
+```
+
+```{python}
+# | label: interaction-health-grid-2
+# | code-fold: true
+health_terms = [child_mortality_pc1, child_thinness_pc1, str(LECol.HIV_AIDS), str(LECol.MEASLES)]
+base_terms = [*controls, *health_terms]
+
+candidate_interactions = [
+    f"{STATUS_DUMMY}:{child_mortality_pc1}",
+    f"{STATUS_DUMMY}:{child_thinness_pc1}",
+    f"{STATUS_DUMMY}:{LECol.HIV_AIDS}",
+    f"{STATUS_DUMMY}:{LECol.MEASLES}",
+    f"{child_mortality_pc1}:{child_thinness_pc1}",
+    f"{child_mortality_pc1}:{LECol.HIV_AIDS}",
+    f"{child_thinness_pc1}:{LECol.HIV_AIDS}",
+    f"{child_mortality_pc1}:{LECol.MEASLES}",
+    f"{child_thinness_pc1}:{LECol.MEASLES}",
+    f"{LECol.HIV_AIDS}:{LECol.MEASLES}",
+]
+```
+```{python}
+# | label: interaction-health-grid-3
+# | include: false
+
+base_idx = registry.get("m_socio_eco_social_cook").diag.design_matrix.index
+df_health = df_train.loc[
+    base_idx,
+    [LECol.TARGET, *controls, *health_terms],
+].dropna()
+
+rhs_base = " + ".join(base_terms)
+
+tmp = ModelRegistry(eval_year=HOLDOUT_YEAR)
+tmp.fit(df_health, name="tmp_health_additive", rhs=rhs_base, refit=True)
+tmp.evaluate_on(holdout_scaled, name="tmp_health_additive", label=f"year{HOLDOUT_YEAR}")
+base_holdout = tmp.get("tmp_health_additive").eval_metrics_by_label[f"year{HOLDOUT_YEAR}"]
+
+rows: list[dict[str, float | str]] = []
+for term in candidate_interactions:
+    name = f"tmp_int_{term.replace(':', '_')}"
+    rhs = f"{rhs_base} + {term}"
+    diag = tmp.fit(df_health, name=name, rhs=rhs, refit=True)
+    tmp.evaluate_on(holdout_scaled, name=name, label=f"year{HOLDOUT_YEAR}")
+    holdout = tmp.get(name).eval_metrics_by_label[f"year{HOLDOUT_YEAR}"]
+    rows.append(
+        dict(
+            interaction=term,
+            aicc=float(diag.metrics.aicc) if diag.metrics.aicc is not None else float("nan"),
+            aic=float(diag.metrics.aic) if diag.metrics.aic is not None else float("nan"),
+            rmse_train=float(diag.metrics.rmse),
+            rmse_holdout=float(holdout.rmse),
+            delta_rmse_holdout=float(holdout.rmse - base_holdout.rmse),
+        )
+    )
+
+pd.DataFrame(rows).sort_values(["rmse_holdout", "aicc"]).head(10).round(3)
+```
+
+```{python}
+# | label: interaction-health-stepwise
+# | code-fold: true
+health_add = registry.fit(
+    df_health,
+    name="m_health_burden_additive",
+    rhs=rhs_base,
+    refit=True,
+)
+
+health_int = registry.fit_stepwise(
+    df_health,
+    name="m_health_burden_interaction",
+    base_terms=base_terms,
+    candidates=candidate_interactions,
+    direction="stepwise",
+    criterion="aicc",
+    threshold=1.0,
+    refit=True,
+)
+display(health_int)
+
+path = registry.get("m_health_burden_interaction").selection_path
+display(path.summary_table().round(3))
+
+for name in ["m_health_burden_additive", "m_health_burden_interaction"]:
+    _ = registry.evaluate_on(name=name, df=holdout_scaled, label=f"year{HOLDOUT_YEAR}")
+
+holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
+holdout_r2_col = f"year{HOLDOUT_YEAR}_r2"
+```
+
+```{python}
+# | label: tbl-health-interaction-compare
+# | tbl-cap: "Additive vs interaction health-burden models (AICc + holdout performance)."
+holdout_rmse_col = f"year{HOLDOUT_YEAR}_rmse"
+holdout_r2_col = f"year{HOLDOUT_YEAR}_r2"
+registry.compare(sort_by="aicc").drop(columns=["rhs"])[
+    ["aicc", "rmse", holdout_rmse_col, holdout_r2_col, "n_obs"]
+].loc[["m_health_burden_additive", "m_health_burden_interaction"]].round(3)
+```
+
+```{python}
+# | label: tbl-health-interaction-coefs
+# | tbl-cap: "Selected interaction terms (coefficients and p-values) in the stepwise health-burden model."
+# | code-fold: true
+model = registry.get("m_health_burden_interaction").diag.model
+params = model.params
+pvals = model.pvalues
+ci = model.conf_int().rename(columns={0: "ci_low", 1: "ci_high"})
+
+coef_tbl = (
+    pd.DataFrame(
+        {
+            "coef": params,
+            "p": pvals,
+        }
+    )
+    .join(ci)
+    .loc[[idx for idx in params.index if ":" in idx]]
+    .round(3)
+)
+coef_tbl
+```
+
+```{python}
+# | label: fig-interaction-health
+# | fig-cap: "Interaction effect plots for the stepwise-selected health-burden model (up to two selected interactions)."
+# | code-fold: true
+from ama_tlbx.plotting.regression_plots import plot_interaction_effect
+
+rhs_terms = registry.get("m_health_burden_interaction").rhs.split(" + ")
+selected = [t for t in rhs_terms if ":" in t]
+if not selected:
+    print("No interaction selected by AICc stepwise search (model remains additive).")
+else:
+
+    def _choose_x_by(left: str, right: str) -> tuple[str, str]:
+        if STATUS_DUMMY in {left, right}:
+            return (right if left == STATUS_DUMMY else left), STATUS_DUMMY
+        if str(LECol.HIV_AIDS) in {left, right}:
+            return str(LECol.HIV_AIDS), (right if left == str(LECol.HIV_AIDS) else left)
+        if str(LECol.MEASLES) in {left, right}:
+            return str(LECol.MEASLES), (right if left == str(LECol.MEASLES) else left)
+        return left, right
+
+    to_plot = selected[:2]
+    fig, axes = plt.subplots(1, len(to_plot), figsize=(8 * len(to_plot), 4))
+    axes_arr = np.atleast_1d(axes)
+    for ax, interaction in zip(axes_arr, to_plot, strict=False):
+        left, right = interaction.split(":", maxsplit=1)
+        x_col, by_col = _choose_x_by(left, right)
+        plot_interaction_effect(
+            registry.get("m_health_burden_interaction").diag,
+            x=x_col,
+            by=by_col,
+            df=df_health,
+            ax=ax,
+        )
+    plt.tight_layout()
+    plt.show()
+```
+
+Stepwise selection adds two interactions (see @tbl-health-interaction-coefs): (i) `status_developed:child_nutrition_PC1`, which implies that the **child-nutrition axis has a different slope** in developed vs developing countries, and (ii) `child_mortality_PC1:hiv_aids`, a weaker term that suggests the **HIV association changes with child-mortality conditions**.
 
 ## Generalization and holdout performance
 
@@ -1083,12 +1524,10 @@ The Durbin–Watson statistic is far below 2 (**DW = 0.48**), indicating strong 
 Across the 2014 cross-section, we find a clear hierarchy of associations with life expectancy:
 
 - **RQ1 (strongest association):** `adult_mortality` is the single strongest predictor (coef **-7.70 years per 1 SD**, $R^2 = 0.904$), but it is too close to the definition of life expectancy to serve as an interpretable “driver”.
-- **RQ2 (socioeconomic-only prediction):** a socioeconomic baseline already captures a large share of the life expectancy gradient (see @tbl-socioeconomic-compare). The best AIC baseline after Cook’s-distance sensitivity trimming is `m_socio_eco_social_cook` (AIC **776.5**, RMSE **2.81 years** on the 2014 training cross-section); its 2011 calibration/uncertainty is summarized in @fig-socioeconomic-calibration and @tbl-socioeconomic-eval-ci.
+- **RQ2 (socioeconomic-only prediction):** a socioeconomic baseline already captures a large share of the life expectancy gradient (see @tbl-socioeconomic-compare). The best AIC baseline after Cook’s-distance sensitivity trimming is `m_socio_eco_social_cook` (AIC **776.5**, RMSE **2.81 years** on the 2014 training cross-section); its 2011 calibration/performance is summarized in @fig-socioeconomic-calibration and @tbl-socioeconomic-eval.
 - **RQ3 (immunization impact):** adding `immunization_PC1` improves fit beyond development status, HIV/AIDS burden, and economic development ($R^2$: **0.743 $\rightarrow$ 0.792**; RMSE: **4.11 $\rightarrow$ 3.69** years), with a sizeable immunization component (coef **-1.17 years per 1 SD**, p < 0.001).
-- **RQ4 (alcohol/BMI conditional effects):** `bmi` remains positively associated after controls (coef **+1.93**, p < 0.001), while `alcohol` is not robustly different from zero (coef **-0.33**, p = 0.514).
+- **RQ4 (alcohol/BMI conditional effects):** BMI shows a nonlinear positive association after socioeconomic controls (increase then saturation), while alcohol shows only mild nonlinearity (mostly flat with an upper-tail increase).
 - **RQ5 (effect modification):** the status × alcohol point estimate suggests a sign flip, but the interaction term is only marginal (coef **-3.71**, p = 0.055) once economic development is controlled for; we treat this as exploratory and do not retain interaction terms in the final model.
 - **RQ6 (influence/outliers):** trimming **13** high-Cook’s observations changes coefficients modestly (max |Δcoef| $\approx$ 0.86 years) and does not materially change holdout RMSE (4.12 $\rightarrow$ 4.12 years).
 - **RQ7 (generalization):** on the 2011 holdout year, the adult‑mortality benchmark generalizes best (RMSE **2.89** years); among interpretable models, nonlinearity and immunization are best (RMSE **4.12** years), while alcohol/BMI is worst (RMSE **5.84** years).
 - **RQ8 (panel autocorrelation):** pooled panel OLS shows strong autocorrelation (DW = 0.48), so inference from the panel model is not reliable without a dedicated panel/cluster-robust treatment.
-
-**Limitations.** All findings are descriptive associations in observational data. Several models violate homoscedasticity, and some violate residual normality; we therefore emphasize effect sizes, diagnostics, and sensitivity checks over marginal p-values. Finally, PCA components are linear combinations with arbitrary sign, so interpreting `*_PC1` coefficients requires inspecting loadings (see PCA-related chapters).

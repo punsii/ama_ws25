@@ -22,8 +22,7 @@ We analyze the WHO “Life Expectancy” country-year panel (183 countries, 2000
 
 - [Data Preprocessing](chapters/2_preprocessing.qmd) — Cleaning pipeline, missing-value handling, transforms, and standardization used throughout ~ **Jan Duchscherer**.
 - [Investigate HDI](chapters/2_investigate_hdi.qmd) — Investigation of a supsicious and incorrectly labeled feature (Human Development Index) ~ **Jan Duchscherer**.
-- [Year Selection](chapters/2_preproc_year_selection.qmd) — Completeness and anomaly diagnostics used to select a representative year ~ **Jan Duchscherer**.
-- [Outlier Detection and Cleaning](chapters/2_outlier_detection.qmd) — IQR, z-score, and Isolation Forest screening on the longitudinal panel ~ **Jan Duchscherer**.
+- [Year Selection](chapters/2_preproc_year_selection.qmd) — Completeness and anomaly diagnostics used to select a representative year; This chapter initially made incorrect assumptions which made the results appear more significant than they are. ~ **Jan Duchscherer**.
 
 ## Exploratory analysis and dimensionality reduction
 
@@ -37,7 +36,7 @@ We analyze the WHO “Life Expectancy” country-year panel (183 countries, 2000
 ## Regression analysis
 
 - [Regression Analysis](chapters/5_regression.qmd) — OLS models with PCA-based reduction, diagnostics, and year-based out-of-sample evaluation ~ **Jens Christian Toftdahl**.
-- [Regression Analysis II](chapters/5_regression_2.qmd) — OLS models with interaction terms, diagnostics, and year-based out-of-sample evaluation ~ **Jan Duchscherer**.
+- [Regression Analysis II](chapters/5_regression_2.qmd) — OLS models with interaction terms, diagnostics, and year-based out-of-sample evaluation, bootstrapping and non-linear effects (splines) ~ **Jan Duchscherer**.
 - [Regression with Supervised PCA](chapters/5_regression_supervised_pca.qmd) — OLS models using supervised PCA for dimension reduction ~ **Jan Duchscherer**.
 
 
