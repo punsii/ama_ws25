@@ -489,7 +489,7 @@ ax.axvline(
     min_n_features,
     color="gray",
     linestyle=":",
-    label=f"Min CV Error (n={min_n_features})",
+    label=f"Min CV Error (k={min_n_features})",
 )
 
 # Formatting
