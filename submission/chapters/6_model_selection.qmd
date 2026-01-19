@@ -538,8 +538,6 @@ display(styled_k_table)
 
 ## Results and Discussion
 
-## Results and Discussion
-
 The model selection process yields consistent results across different methodologies.
 This convergence indicates that the findings are robust and do not fluctuate drastically with different metrics.
 
