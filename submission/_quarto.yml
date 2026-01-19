@@ -23,8 +23,6 @@ website:
             text: Year Selection
           - href: chapters/2_preprocessing.qmd
             text: Data Preprocessing
-          - href: chapters/2_outlier_detection.qmd
-            text: Outlier Detection
           - href: chapters/2_investigate_hdi.qmd
             text: Investigate HDI
           - href: chapters/3_correlation.qmd
