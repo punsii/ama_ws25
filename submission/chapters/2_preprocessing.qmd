@@ -7,9 +7,9 @@ format:
 
 # Overview
 
-This chapter documents the deterministic preprocessing workflow implemented in `ama-tlbx` for the WHO Life Expectancy dataset and clarifies which dataset views are used in downstream chapters. The raw data are a country-year panel (2000–2015); to reduce within-country temporal dependence, most multivariate analyses in this report use the 2014 cross-section (see [Year Selection](2_preproc_year_selection.qmd)). We elaborate on (i) deterministic cleaning and type conversion, (ii) missing-value handling (target vs predictors), and (iii) transformations and standardization.
+This chapter documents the preprocessing workflow implemented in `ama-tlbx` and clarifies which dataset views are used in downstream chapters. The raw data are a country-year panel (2000–2015); to reduce within-country temporal dependence, most multivariate analyses in this report use the 2014 cross-section (see [Year Selection](2_preproc_year_selection.qmd)). In addition to describing the pipeline (type conversion $\rightarrow$ missingness handling $\rightarrow$ transforms $\rightarrow$ standardization), we perform a **data-integrity audit** of the ["original Kaggle dataset"](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who) and show why we prefer a [cleaned, consistency-checked dataset](https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated/data) for modeling (`LifeExpectancyDataset.from_csv_updated()`), rather than “cleaning harder” within the same file.
 
-## Preprocessing workflow (ama-tlbx)
+# Preprocessing workflow (ama-tlbx)
 
 ::: {#fig-preproc-flow}
 ![](../figures/ama_preprocessing_flow.svg){width=100%}
@@ -129,7 +129,7 @@ The database has one variable that categorizes countries into two groups: Develo
 Data Sources: Average life expectancy of both genders in different years from 2000 to 2015: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/life-expectancy-at-birth-(years) Mortality-related attributes (infant deaths, under-five-deaths, adult mortality): https://www.who.int/data/gho/data/themes/mortality-and-global-health-estimates Alcohol consumption that is recorded in liters of pure alcohol per capita with 15+ years old: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/alcohol-recorded-per-capita-(15-)-consumption-(in-litres-of-pure-alcohol) % of coverage of Hepatitis B (HepB3) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/hepatitis-b-(hepb3)-immunization-coverage-among-1-year-olds-(-) % of coverage of Measles containing vaccine first dose (MCV1) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/measles-containing-vaccine-first-dose-(mcv1)-immunization-coverage-among-1-year-olds-(-) % of coverage of Polio (Pol3) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/polio-(pol3)-immunization-coverage-among-1-year-olds-(-) % of coverage of Diphtheria tetanus toxoid and pertussis (DTP3) immunization among 1-year-olds: https://www.who.int/data/gho/data/indicators/indicator-details/GHO/diphtheria-tetanus-toxoid-and-pertussis-(dtp3)-immunization-coverage-among-1-year-olds-(-) BMI: https://www.who.int/europe/news-room/fact-sheets/item/a-healthy-lifestyle---who-recommendations Incidents of HIV per 1000 population aged 15-49: https://data.worldbank.org/indicator/SH.HIV.INCD.ZS Prevalence of thinness among adolescents aged 10-19 years. BMI < -2 standard deviations below the median: https://www.who.int/data/gho/indicator-metadata-registry/imr-details/4805 GDP per capita in current USD: https://data.worldbank.org/indicator/NY.GDP.PCAP.CD?most_recent_year_desc=true Total population in millions: https://data.worldbank.org/indicator/SP.POP.TOTL?most_recent_year_desc=true Average years that people aged 25+ spent in formal education: https://ourworldindata.org/grapher/mean-years-of-schooling-long-run
 -->
 
-## Missing Values and analysis views
+# Missing Values and analysis views
 
 In the raw panel, 10 of 2,938 country-year rows have missing life expectancy; these correspond to 10 countries that appear only once in the dataset. When `drop_missing_target=True`, these rows (and countries) are removed before any further processing.
 
@@ -178,9 +178,10 @@ Given the singular appearance of these ten countries in 2013 only, their missing
 Predictor missingness is controlled by `resolve_nand_pred`. Some analyses require a fully observed predictor matrix (e.g., PCA, standardized regression), while others can operate on partially observed predictors (e.g., univariate plots of the target). We therefore distinguish the raw 2014 cross-section from complete-case and imputed variants, and we report the effective sample size in each chapter.
 <!-- Population of some countries like Israel, Srilanka are in thousands, while other in millions. -->
 
-## Raw panel consistency checks (minimal diagnostics)
+# Raw panel consistency checks
 
-The Kaggle comments claim that the raw panel has inconsistent units and significant missingness. Below are minimal, reproducible checks on the **raw panel** (`aggregate_by_country=False`, no imputation) that surface those issues directly.
+Throughout the analysis, we observe that the raw panel has inconsistent units and significant missingness. These issues are consistend with various discussions on the Kaggle page of the dataset.
+Below are minimal checks on the **raw panel** (`aggregate_by_country=False`, no imputation) that surface those issues directly.
 
 ```{python}
 # | label: tbl-panel-missingness
@@ -205,7 +206,10 @@ panel = LifeExpectancyDataset.from_csv(
 )
 ```
 
-The raw panel’s missingness is concentrated in a small subset of predictors (notably population, HepB coverage, and GDP per capita), which explains the sharp drop in complete‑case sample size.
+The raw panel’s missingness is concentrated in a small subset of predictors (notably population, HepB coverage, and GDP per capita), which explains the sharp drop in complete‑case sample size. Especially the missingness of easily sourced variables like population and GDP suggest sloppy data assembly and fundametal data gaps.
+
+
+We proceed with unit and range checks of key variables which were labeled as per‑1,000 rates in the original dataset.
 
 ```{python}
 # | label: tbl-rate-vs-counts
@@ -223,18 +227,14 @@ The raw panel’s missingness is concentrated in a small subset of predictors (n
     ]
     .assign(year=lambda d: d[LECol.YEAR].dt.year)
     .melt(id_vars=[LECol.COUNTRY, "year"], var_name="feature", value_name="value")
-    .dropna()
-    .groupby("feature")
-    .agg(
-        max_val=("value", "max"),
-        p99=("value", lambda s: s.quantile(0.99)),
-        share_gt_1000=("value", lambda s: (s > 1000).mean() * 100),
-    )
-    .reset_index()
+    .groupby("feature")[
+        "value"
+    ]
+    .describe()
 )
 ```
 
-The magnitudes above show that `measles`, `infant_deaths`, and `under_five_deaths` behave like **counts**, not per‑1,000 rates. This is consistent with the extremely large maxima (e.g., measles > 200,000).
+The magnitudes above show that some samples of `measles`, `infant_deaths`, and `under_five_deaths` behave like **counts**, not per‑1,000 rates. While the lower quantiles suggest that many rows are indeed rates, the extreme maxima are certainly inconsistent with the variable definitions and suggest incoherence within columns.
 
 ```{python}
 # | label: tbl-iqr-outliers
@@ -275,6 +275,8 @@ iqr_cols = [
 
 The IQR counts in Table @tbl-iqr-outliers quantify the heavy tails flagged by Kaggle users: measles, HIV/AIDS, under‑five deaths, and percentage expenditure dominate the outlier ranks, consistent with the extreme maxima and skewed distributions above.
 
+Another check focuses on `percentage_expenditure`, which is labeled as a percentage of the GDP that is spent on healthcare.
+
 ```{python}
 # | label: tbl-percentage-expenditure-check
 # | tbl-cap: "`percentage_expenditure` exceeds 100 for a large share of rows (not a literal percent)."
@@ -290,7 +292,13 @@ The IQR counts in Table @tbl-iqr-outliers quantify the heavy tails flagged by Ka
 )
 ```
 
-Nearly half of the rows exceed 100 in `percentage_expenditure`, indicating that it should be interpreted as a scaled spending measure rather than a literal percentage.
+```{python}
+# | label: tbl-percentage-expenditure-check-2
+# | tbl-cap: "`percentage_expenditure` exceeds 100 for a large share of rows (not a literal percent)."
+panel[[LECol.PERCENTAGE_EXPENDITURE]].dropna().describe().T
+```
+
+Nearly half of the rows exceed 100 in `percentage_expenditure`, indicating that it should be interpreted as a scaled spending measure rather than a literal percentage; The mean "percentage" expenditure being 738% furthe supports extreme inconsistency with the column.
 
 ```{python}
 # | label: tbl-population-scale-check
@@ -308,47 +316,123 @@ Nearly half of the rows exceed 100 in `percentage_expenditure`, indicating that 
 )
 ```
 
-Population values range from double‑digit counts to 1.3B. The non‑trivial share below 100k suggests mixed scaling or reporting gaps, motivating transformation and sensitivity checks downstream.
+```{python}
+# | label: tbl-population-min-countries
+# | tbl-cap: "Countries with the smallest reported population values (raw panel; minimum over years)."
+pop_min = (
+    panel[[LECol.COUNTRY, LECol.YEAR, LECol.POPULATION]]
+    .dropna(subset=[LECol.POPULATION])
+    .assign(year=lambda d: d[LECol.YEAR].dt.year.astype(int))
+)
+idx = pop_min.groupby(LECol.COUNTRY)[LECol.POPULATION].idxmin()
+(
+    pop_min.loc[idx, [LECol.COUNTRY, "year", LECol.POPULATION]]
+    .rename(columns={LECol.POPULATION: "min_population"})
+    .sort_values("min_population", ascending=True)
+    .head(10)
+)
+```
 
+Population values range from double‑digit counts to 1.3B. The non‑trivial share below 100k suggests mixed scaling (e.g., absolute counts vs millions or thousands) across countries. This is also visible in Table @tbl-population-min-countries, which shows countries with implausibly small populations (e.g., 34 for the Maldives and 657 for Israel), while some countries have populations in the billions.
 
-## Verifying specific Kaggle claims (data-only)
+## Outlier detectors as integrity checks (2014 cross-section) {#sec-outlier-integrity}
 
-The comments quoted above include concrete numeric claims. We verify those directly from the raw panel below.
+Outliers are not automatically “bad”: a country can be extreme because it is genuinely different. In this dataset, however, extreme values can also reflect **unit mismatches**, **corrupted entries**, or **merge artifacts** (as suggested by the checks above). We therefore use outlier detection primarily as an *integrity diagnostic* and interpret it jointly with unit/range checks, rather than applying a global trimming rule.
+
+We compare three detectors implemented in `ama-tlbx`:
+
+- **IQR rule (feature-wise, robust):** flags values outside Tukey fences
+  $$
+  [Q_1 - 1.5\cdot IQR,\; Q_3 + 1.5\cdot IQR], \qquad IQR = Q_3 - Q_1,
+  $$
+  which is distribution-agnostic and suited for heavy-tailed variables.
+- **Z-score threshold (feature-wise):** flags values with $|z| > 3$ after standardization (conservative under skewness).
+- **Isolation Forest (row-wise):** flags globally unusual country profiles in multivariate space.
+
+All detectors below run on the **2014 complete-case subset** (after carry-forward + dropping remaining missing predictors), because standardization and Isolation Forest require a fully observed predictor matrix. This also means that the effective $n$ differs from the raw 2014 cross-section.
 
 ```{python}
-# | label: tbl-claim-extremes
-# | tbl-cap: "Extremes reported in Kaggle comments, verified from the raw panel."
-(
-    panel.agg(
-        min_population=(LECol.POPULATION, "min"),
-        max_population=(LECol.POPULATION, "max"),
-        max_infant_deaths=(LECol.INFANT_DEATHS, "max"),
-        max_under_five_deaths=(LECol.UNDER_FIVE_DEATHS, "max"),
-        max_measles=(LECol.MEASLES, "max"),
-        max_bmi=(LECol.BMI, "max"),
-        max_percentage_expenditure=(LECol.PERCENTAGE_EXPENDITURE, "max"),
-        min_gdp=(LECol.GDP, "min"),
-        max_gdp=(LECol.GDP, "max"),
+# | label: tbl-outlier-detector-summary-2014
+# | tbl-cap: "Outlier detector comparison on the 2014 complete-case subset (transformed predictors)."
+import pandas as pd
+
+ds_2014_cc = LifeExpectancyDataset.from_csv(
+    aggregate_by_country=2014,
+    resolve_nand_pred="carry_forward",
+)
+ds_2014_tf = LifeExpectancyDataset(df=ds_2014_cc.tf_only())
+cols = ds_2014_cc.feature_columns(include_target=False)
+
+iqr_res = (
+    ds_2014_tf.make_iqr_outlier_detector(columns=cols, standardized=False, threshold=1.5)
+    .fit()
+    .result()
+)
+z_res = (
+    ds_2014_tf.make_zscore_outlier_detector(columns=cols, standardized=True, threshold=3.0)
+    .fit()
+    .result()
+)
+if_res = (
+    ds_2014_tf.make_isolation_forest_outlier_detector(
+        columns=cols,
+        standardized=True,
+        contamination="auto",
+        random_state=42,
     )
-    .stack()
-    .rename("Value")
-    .reset_index()
-    .rename(columns={"level_0": "Metric"})
-    .drop(columns=["level_1"])
+    .fit()
+    .result()
+)
+
+(
+    pd.DataFrame(
+        [
+            {
+                "method": "IQR (k=1.5)",
+                "n_rows": int(iqr_res.outlier_mask.shape[0]),
+                "rows_with_≥1_flag": int(iqr_res.outlier_mask.any(axis=1).sum()),
+                "share_rows_%": float(iqr_res.outlier_mask.any(axis=1).mean() * 100),
+                "median_flags_per_row": float(iqr_res.n_outliers_per_row.median()),
+            },
+            {
+                "method": "Z-score (|z|>3)",
+                "n_rows": int(z_res.outlier_mask.shape[0]),
+                "rows_with_≥1_flag": int(z_res.outlier_mask.any(axis=1).sum()),
+                "share_rows_%": float(z_res.outlier_mask.any(axis=1).mean() * 100),
+                "median_flags_per_row": float(z_res.n_outliers_per_row.median()),
+            },
+            {
+                "method": "Isolation Forest (row-wise)",
+                "n_rows": int(if_res.outlier_mask.shape[0]),
+                "rows_with_≥1_flag": int(if_res.outlier_mask.any(axis=1).sum()),
+                "share_rows_%": float(if_res.outlier_mask.any(axis=1).mean() * 100),
+                "median_flags_per_row": float(if_res.n_outliers_per_row.median()),
+            },
+        ]
+    )
+    .assign(share_rows_pct=lambda d: d["share_rows_%"].round(1))
+    .drop(columns=["share_rows_%"])
+    .rename(columns={"share_rows_pct": "share_rows_%"} )
 )
 ```
 
 ```{python}
-# | label: tbl-population-tiny
-# | tbl-cap: "Examples of very small population values (raw panel)."
+# | label: tbl-outlier-top-features-2014
+# | tbl-cap: "Top features by IQR-flagged values (2014 complete-case subset; transformed predictors)."
 (
-    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
-    .loc[:, [LECol.COUNTRY, "year", LECol.POPULATION]]
-    .dropna()
-    .sort_values(LECol.POPULATION)
-    .head(12)
+    iqr_res.n_outliers_per_column.sort_values(ascending=False)
+    .head(10)
+    .rename("iqr_outliers")
+    .to_frame()
+    .assign(feature=lambda d: d.index.map(iqr_res.pretty_names.get))
+    .reset_index(drop=True)
+    .loc[:, ["feature", "iqr_outliers"]]
 )
 ```
+
+Tables @tbl-outlier-detector-summary-2014 and @tbl-outlier-top-features-2014 show that univariate IQR flags substantially more marginal extremes than a Gaussian-tail Z-score rule (which should be about 0.135% for |z|>3), while Isolation Forest identifies a smaller set of globally unusual country profiles (row-wise anomalies).
+
+We continue by reproducing further claims from Kaggle comments regarding specific variables and countries.
 
 ```{python}
 # | label: tbl-bmi-extremes
@@ -362,6 +446,8 @@ The comments quoted above include concrete numeric claims. We verify those direc
     .head(12)
 )
 ```
+
+Another set of inconsistencies involves BMI values above 60, which are biologically implausible. Table @tbl-bmi-extremes lists all such entries in the raw panel.
 
 ```{python}
 # | label: tbl-status-france-finland
@@ -378,39 +464,158 @@ The comments quoted above include concrete numeric claims. We verify those direc
 )
 ```
 
+Classifying Finland and France as developing countries doesn't align with standard economic classifications.
+
+
+**Implication for preprocessing.** The evidence above indicates that several variables are on inconsistent or ambiguous scales (counts vs per‑1,000 rates; percent vs scaled spending), and that missingness is concentrated in a few high‑impact predictors. Simple cleaning and imputation techniques are certainly not sufficient to resolve these issues. The cleaned Version of the [Life Expectancy dataset](https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated/data) addresses many of these problems by sourcing consistent series from WHO, WDI, and OWID, applying systematic imputation, and normalizing country names.
+
+## Why consider the updated Kaggle dataset (and what cleaning would be required)
+
+The diagnostics above show that the raw Kaggle panel requires **non‑trivial cleaning** before it can serve as a high‑quality regression dataset: unit ambiguities (counts vs rates), scale inconsistencies (population and GDP), and concentrated missingness in core predictors. The cleaned dataset at https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated/data is appealing because it replaces several columns with values from external sources (WHO, WDI, OWID) and applies systematic imputation.
+
+To reproduce that quality *without switching datasets*, we would need to: (i) replace population and GDP with World Bank series (rescaling units where needed), (ii) replace immunization and mortality metrics with WHO indicators, (iii) align schooling with OWID, (iv) normalize ISO3 country codes across sources, and (v) implement the reported imputation policy (nearest three‑year average + regional averages; drop countries with too many missing columns). Given limited time, using the cleaned dataset for regression is a pragmatic choice, while retaining the raw Kaggle panel for transparency and sensitivity analyses in preprocessing and diagnostics.
+
+To make this decision concrete, Table @tbl-raw-vs-updated-coverage compares basic coverage, Table @tbl-raw-vs-updated-missingness compares missingness for shared columns, and Table @tbl-raw-vs-updated-ranges shows that several variables move back into plausible ranges in the updated dataset. Importantly, these improvements come with **semantic changes** for some variables (e.g., `measles` becomes an immunization-coverage percentage in the updated file), so we treat the updated dataset as a *different measurement table* rather than a drop-in “imputation-only” patch.
+
 ```{python}
-# | label: tbl-country-claims
-# | tbl-cap: "Country-specific examples cited in Kaggle comments (infant deaths summary)."
-(
-    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
-    .query("country in ['India', 'Switzerland', 'Sweden', 'Uzbekistan']")
-    .groupby(LECol.COUNTRY)
-    .agg(
-        min_infant_deaths=(LECol.INFANT_DEATHS, "min"),
-        max_infant_deaths=(LECol.INFANT_DEATHS, "max"),
+# | label: tbl-raw-vs-updated-coverage
+# | tbl-cap: "Coverage comparison: original Kaggle table vs updated dataset (panel, 2000–2015)."
+import pandas as pd
+import warnings
+
+from ama_tlbx.data import LifeExpectancyDataset
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", message=r"from_csv_updated\(\): mapping incidents_hiv.*")
+    raw_panel = LifeExpectancyDataset.from_csv(
+        aggregate_by_country=False,
+        resolve_nand_pred=False,
+        drop_missing_target=True,
+    ).df
+    upd_panel = LifeExpectancyDataset.from_csv_updated(
+        aggregate_by_country=False,
+        resolve_nand_pred=False,
+        drop_missing_target=True,
+        merge_original_expenditure=False,
+    ).df
+
+pd.DataFrame(
+    [
+        {
+            "dataset": "Original Kaggle",
+            "n_rows": int(len(raw_panel)),
+            "n_countries": int(raw_panel[LECol.COUNTRY].nunique()),
+            "year_min": int(raw_panel[LECol.YEAR].dt.year.min()),
+            "year_max": int(raw_panel[LECol.YEAR].dt.year.max()),
+        },
+        {
+            "dataset": "Updated Kaggle",
+            "n_rows": int(len(upd_panel)),
+            "n_countries": int(upd_panel[LECol.COUNTRY].nunique()),
+            "year_min": int(upd_panel[LECol.YEAR].dt.year.min()),
+            "year_max": int(upd_panel[LECol.YEAR].dt.year.max()),
+        },
+    ],
+)
+```
+
+```{python}
+# | label: tbl-raw-vs-updated-missingness
+# | tbl-cap: "Missingness comparison for shared columns (panel, 2000–2015; % missing)."
+shared_cols = sorted(set(raw_panel.columns) & set(upd_panel.columns))
+shared_numeric = (
+    pd.Index(shared_cols)
+    .difference([LECol.COUNTRY, LECol.YEAR])
+    .intersection(raw_panel.select_dtypes(include=["number"]).columns)
+    .intersection(upd_panel.select_dtypes(include=["number"]).columns)
+)
+
+missing_cmp = (
+    pd.DataFrame(
+        {
+            "raw_missing_pct": raw_panel[shared_numeric].isna().mean() * 100,
+            "updated_missing_pct": upd_panel[shared_numeric].isna().mean() * 100,
+        },
     )
-    .reset_index()
+    .assign(delta_pct=lambda d: d["updated_missing_pct"] - d["raw_missing_pct"])
+    .sort_values("raw_missing_pct", ascending=False)
+    .assign(feature=lambda d: d.index.map(LifeExpectancyDataset(df=raw_panel).get_pretty_name))
+    .loc[:, ["feature", "raw_missing_pct", "updated_missing_pct", "delta_pct"]]
+    .head(12)
+    .rename(
+        columns={
+            "feature": "Feature",
+            "raw_missing_pct": "Original (%)",
+            "updated_missing_pct": "Updated (%)",
+            "delta_pct": "Δ (Updated - Original)",
+        },
+    )
+)
+
+missing_cmp.style.format(
+    {
+        "Original (%)": "{:.1f}",
+        "Updated (%)": "{:.1f}",
+        "Δ (Updated - Original)": "{:+.1f}",
+    },
 )
 ```
 
 ```{python}
-# | label: tbl-uzbekistan-2013-2015
-# | tbl-cap: "Uzbekistan infant deaths in 2013–2015 (raw panel)."
-(
-    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
-    .query("country == 'Uzbekistan' and 2013 <= year <= 2015")
-    .loc[:, [LECol.COUNTRY, "year", LECol.INFANT_DEATHS]]
-    .dropna()
-    .sort_values("year")
+# | label: tbl-raw-vs-updated-ranges
+# | tbl-cap: "Selected range checks: original vs updated dataset (panel; min/median/max)."
+cols_compare = [
+    LECol.POPULATION,
+    LECol.GDP,
+    LECol.INFANT_DEATHS,
+    LECol.UNDER_FIVE_DEATHS,
+    LECol.MEASLES,
+    LECol.BMI,
+]
+cols_compare = [c for c in cols_compare if c in raw_panel.columns and c in upd_panel.columns]
+
+raw_sel = raw_panel.loc[:, cols_compare]
+upd_sel = upd_panel.loc[:, cols_compare]
+
+range_cmp = (
+    pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "min": raw_sel.min(),
+                    "median": raw_sel.median(),
+                    "p99": raw_sel.quantile(0.99),
+                    "max": raw_sel.max(),
+                },
+            ).assign(dataset="Original"),
+            pd.DataFrame(
+                {
+                    "min": upd_sel.min(),
+                    "median": upd_sel.median(),
+                    "p99": upd_sel.quantile(0.99),
+                    "max": upd_sel.max(),
+                },
+            ).assign(dataset="Updated"),
+        ],
+    )
+    .reset_index(names="col")
+    .assign(feature=lambda d: d["col"].map(LifeExpectancyDataset(df=raw_panel).get_pretty_name))
+    .loc[:, ["feature", "dataset", "min", "median", "p99", "max"]]
+    .sort_values(["feature", "dataset"])
 )
+
+range_cmp.style.format({"min": "{:,.2f}", "median": "{:,.2f}", "p99": "{:,.2f}", "max": "{:,.2f}"})
 ```
 
-Tables @tbl-claim-extremes through @tbl-uzbekistan-2013-2015 confirm the *numeric* inconsistencies raised by Kaggle users: extreme maxima in measles and child‑death columns (far above 1,000), BMI values above 60, population entries as low as double‑digit counts, and development‑status labels that place France/Finland in the developing category. These checks are strictly data‑internal; they do not rely on external sources.
-
-**Implication for preprocessing.** The evidence above indicates that several variables are on inconsistent or ambiguous scales (counts vs per‑1,000 rates; percent vs scaled spending), and that missingness is concentrated in a few high‑impact predictors. This motivates (i) explicit unit labeling and transformations, (ii) robust outlier handling, and (iii) sensitivity checks that report how complete‑case filtering changes sample size.
+Taken together, Tables @tbl-raw-vs-updated-missingness and @tbl-raw-vs-updated-ranges show that the updated dataset (i) reduces missingness in high-impact predictors like population and GDP, and (ii) moves several “per-1000 / percent”-type variables back into plausible ranges (e.g., measles values bounded by 100; child deaths no longer in the thousands). At the same time, it changes the semantics of some columns (notably `measles` and `hiv_aids`), so our modeling chapters treat the updated dataset as the preferred measurement table and interpret coefficients descriptively.
 
 
-## Dataset snapshots
+:::{.callout-note collapse="false"}
+
+### Dataset snapshots
+
+**The following section is outdated and proceeds the claims from the previous section. It is kept here for completeness.**
+
 
 ```{python}
 # | label: tbl-dataset-snapshots
@@ -467,6 +672,7 @@ for name, df in snapshots.items():
 
 ## Structural missingness after carry-forward
 
+
 Carry-forward imputation only fills values that exist in earlier years for the same country. To quantify the remaining gaps, we apply carry-forward to the full panel and then inspect the 2014 slice.
 
 ```{python}
@@ -515,27 +721,30 @@ missing_tbl.style.format({"Missing (%)": "{:.1f}"})
 ```{python}
 # | label: tbl-missing-2014-structural
 # | tbl-cap: "Missing predictors in 2014 are structurally absent (never observed pre-2014) for the affected country series."
-le_hist = panel.assign(year=lambda d: d[LECol.YEAR].dt.year).query("year <= 2014")
+le_hist = (
+    panel.assign(year=lambda d: d[LECol.YEAR].dt.year)
+    .query("year <= 2014")
+    .loc[:, [LECol.COUNTRY, *pred_cols]]
+)
 
-missing_entries = []
-for _, row in df_2014.iterrows():
-    country = row[LECol.COUNTRY]
-    row_missing = row[pred_cols].isna()
-    if not row_missing.any():
-        continue
-    missing_preds = row_missing[row_missing].index.tolist()
-    hist_country = le_hist[le_hist[LECol.COUNTRY] == country]
-    for pred in missing_preds:
-        ever_obs = hist_country[pred].notna().any()
-        missing_entries.append(
-            {
-                "country": country,
-                "predictor": pred,
-                "ever_observed_pre2014": bool(ever_obs),
-            }
-        )
+missing_2014 = (
+    df_2014.loc[:, [LECol.COUNTRY, *pred_cols]]
+    .melt(id_vars=[LECol.COUNTRY], var_name="predictor", value_name="value")
+    .query("value.isna()", engine="python")
+    .drop(columns=["value"])
+)
 
-md = pd.DataFrame(missing_entries)
+ever_obs = (
+    le_hist.melt(id_vars=[LECol.COUNTRY], var_name="predictor", value_name="value")
+    .dropna(subset=["value"])
+    .drop_duplicates([LECol.COUNTRY, "predictor"])
+    .assign(ever_observed_pre2014=True)
+    .loc[:, [LECol.COUNTRY, "predictor", "ever_observed_pre2014"]]
+)
+
+md = missing_2014.merge(ever_obs, on=[LECol.COUNTRY, "predictor"], how="left").assign(
+    ever_observed_pre2014=lambda d: d["ever_observed_pre2014"].fillna(False)
+)
 summary = pd.DataFrame(
     {
         "metric": [
@@ -545,7 +754,7 @@ summary = pd.DataFrame(
             "Share of missing entries with no prior observation (%)",
         ],
         "value": [
-            int(md["country"].nunique()),
+            int(md[LECol.COUNTRY].nunique()),
             int(len(md)),
             int((~md["ever_observed_pre2014"]).sum()),
             float((~md["ever_observed_pre2014"]).mean() * 100),
@@ -609,13 +818,9 @@ pd.DataFrame(
 
 If this backfill improves coverage (without introducing inconsistencies), it can be adopted as a preprocessing step for analyses that require population. For transparency, we would still retain the original Kaggle values and only fill missing entries with UNDP HDR.
 
-## Why consider the updated Kaggle dataset (and what cleaning would be required)
+:::
 
-The diagnostics above show that the raw Kaggle panel requires **non‑trivial cleaning** before it can serve as a high‑quality regression dataset: unit ambiguities (counts vs rates), scale inconsistencies (population and GDP), and concentrated missingness in core predictors. The cleaned dataset at https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated/data is appealing because it replaces several columns with values from external sources (WHO, WDI, OWID) and applies systematic imputation.
-
-To reproduce that quality *without switching datasets*, we would need to: (i) replace population and GDP with World Bank series (rescaling units where needed), (ii) replace immunization and mortality metrics with WHO indicators, (iii) align schooling with OWID, (iv) normalize ISO3 country codes across sources, and (v) implement the reported imputation policy (nearest three‑year average + regional averages; drop countries with too many missing columns). Given limited time, using the cleaned dataset for regression is a pragmatic choice, while retaining the raw Kaggle panel for transparency and sensitivity analyses in preprocessing and diagnostics.
-
-## Transformations and standardization (`tf_only`, `tf_and_norm`)
+# Transformations and standardization (`tf_only`, `tf_and_norm`)
 
 ```{python}
 # | label: tbl-transforms
@@ -715,4 +920,3 @@ Figure @fig-standardization-comparison illustrates why standardization is requir
 ds_predictors.plot_standardization_comparison(figsize=(20, 10)).show()
 ```
 
-Correlation and outlier diagnostics are in `3_correlation.qmd` and `2_outlier_detection.qmd`, respectively.

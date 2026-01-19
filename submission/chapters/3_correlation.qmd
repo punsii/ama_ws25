@@ -7,7 +7,7 @@ format:
 
 Correlation analysis reveals relationships between features, identifies multicollinearity, and supports feature grouping decisions for dimensionality reduction. This chapter mirrors the workflow in `notebooks/project/correlation_analysis.ipynb`.
 
-Unless stated otherwise, we compute _Pearson correlations_ on the 2014 country cross‑section after dropping rows with missing predictors (`resolve_nand_pred="carry_forward"`). In addition to correlations on the raw scale, we compare them to correlations after the preprocessing transforms used by `LifeExpectancyDataset.tf_and_norm()`.
+Unless stated otherwise, we compute _Pearson correlations_ on the 2014 country cross‑section after dropping rows with missing predictors (`resolve_nand_pred="carry_forward"`), using the "dirty" LifeExpectancyDataset ("from_csv"). In addition to correlations on the raw scale, we compare them to correlations after the preprocessing transforms used by `LifeExpectancyDataset.tf_and_norm()`.
 
 ```{python}
 # | label: corr-setup
