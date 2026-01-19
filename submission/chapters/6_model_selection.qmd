@@ -197,7 +197,7 @@ min_features = int(df_paths["n_terms"].min())
 max_features = int(df_paths["n_terms"].max())
 
 ax.set_xticks(np.arange(min_features, max_features + 1))
-ax.set_xlabel("Number of Features (n_terms)")
+ax.set_xlabel("Number of Features")
 ax.set_ylabel("Score (AIC / BIC)")
 ax.set_title("Information Criteria vs Model Complexity")
 ax.legend()
@@ -495,7 +495,7 @@ ax.axvline(
 # Formatting
 x_max = int(df_cv_plot["n_terms"].max())
 ax.set_xticks(np.arange(1, x_max + 1))
-ax.set_xlabel("Number of Features (n_terms)")
+ax.set_xlabel("Number of Features")
 ax.set_ylabel("Mean Squared Error (MSE)")
 ax.set_title("Model Selection: In-Sample vs CV (k >= 1)")
 ax.legend()
